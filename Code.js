@@ -2527,7 +2527,7 @@ function doPost(e) {
         var _appSimples = _appNome && _appNome.split(/\s+/).length <= 4 && !/ (e|no|na|para|pra|com|que|sobre) /i.test(' ' + _appNome.toLowerCase() + ' ');
         // (viii) CONTROLES NATIVOS — mídia/volume/lanterna/não-perturbe (determinístico; macros nativas).
         var _ctl = (function () {
-          var s2 = msgVoz.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+          var s2 = msgVoz.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
           if (/\b(pausa\w*|pause)\b/.test(s2) || /\bpar[ae]\s+(a\s+)?(musica|som|midia|video)/.test(s2))
             return { args: { acao: 'midia', comando: 'pausar' }, resp: 'Pausando a mídia.' };
           if (/\b(continua\w*|retoma\w*|despausa\w*)\b/.test(s2) && /musica|som|midia|video|tocar|toca/.test(s2))
@@ -2554,7 +2554,15 @@ function doPost(e) {
           }
           return null;
         })();
-        if (_ctl && typeof Jarvis !== 'undefined' && Jarvis.controlarDispositivo) {
+        // (0) ROTINA COMPOSTA ("modo cinema", "modo foco", "rotina boa noite") — vem PRIMEIRO por ser
+        // um comando explícito e inequívoco; um comando → várias ações no aparelho.
+        var _rot = _interpretarRotina(msgVoz);
+        if (_rot) {
+          try {
+            var _rr = executarRotina(_rot);
+            respVoz = _rr.ok ? _rr.resposta : ('Não consegui executar o ' + (_rr.nome || _rot) + ' agora.');
+          } catch (eRt) { respVoz = Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false }); }
+        } else if (_ctl && typeof Jarvis !== 'undefined' && Jarvis.controlarDispositivo) {
           try {
             var _rCtl = Jarvis.controlarDispositivo(_ctl.args);
             respVoz = (_rCtl && _rCtl.status === 'success') ? _ctl.resp : ('Não consegui agora: ' + ((_rCtl && _rCtl.erro) || 'falha no envio ao celular') + '.');
@@ -2934,6 +2942,95 @@ function diagFsListar(args) {
   } catch (e) { return { ok: false, erro: e.message }; }
 }
 
+/* ===================== ROTINAS COMPOSTAS (zero-LLM) =====================
+ * Um comando → VÁRIAS ações no aparelho, em sequência. Determinístico (sem LLM = custo zero).
+ * A ORDEM importa: quando a rotina fala, o "falar" vem ANTES de baixar/mutar o volume — senão o
+ * áudio sai inaudível. Cada ação é tolerante a falha: se uma não vai, as outras seguem e o
+ * resultado reporta ação por ação (útil porque o "naoperturbe" ainda depende de permissão no MIUI).
+ */
+var _ROTINAS = {
+  cinema: {
+    nome: 'Modo cinema',
+    acoes: [ { acao: 'naoperturbe', estado: 'on' }, { acao: 'volume', nivel: 'mudo' }, { acao: 'brilho', nivel: 10 } ],
+    resposta: 'Modo cinema ativado: não perturbe ligado, som no mudo e brilho baixo.'
+  },
+  cinema_off: {
+    nome: 'Sair do modo cinema',
+    acoes: [ { acao: 'naoperturbe', estado: 'off' }, { acao: 'volume', nivel: 'medio' }, { acao: 'brilho', nivel: 60 } ],
+    resposta: 'Saindo do modo cinema: não perturbe desligado, som no médio e brilho normal.'
+  },
+  foco: {
+    nome: 'Modo foco',
+    acoes: [ { acao: 'naoperturbe', estado: 'on' }, { acao: 'volume', nivel: 'baixo' } ],
+    resposta: 'Modo foco ativado: não perturbe ligado e som baixo.'
+  },
+  boa_noite: {
+    nome: 'Rotina boa noite',
+    acoes: [ { acao: 'falar', texto: 'Boa noite, Bruno. Vou silenciar o aparelho e baixar o brilho. Seus alertas de ponto continuam armados.' },
+             { acao: 'naoperturbe', estado: 'on' }, { acao: 'volume', nivel: 'baixo' }, { acao: 'brilho', nivel: 10 } ],
+    resposta: 'Rotina de boa noite executada: avisei, liguei o não perturbe, baixei som e brilho.'
+  },
+  bom_dia: {
+    nome: 'Rotina bom dia',
+    acoes: [ { acao: 'brilho', nivel: 80 }, { acao: 'volume', nivel: 'medio' }, { acao: 'naoperturbe', estado: 'off' },
+             { acao: 'falar', texto: 'Bom dia, Bruno! Aparelho liberado: som e brilho normais, não perturbe desligado.' } ],
+    resposta: 'Rotina de bom dia executada: brilho e som normais, não perturbe desligado.'
+  }
+};
+
+/** Executa uma rotina composta. opts {simular:true} não toca no aparelho (só relata o plano). */
+function executarRotina(nome, opts) {
+  opts = opts || {};
+  var r = _ROTINAS[nome];
+  if (!r) return { ok: false, erro: 'Rotina desconhecida: "' + nome + '".', disponiveis: Object.keys(_ROTINAS) };
+  var resultados = [];
+  r.acoes.forEach(function (a) {
+    if (opts.simular === true) { resultados.push({ acao: a.acao, status: 'simulado' }); return; }
+    try {
+      var res = (typeof Jarvis !== 'undefined' && Jarvis.controlarDispositivo) ? Jarvis.controlarDispositivo(a) : null;
+      resultados.push({ acao: a.acao, status: (res && res.status) || 'sem_resposta', erro: (res && res.erro) || undefined });
+    } catch (e) { resultados.push({ acao: a.acao, status: 'error', erro: e.message }); }
+  });
+  var okN = resultados.filter(function (x) { return x.status === 'success' || x.status === 'simulado'; }).length;
+  try {
+    if (opts.simular !== true && typeof Jarvis !== 'undefined' && Jarvis.registrarEvento) {
+      Jarvis.registrarEvento({ tool: 'rotina:' + nome, ms: 0, ok: okN === r.acoes.length,
+        resumo: r.nome + ' — ' + okN + '/' + r.acoes.length + ' ações OK' });
+    }
+  } catch (eL) {}
+  return { ok: okN > 0, rotina: nome, nome: r.nome, resposta: r.resposta,
+           executadas: okN + '/' + r.acoes.length, resultados: resultados };
+}
+
+/** Texto livre → nome da rotina. Exige "modo/rotina" explícito para NÃO sequestrar saudações
+ *  ("bom dia" solto continua sendo cumprimento, não rotina — mesma armadilha mention-vs-use). */
+function _interpretarRotina(texto) {
+  var s = String(texto || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+  var desliga = /desativ|deslig|sair|encerra|para o modo|fim do/.test(s);
+  if (/modo\s+cinema/.test(s)) return desliga ? 'cinema_off' : 'cinema';
+  if (/modo\s+foco/.test(s)) return 'foco';
+  if (/\b(rotina|modo)\s+(de\s+)?boa\s+noite/.test(s)) return 'boa_noite';
+  if (/\b(rotina|modo)\s+(de\s+)?bom\s+dia/.test(s)) return 'bom_dia';
+  return null;
+}
+
+/** Endpoint do painel (owner-gated) p/ os botões de rotina da guia Dispositivo. */
+function executarRotinaUI(token, nome) {
+  var s = getSessionUser(token);
+  if (!s || !Jarvis._isOwner(s.email)) return { ok: false, erro: 'não autorizado' };
+  return executarRotina(String(nome || ''));
+}
+
+/** Diag: lista as rotinas ou executa uma. args {nome, simular:false p/ valer de verdade}. */
+function diagRotina(args) {
+  args = args || {};
+  if (!args.nome) {
+    return { ok: true, rotinas: Object.keys(_ROTINAS).map(function (k) {
+      return { chave: k, nome: _ROTINAS[k].nome, acoes: _ROTINAS[k].acoes.map(function (a) { return a.acao; }) }; }) };
+  }
+  return executarRotina(String(args.nome), { simular: args.simular !== false });
+}
+
 /* ===================== EVENTOS PROATIVOS (zero-LLM) =====================
  * A telemetria do celular chega a cada 15 min (pingTelemetria → macro → rota action:'telemetria').
  * Esse é o gatilho natural para o Jarvis AGIR sem ser chamado. Regras determinísticas (sem LLM =
@@ -3057,7 +3154,7 @@ function diagTelemetria() {
 /** DEBUG: replica a lógica do atalho de voz da Bíblia p/ ver s/querFalar/parse (verdade de terra). */
 function diagVoiceParse(args) {
   var msgVoz = String((args && (args.msg || args.message)) || '');
-  var s = msgVoz.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  var s = msgVoz.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   var trigger = /b[íi]blia|vers[íi]culo/i.test(msgVoz) || /\b\d{1,3}\s*[:]\s*\d{1,3}\b/.test(msgVoz);
   var m = s.match(/(?:(1|2|3|primeiro|segundo|terceiro)\s+)?([a-z]{2,})\s+(?:capitulo\s+)?(\d{1,3})\s*(?::|,|\s+versiculo\s+|\s+)\s*(\d{1,3})/);
   var querFalar = /(biblia\s+falada|versiculo\s+falad|\b(?:leia|ler|recite|recita|declare|narre)\b|\bfal[ae]\b[^.]*\b(?:versiculo|biblia)\b)/.test(s);
@@ -3203,6 +3300,7 @@ function _diagDispatch(body) {
     diagVoiceParse:         (typeof diagVoiceParse !== 'undefined') ? diagVoiceParse : null,
     configurarEvolutionUrl: (typeof configurarEvolutionUrl !== 'undefined') ? configurarEvolutionUrl : null,
     diagEventoProativo:     (typeof diagEventoProativo !== 'undefined') ? diagEventoProativo : null,
+    diagRotina:             (typeof diagRotina !== 'undefined') ? diagRotina : null,
     configurarProativo:     (typeof configurarProativo !== 'undefined') ? configurarProativo : null,
     diagTelemetria:         (typeof diagTelemetria !== 'undefined') ? diagTelemetria : null,
     pingTelemetria:         (typeof pingTelemetria !== 'undefined') ? pingTelemetria : null,

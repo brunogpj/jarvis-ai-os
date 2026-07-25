@@ -2649,7 +2649,11 @@
           { icon: "🔉", label: "Volume alto", acao: "volume", args: { nivel: "alto" } },
           { icon: "🔇", label: "Mudo", acao: "volume", args: { nivel: "mudo" } },
           { icon: "🌙", label: "Não perturbe ON", acao: "naoperturbe", args: { estado: "on" } },
-          { icon: "🔔", label: "Não perturbe OFF", acao: "naoperturbe", args: { estado: "off" } }
+          { icon: "🔔", label: "Não perturbe OFF", acao: "naoperturbe", args: { estado: "off" } },
+          // ROTINAS COMPOSTAS: um clique → várias ações (rotina: nome em vez de acao/args).
+          { icon: "🎬", label: "Modo cinema", rotina: "cinema" },
+          { icon: "☀️", label: "Sair do cinema", rotina: "cinema_off" },
+          { icon: "🎯", label: "Modo foco", rotina: "foco" }
         ];
         host.innerHTML = "";
         ACOES.forEach(function (a) {
@@ -2662,14 +2666,18 @@
             var orig = b.innerHTML;
             b.disabled = true;
             b.innerHTML = '<span style="font-size:15px">' + a.icon + '</span> Disparando…';
-            google.script.run
+            var runner = google.script.run
               .withSuccessHandler(function (r) {
                 b.disabled = false; b.innerHTML = orig;
-                if (r && r.ok) { toast("📲 " + a.label + " disparado no celular!"); loadDispositivo(); }
-                else { alert("Falha: " + (r ? r.erro : "erro desconhecido")); }
+                if (r && r.ok) {
+                  // Rotina informa quantas das N ações passaram (o não perturbe ainda depende de permissão no MIUI).
+                  toast("📲 " + a.label + (r.executadas ? " · " + r.executadas + " ações" : " disparado no celular!"));
+                  loadDispositivo();
+                } else { alert("Falha: " + (r ? r.erro : "erro desconhecido")); }
               })
-              .withFailureHandler(function (err) { b.disabled = false; b.innerHTML = orig; alert("Erro: " + err.message); })
-              .dispararComandoDispositivo(authToken, a.acao, a.args);
+              .withFailureHandler(function (err) { b.disabled = false; b.innerHTML = orig; alert("Erro: " + err.message); });
+            if (a.rotina) runner.executarRotinaUI(authToken, a.rotina);
+            else runner.dispararComandoDispositivo(authToken, a.acao, a.args);
           });
           host.appendChild(b);
         });

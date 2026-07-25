@@ -2254,7 +2254,11 @@ function doPost(e) {
           recebidoEm: new Date().toISOString(),
           body: bodyTel
         });
-        return json({ ok: true });
+        // EVENTOS PROATIVOS: a telemetria chega a cada 15 min — é o gatilho natural para o Jarvis
+        // AGIR sozinho (antes ele só reagia a comando). Determinístico, sem LLM (custo zero).
+        var _proat = null;
+        try { _proat = _avaliarEventosProativos(bodyTel); } catch (eP) { Logger.log('[Proativo] ' + eP.message); }
+        return json({ ok: true, proativo: _proat });
       } catch (eTel) { return json({ ok: false, erro: eTel.message }); }
     }
 
@@ -2930,6 +2934,84 @@ function diagFsListar(args) {
   } catch (e) { return { ok: false, erro: e.message }; }
 }
 
+/* ===================== EVENTOS PROATIVOS (zero-LLM) =====================
+ * A telemetria do celular chega a cada 15 min (pingTelemetria → macro → rota action:'telemetria').
+ * Esse é o gatilho natural para o Jarvis AGIR sem ser chamado. Regras determinísticas (sem LLM =
+ * custo zero e comportamento previsível), com ANTI-SPAM: avisa UMA vez por ciclo e rearma sozinho.
+ *
+ * Regra 1 · BATERIA BAIXA: nível <= PROATIVO_BATERIA_MIN (default 20) e NÃO carregando → fala no
+ *   celular. Rearma quando o carregador é conectado (aí pode avisar de novo no próximo ciclo).
+ */
+function _avaliarEventosProativos(tel, opts) {
+  opts = opts || {};
+  var p = PropertiesService.getScriptProperties();
+  var simular = opts.simular === true;
+  var disparos = [];
+  var bruto = tel || {};
+
+  // A telemetria pode vir com magic-text não substituído ("100|100|[battery_level]") → limpa antes.
+  var nivelTxt = _limparValorTelemetria(bruto.bateria_nivel || bruto.bateria || '');
+  var nivel = parseInt(String(nivelTxt).replace(/[^\d]/g, ''), 10);
+  // O [power] do MacroDroid responde em PT: "Ligar" = conectado / "Desligar" = desconectado.
+  var cargaTxt = String(_limparValorTelemetria(bruto.carregando || '')).toLowerCase();
+  var carregando = /deslig|discharg|false|\bnao\b/.test(cargaTxt) ? false
+                 : /lig|charg|true|\bsim\b|\bac\b|usb|plugged|full/.test(cargaTxt);
+
+  if (!isNaN(nivel) && nivel >= 0 && nivel <= 100) {
+    var limite = Number(p.getProperty('PROATIVO_BATERIA_MIN') || 20);
+    var jaAvisou = p.getProperty('PROATIVO_BAT_AVISADO') === '1';
+
+    if (carregando) {
+      // Carregador conectado → rearma o aviso para o próximo ciclo de descarga.
+      if (jaAvisou && !simular) { p.deleteProperty('PROATIVO_BAT_AVISADO'); disparos.push({ evento: 'bateria_rearmada' }); }
+    } else if (nivel <= limite && !jaAvisou) {
+      var texto = 'Bruno, atenção: a bateria do celular está em ' + nivel +
+                  ' por cento e não está carregando. Melhor colocar no carregador.';
+      var falou = 'simulado';
+      if (!simular) {
+        var res = (typeof Jarvis !== 'undefined' && Jarvis.controlarDispositivo)
+          ? Jarvis.controlarDispositivo({ acao: 'falar', texto: texto }) : null;
+        falou = !!(res && res.status === 'success');
+        if (falou) p.setProperty('PROATIVO_BAT_AVISADO', '1');   // anti-spam até rearmar
+      }
+      disparos.push({ evento: 'bateria_baixa', nivel: nivel, limite: limite, falou: falou, texto: texto });
+      try {
+        if (!simular && typeof Jarvis !== 'undefined' && Jarvis.registrarEvento) {
+          Jarvis.registrarEvento({ tool: 'proativo:bateria_baixa', ms: 0, ok: falou === true,
+            resumo: 'bateria ' + nivel + '% (limite ' + limite + '%) — avisou no celular' });
+        }
+      } catch (eLog) {}
+    }
+  }
+  return disparos.length ? { disparos: disparos, nivel: (isNaN(nivel) ? null : nivel), carregando: carregando } : null;
+}
+
+/** Simula a chegada de uma telemetria p/ testar as regras proativas SEM esperar 15 min.
+ *  args {bateria, carregando, simular:false p/ FALAR de verdade no celular}. Default = só simula. */
+function diagEventoProativo(args) {
+  args = args || {};
+  var tel = {
+    bateria_nivel: String(args.bateria !== undefined ? args.bateria : 15),
+    carregando: String(args.carregando !== undefined ? args.carregando : 'Desligar')
+  };
+  var simular = args.simular !== false;
+  var r = _avaliarEventosProativos(tel, { simular: simular });
+  var p = PropertiesService.getScriptProperties();
+  return { ok: true, simulado: simular, telemetriaUsada: tel, resultado: r,
+           estado: { PROATIVO_BATERIA_MIN: p.getProperty('PROATIVO_BATERIA_MIN') || '20 (default)',
+                     PROATIVO_BAT_AVISADO: p.getProperty('PROATIVO_BAT_AVISADO') || '(rearmado)' } };
+}
+
+/** Config das regras proativas. args {bateriaMin} e/ou {rearmar:true} (libera novo aviso de bateria). */
+function configurarProativo(args) {
+  args = args || {};
+  var p = PropertiesService.getScriptProperties();
+  if (args.bateriaMin !== undefined) p.setProperty('PROATIVO_BATERIA_MIN', String(Number(args.bateriaMin)));
+  if (args.rearmar === true) p.deleteProperty('PROATIVO_BAT_AVISADO');
+  return { ok: true, PROATIVO_BATERIA_MIN: p.getProperty('PROATIVO_BATERIA_MIN') || '20 (default)',
+           PROATIVO_BAT_AVISADO: p.getProperty('PROATIVO_BAT_AVISADO') || '(rearmado)' };
+}
+
 /** TELEMETRIA PERIÓDICA · pinga o webhook jarvis_telemetria do MacroDroid; a macro responde POSTando
  *  o status atual do aparelho na rota action:'telemetria'. Instalado a cada 15 min por configurarPingTelemetria(). */
 function pingTelemetria() {
@@ -3120,6 +3202,8 @@ function _diagDispatch(body) {
     diagFsInfo:             (typeof diagFsInfo !== 'undefined') ? diagFsInfo : null,
     diagVoiceParse:         (typeof diagVoiceParse !== 'undefined') ? diagVoiceParse : null,
     configurarEvolutionUrl: (typeof configurarEvolutionUrl !== 'undefined') ? configurarEvolutionUrl : null,
+    diagEventoProativo:     (typeof diagEventoProativo !== 'undefined') ? diagEventoProativo : null,
+    configurarProativo:     (typeof configurarProativo !== 'undefined') ? configurarProativo : null,
     diagTelemetria:         (typeof diagTelemetria !== 'undefined') ? diagTelemetria : null,
     pingTelemetria:         (typeof pingTelemetria !== 'undefined') ? pingTelemetria : null,
     configurarPingTelemetria: (typeof configurarPingTelemetria !== 'undefined') ? configurarPingTelemetria : null,

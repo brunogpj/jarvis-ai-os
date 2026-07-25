@@ -285,6 +285,12 @@ function diagIndice() {
 /** Captura um conhecimento no SEGUNDO CÉREBRO (pelo dispatcher). args:{fonte, tema?}. */
 function testarCaptura(args) { return (typeof Jarvis !== 'undefined' && Jarvis.capturarConhecimento) ? Jarvis.capturarConhecimento(args || {}) : { status: 'error', erro: 'indisponível' }; }
 
+/** Reposiciona o briefing p/ X min antes do ponto de entrada do turno vigente. args {turno?}. */
+function reposicionarBriefing(args) {
+  if (typeof AlertasVoz === 'undefined' || !AlertasVoz.reposicionarBriefing) return { ok: false, erro: 'AlertasVoz indisponível.' };
+  return AlertasVoz.reposicionarBriefing(args && args.turno);
+}
+
 /** Cria/lista/cancela ALERTAS DE VOZ no celular (pelo dispatcher). */
 function criarAlertaVoz(args)    { return (typeof AlertasVoz !== 'undefined') ? AlertasVoz.criar(args || {}) : { ok: false, erro: 'AlertasVoz indisponível.' }; }
 function listarAlertasVoz()      { return (typeof AlertasVoz !== 'undefined') ? AlertasVoz.listar() : []; }
@@ -3245,6 +3251,21 @@ function diagEventoProativo(args) {
   return { ok: true, simulado: simular, telemetriaUsada: tel, resultado: r, estado: diagProativoEstado().estado };
 }
 
+/** Reposiciona o briefing p/ X min antes do ponto de entrada do turno vigente (sem trocar o turno).
+ *  args {turno?, antecedenciaMin?} — antecedenciaMin grava BRIEFING_ANTECEDENCIA_MIN (default 30). */
+function configurarBriefingTurno(args) {
+  args = args || {};
+  if (args.antecedenciaMin !== undefined) {
+    PropertiesService.getScriptProperties().setProperty('BRIEFING_ANTECEDENCIA_MIN', String(Number(args.antecedenciaMin)));
+  }
+  if (typeof AlertasVoz === 'undefined' || !AlertasVoz.reposicionarBriefing) return { ok: false, erro: 'AlertasVoz indisponível' };
+  var r = AlertasVoz.reposicionarBriefing(args.turno);
+  try { r.alertasAgora = AlertasVoz.listar().map(function (a) {
+    return { hora: (a.hora < 10 ? '0' : '') + a.hora + ':' + (a.minuto < 10 ? '0' : '') + (a.minuto || 0),
+             tag: a.tag || '-', dinamico: !!a.dinamico, texto: String(a.texto || '').substring(0, 45) }; }); } catch (e) {}
+  return r;
+}
+
 /** Estado atual da governança + snapshot + config de presença. */
 function diagProativoEstado() {
   var p = PropertiesService.getScriptProperties();
@@ -3470,7 +3491,9 @@ function _diagDispatch(body) {
     configurarEvolutionUrl: (typeof configurarEvolutionUrl !== 'undefined') ? configurarEvolutionUrl : null,
     diagEventoProativo:     (typeof diagEventoProativo !== 'undefined') ? diagEventoProativo : null,
     diagRotina:             (typeof diagRotina !== 'undefined') ? diagRotina : null,
+    configurarBriefingTurno:(typeof configurarBriefingTurno !== 'undefined') ? configurarBriefingTurno : null,
     diagProativoEstado:     (typeof diagProativoEstado !== 'undefined') ? diagProativoEstado : null,
+    reposicionarBriefing:   (typeof reposicionarBriefing !== 'undefined') ? reposicionarBriefing : null,
     configurarProativo:     (typeof configurarProativo !== 'undefined') ? configurarProativo : null,
     diagTelemetria:         (typeof diagTelemetria !== 'undefined') ? diagTelemetria : null,
     pingTelemetria:         (typeof pingTelemetria !== 'undefined') ? pingTelemetria : null,

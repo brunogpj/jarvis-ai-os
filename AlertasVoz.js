@@ -160,6 +160,12 @@ var AlertasVoz = (function () {
     _salvar(arr); _garantirTick();
     var horarios = def.pontos.map(function (p) { return _hhmm(p[0], p[1]); }).join(', ');
     try { PropertiesService.getScriptProperties().setProperty('TURNO_TRABALHO_ATUAL', t); } catch (e) {}
+    // O briefing SEGUE o turno: reposiciona p/ X min antes do novo ponto de entrada.
+    var _brf = null;
+    try { _brf = reposicionarBriefing(t); } catch (eB) {}
+    // O briefing ACOMPANHA o turno: sempre X min antes do ponto de entrada (nunca mais fixo às 08:20).
+    var _brf = null;
+    try { _brf = reposicionarBriefing(t); } catch (eB) { Logger.log('[Briefing] ' + eB.message); }
     // Memória de longo prazo: registra a decisão na wiki (o Jarvis "aprende" a rotina do dono).
     try {
       if (typeof WikiMemoryService !== 'undefined' && WikiMemoryService.registrarNoLog) {
@@ -167,7 +173,65 @@ var AlertasVoz = (function () {
           ' para esta semana. Alertas de ponto (Seg–Sex) reconfigurados para: ' + horarios + '.');
       }
     } catch (e) {}
-    return { ok: true, turno: t, resumo: 'Entendido, Bruno! Turno ' + def.nome + ' ativado. Vou te lembrar do ponto de segunda a sexta às ' + horarios + '.' };
+    return { ok: true, turno: t, briefing: _brf,
+      resumo: 'Entendido, Bruno! Turno ' + def.nome + ' ativado. Vou te lembrar do ponto de segunda a sexta às ' + horarios + '.' +
+              (_brf && _brf.ok ? ' Seu briefing também mudou para as ' + _brf.briefing + ', ' + _brf.antecedenciaMin + ' minutos antes do ponto.' : '') };
+  }
+
+  /**
+   * BRIEFING ATRELADO AO TURNO. O briefing (alerta dinâmico) vivia num horário FIXO (08:20), o que
+   * ficava errado — e até depois do ponto — quando o turno virava tarde. Agora ele é reposicionado
+   * para X minutos ANTES do ponto de ENTRADA do turno vigente (X = BRIEFING_ANTECEDENCIA_MIN, 30).
+   * NÃO mexe no texto nem nos dias do alerta (é o briefing que o dono escreveu) — só na hora.
+   * @return {Object} {ok, turno, hora, movidos:[...]}
+   */
+  function reposicionarBriefing(turno) {
+    var t = _TURNOS[turno] ? turno : (interpretarTurno(turno) || turnoAtual());
+    if (!t || !_TURNOS[t]) return { ok: false, erro: 'Turno não definido — rode definirTurno primeiro.' };
+    var entrada = _TURNOS[t].pontos[0];                        // [hora, minuto, rótulo] = ponto de ENTRADA
+    var ante = Number(PropertiesService.getScriptProperties().getProperty('BRIEFING_ANTECEDENCIA_MIN') || 30);
+    var tot = entrada[0] * 60 + entrada[1] - ante;
+    if (tot < 0) tot += 24 * 60;                               // antecedência que cruza a meia-noite
+    var h = Math.floor(tot / 60), m = tot % 60;
+    var arr = _ler(), movidos = [];
+    arr.forEach(function (a) {
+      if (a.dinamico === true || a.tag === 'briefing') {
+        a.hora = h; a.minuto = m; a.tag = 'briefing';          // marca p/ achar com precisão depois
+        movidos.push({ id: a.id, hora: _hhmm(h, m), texto: String(a.texto || '').substring(0, 60) });
+      }
+    });
+    if (!movidos.length) return { ok: false, erro: 'Nenhum alerta dinâmico/briefing encontrado para mover.', turno: t };
+    _salvar(arr); _garantirTick();
+    return { ok: true, turno: t, entradaPonto: _hhmm(entrada[0], entrada[1]), antecedenciaMin: ante,
+             hora: _hhmm(h, m), movidos: movidos };
+  }
+
+  /**
+   * BRIEFING ATRELADO AO TURNO: move o(s) alerta(s) DINÂMICO(s) para X minutos ANTES do ponto de
+   * ENTRADA do turno vigente (X = Script Property BRIEFING_ANTECEDENCIA_MIN, default 30).
+   * Antes o briefing era fixo (08:20) — no turno da tarde ele tocava 6h depois de fazer sentido, e
+   * mesmo na manhã caía DEPOIS do ponto das 08:00. Agora acompanha o turno sozinho.
+   * Preserva os DIAS e o TEXTO do alerta (é o briefing que o dono escreveu); só muda o horário.
+   */
+  function reposicionarBriefing(turno) {
+    var t = _TURNOS[turno] ? turno : (interpretarTurno(turno) || turnoAtual());
+    if (!t || !_TURNOS[t]) return { ok: false, erro: 'Turno não definido — rode definirTurno primeiro.' };
+    var entrada = _TURNOS[t].pontos[0];                       // [hora, minuto, rótulo] = ponto de ENTRADA
+    var ante = Number(PropertiesService.getScriptProperties().getProperty('BRIEFING_ANTECEDENCIA_MIN') || 30);
+    var tot = entrada[0] * 60 + entrada[1] - ante;
+    if (tot < 0) tot += 24 * 60;                              // antecedência que atravessa a meia-noite
+    var h = Math.floor(tot / 60), m = tot % 60;
+    var arr = _ler(), movidos = [];
+    arr.forEach(function (a) {
+      if (a.dinamico === true || a.tag === 'briefing') {
+        movidos.push({ id: a.id, de: _hhmm(a.hora, a.minuto || 0), para: _hhmm(h, m) });
+        a.hora = h; a.minuto = m; a.tag = 'briefing';         // tag p/ achar com precisão nas próximas vezes
+      }
+    });
+    if (!movidos.length) return { ok: false, erro: 'Nenhum alerta dinâmico (briefing) encontrado.' };
+    _salvar(arr); _garantirTick();
+    return { ok: true, turno: t, entrada: _hhmm(entrada[0], entrada[1]), antecedenciaMin: ante,
+             briefing: _hhmm(h, m), movidos: movidos };
   }
 
   /** Turno vigente ('manha'|'tarde'|null) — lido da property gravada em definirTurno. */
@@ -176,7 +240,9 @@ var AlertasVoz = (function () {
   }
 
   return { criar: criar, listar: listar, editar: editar, testar: testar, cancelar: cancelar, tick: tick,
-           definirTurno: definirTurno, interpretarTurno: interpretarTurno, turnoAtual: turnoAtual };
+           reposicionarBriefing: reposicionarBriefing,
+           definirTurno: definirTurno, interpretarTurno: interpretarTurno, turnoAtual: turnoAtual,
+           reposicionarBriefing: reposicionarBriefing };
 })();
 
 /** Handler do gatilho temporal de 1 min (alertas de voz no celular). NÃO renomear. */

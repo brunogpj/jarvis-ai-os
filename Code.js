@@ -3033,12 +3033,105 @@ function diagRotina(args) {
 
 /* ===================== EVENTOS PROATIVOS (zero-LLM) =====================
  * A telemetria do celular chega a cada 15 min (pingTelemetria → macro → rota action:'telemetria').
- * Esse é o gatilho natural para o Jarvis AGIR sem ser chamado. Regras determinísticas (sem LLM =
- * custo zero e comportamento previsível), com ANTI-SPAM: avisa UMA vez por ciclo e rearma sozinho.
+ * Esse é o gatilho natural para o Jarvis AGIR sem ser chamado. Tudo determinístico (sem LLM = custo
+ * zero e previsível).
  *
- * Regra 1 · BATERIA BAIXA: nível <= PROATIVO_BATERIA_MIN (default 20) e NÃO carregando → fala no
- *   celular. Rearma quando o carregador é conectado (aí pode avisar de novo no próximo ciclo).
+ * ARQUITETURA (4 peças):
+ *   1) SNAPSHOT      — guarda a leitura anterior (Script Property PROATIVO_SNAPSHOT).
+ *   2) TRANSIÇÕES    — evento nasce da MUDANÇA, não do estado. "está em casa" não é notícia;
+ *                      "ACABOU DE CHEGAR" é. Sem o snapshot o Jarvis é amnésico.
+ *   3) REGRAS        — condição → ação (falar no celular).
+ *   4) GOVERNANÇA    — orçamento diário + silêncio noturno + cooldown por evento. Assistente
+ *                      proativo que fala demais é silenciado em dois dias; essa peça o mantém
+ *                      bem-vindo. Prioridade 'critica' furamos o orçamento/silêncio.
+ *
+ * PRESENÇA POR WI-FI: o SSID é localização sem GPS e sem app novo. O match é por IGUALDADE EXATA
+ * normalizada — NUNCA substring: o SSID do trabalho "Link" casaria com "TP-Link"/"D-Link"/"Linksys"
+ * (roteadores comuns) e o Jarvis acharia que ele está no trabalho dentro de um shopping.
+ * Config: WIFI_CASA e WIFI_TRABALHO (listas separadas por "|").
  */
+function _normSsid(s) {
+  return String(s || '').replace(/\.+$/, '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+function _listaSsid(prop) {
+  return String(PropertiesService.getScriptProperties().getProperty(prop) || '')
+    .split('|').map(_normSsid).filter(Boolean);
+}
+/** SSID → 'casa' | 'trabalho' | 'outro' (inclui sem Wi-Fi/desconhecido). */
+function _localPorSsid(ssid) {
+  var s = _normSsid(ssid);
+  if (!s) return 'outro';
+  if (_listaSsid('WIFI_CASA').indexOf(s) !== -1) return 'casa';
+  if (_listaSsid('WIFI_TRABALHO').indexOf(s) !== -1) return 'trabalho';
+  return 'outro';
+}
+
+/** Minutos até o próximo PONTO de hoje (lido dos alertas tag:'ponto' — respeita o turno vigente). */
+function _minutosAtePonto() {
+  try {
+    if (typeof AlertasVoz === 'undefined' || !AlertasVoz.listar) return null;
+    var agora = new Date(), dow = agora.getDay(), min = agora.getHours() * 60 + agora.getMinutes();
+    var futuros = AlertasVoz.listar().filter(function (a) {
+      if (a.tag !== 'ponto') return false;
+      var dias = Array.isArray(a.dias) ? a.dias : String(a.dias || '').split(',').map(Number);
+      return dias.indexOf(dow) !== -1;
+    }).map(function (a) { return Number(a.hora) * 60 + Number(a.minuto || 0); })
+      .filter(function (m) { return m >= min; }).sort(function (x, y) { return x - y; });
+    return futuros.length ? (futuros[0] - min) : null;
+  } catch (e) { return null; }
+}
+
+/** GOVERNANÇA: decide se o Jarvis PODE interromper agora. Registra o consumo quando permite. */
+function _governanca(chave, opts) {
+  opts = opts || {};
+  var p = PropertiesService.getScriptProperties();
+  var critica = opts.prioridade === 'critica';
+  var agora = new Date();
+
+  // Cooldown por evento (anti-repetição), vale até para crítica.
+  var cdMin = Number(opts.cooldownMin || 120);
+  var ultimo = Number(p.getProperty('PROATIVO_CD_' + chave) || 0);
+  if (ultimo && (agora.getTime() - ultimo) < cdMin * 60000) {
+    return { permitido: false, motivo: 'cooldown de ' + cdMin + ' min ainda ativo' };
+  }
+  if (!critica) {
+    // Silêncio noturno (ex.: "22:30-07:00"). Atravessa a meia-noite.
+    var janela = String(p.getProperty('PROATIVO_SILENCIO') || '22:30-07:00');
+    var m = janela.match(/^(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})$/);
+    if (m) {
+      var atual = agora.getHours() * 60 + agora.getMinutes();
+      var ini = Number(m[1]) * 60 + Number(m[2]), fim = Number(m[3]) * 60 + Number(m[4]);
+      var dentro = (ini <= fim) ? (atual >= ini && atual < fim) : (atual >= ini || atual < fim);
+      if (dentro) return { permitido: false, motivo: 'silêncio noturno (' + janela + ')' };
+    }
+    // Orçamento diário de interrupções.
+    var hoje = Utilities.formatDate(agora, 'America/Sao_Paulo', 'yyyy-MM-dd');
+    var maxDia = Number(p.getProperty('PROATIVO_MAX_DIA') || 5);
+    var cont = (p.getProperty('PROATIVO_DIA') === hoje) ? Number(p.getProperty('PROATIVO_CONT') || 0) : 0;
+    if (cont >= maxDia) return { permitido: false, motivo: 'orçamento diário esgotado (' + maxDia + ')' };
+    if (!opts.simular) { p.setProperty('PROATIVO_DIA', hoje); p.setProperty('PROATIVO_CONT', String(cont + 1)); }
+  }
+  if (!opts.simular) p.setProperty('PROATIVO_CD_' + chave, String(agora.getTime()));
+  return { permitido: true };
+}
+
+/** Fala no celular respeitando a governança. @return {falou, motivo} */
+function _falarProativo(chave, texto, opts) {
+  opts = opts || {};
+  var g = _governanca(chave, opts);
+  if (!g.permitido) return { falou: false, bloqueado: g.motivo };
+  if (opts.simular) return { falou: 'simulado' };
+  var res = (typeof Jarvis !== 'undefined' && Jarvis.controlarDispositivo)
+    ? Jarvis.controlarDispositivo({ acao: 'falar', texto: texto }) : null;
+  var ok = !!(res && res.status === 'success');
+  try {
+    if (typeof Jarvis !== 'undefined' && Jarvis.registrarEvento) {
+      Jarvis.registrarEvento({ tool: 'proativo:' + chave, ms: 0, ok: ok, resumo: String(texto).substring(0, 120) });
+    }
+  } catch (eL) {}
+  return { falou: ok };
+}
+
 function _avaliarEventosProativos(tel, opts) {
   opts = opts || {};
   var p = PropertiesService.getScriptProperties();
@@ -3046,67 +3139,143 @@ function _avaliarEventosProativos(tel, opts) {
   var disparos = [];
   var bruto = tel || {};
 
-  // A telemetria pode vir com magic-text não substituído ("100|100|[battery_level]") → limpa antes.
+  // ── leitura limpa (a telemetria pode vir com magic-text não substituído) ──
   var nivelTxt = _limparValorTelemetria(bruto.bateria_nivel || bruto.bateria || '');
   var nivel = parseInt(String(nivelTxt).replace(/[^\d]/g, ''), 10);
-  // O [power] do MacroDroid responde em PT: "Ligar" = conectado / "Desligar" = desconectado.
+  if (isNaN(nivel) || nivel < 0 || nivel > 100) nivel = null;
   var cargaTxt = String(_limparValorTelemetria(bruto.carregando || '')).toLowerCase();
+  // O [power] do MacroDroid responde em PT: "Ligar" = conectado / "Desligar" = desconectado.
   var carregando = /deslig|discharg|false|\bnao\b/.test(cargaTxt) ? false
-                 : /lig|charg|true|\bsim\b|\bac\b|usb|plugged|full/.test(cargaTxt);
+                 : (/lig|charg|true|\bsim\b|\bac\b|usb|plugged|full/.test(cargaTxt) ? true : null);
+  var ssid = _limparValorTelemetria(bruto.wifi_nome || bruto.wifi || '');
+  var local = _localPorSsid(ssid);
 
-  if (!isNaN(nivel) && nivel >= 0 && nivel <= 100) {
-    var limite = Number(p.getProperty('PROATIVO_BATERIA_MIN') || 20);
-    var jaAvisou = p.getProperty('PROATIVO_BAT_AVISADO') === '1';
+  // ── snapshot anterior ──
+  var snap = {};
+  try { snap = JSON.parse(p.getProperty('PROATIVO_SNAPSHOT') || '{}') || {}; } catch (e) { snap = {}; }
+  var localAnt = snap.local || null;
 
-    if (carregando) {
-      // Carregador conectado → rearma o aviso para o próximo ciclo de descarga.
-      if (jaAvisou && !simular) { p.deleteProperty('PROATIVO_BAT_AVISADO'); disparos.push({ evento: 'bateria_rearmada' }); }
-    } else if (nivel <= limite && !jaAvisou) {
-      var texto = 'Bruno, atenção: a bateria do celular está em ' + nivel +
-                  ' por cento e não está carregando. Melhor colocar no carregador.';
-      var falou = 'simulado';
-      if (!simular) {
-        var res = (typeof Jarvis !== 'undefined' && Jarvis.controlarDispositivo)
-          ? Jarvis.controlarDispositivo({ acao: 'falar', texto: texto }) : null;
-        falou = !!(res && res.status === 'success');
-        if (falou) p.setProperty('PROATIVO_BAT_AVISADO', '1');   // anti-spam até rearmar
+  // ── TRANSIÇÃO de presença (com debounce na SAÍDA) ──
+  // Chegar numa rede conhecida é sinal forte → dispara na hora. Já "sair" pode ser só uma queda de
+  // Wi-Fi, então exige 2 leituras seguidas fora antes de assumir que ele realmente saiu.
+  var localNovo = localAnt, transicao = null;
+  if (localAnt === null) {
+    localNovo = local;                                  // primeira leitura: só memoriza
+  } else if (local !== localAnt) {
+    if (local === 'casa' || local === 'trabalho') {
+      localNovo = local; transicao = { de: localAnt, para: local };
+    } else {
+      var candN = (snap.candidato === local ? Number(snap.candN || 0) : 0) + 1;
+      if (candN >= 2) { localNovo = local; transicao = { de: localAnt, para: local }; }
+      else if (!simular) {
+        p.setProperty('PROATIVO_SNAPSHOT', JSON.stringify({ local: localAnt, candidato: local, candN: candN,
+          nivel: nivel, carregando: carregando, ssid: ssid, ts: Date.now() }));
+        return { disparos: [], nivel: nivel, carregando: carregando, ssid: ssid, local: localAnt,
+                 nota: 'saída pendente de confirmação (' + candN + '/2)' };
       }
-      disparos.push({ evento: 'bateria_baixa', nivel: nivel, limite: limite, falou: falou, texto: texto });
-      try {
-        if (!simular && typeof Jarvis !== 'undefined' && Jarvis.registrarEvento) {
-          Jarvis.registrarEvento({ tool: 'proativo:bateria_baixa', ms: 0, ok: falou === true,
-            resumo: 'bateria ' + nivel + '% (limite ' + limite + '%) — avisou no celular' });
-        }
-      } catch (eLog) {}
     }
   }
-  return disparos.length ? { disparos: disparos, nivel: (isNaN(nivel) ? null : nivel), carregando: carregando } : null;
+
+  // ── REGRAS de transição ──
+  if (transicao) {
+    var minPonto = _minutosAtePonto();
+    if (transicao.para === 'casa') {
+      var naoLidos = null;
+      try { naoLidos = GmailApp.getInboxUnreadCount(); } catch (eG) {}
+      var txtCasa = 'Bem-vindo, Bruno.' + (naoLidos !== null
+        ? (naoLidos > 0 ? ' Você tem ' + naoLidos + (naoLidos === 1 ? ' e-mail não lido.' : ' e-mails não lidos.') : ' Sua caixa de entrada está limpa.')
+        : '');
+      var rCasa = _falarProativo('chegou_casa', txtCasa, { cooldownMin: 180, simular: simular });
+      disparos.push({ evento: 'chegou_casa', texto: txtCasa, resultado: rCasa });
+    } else if (transicao.para === 'trabalho') {
+      var txtTrab = 'Bom trabalho, Bruno.' + (minPonto !== null && minPonto <= 60
+        ? ' Você bate o ponto em ' + minPonto + ' minutos.' : ' Lembre-se de bater o ponto.');
+      var rTrab = _falarProativo('chegou_trabalho', txtTrab, { cooldownMin: 240, simular: simular });
+      disparos.push({ evento: 'chegou_trabalho', texto: txtTrab, resultado: rTrab });
+    } else if (transicao.de === 'casa') {
+      // Saiu de casa: só vale avisar se o ponto está próximo (senão é interrupção sem valor).
+      if (minPonto !== null && minPonto <= 90) {
+        var txtSaiu = 'Você bate o ponto em ' + minPonto + ' minutos.' +
+          (nivel !== null && nivel < 40 && carregando !== true ? ' Atenção: a bateria está em ' + nivel + ' por cento.' : '');
+        var rSaiu = _falarProativo('saiu_casa', txtSaiu, { cooldownMin: 180, simular: simular });
+        disparos.push({ evento: 'saiu_casa', texto: txtSaiu, resultado: rSaiu });
+      } else {
+        disparos.push({ evento: 'saiu_casa', ignorado: 'ponto distante (' + minPonto + ' min)' });
+      }
+    }
+  }
+
+  // ── REGRA de bateria (mantém o rearme por ciclo de carga + agora sob governança) ──
+  if (nivel !== null) {
+    var limite = Number(p.getProperty('PROATIVO_BATERIA_MIN') || 20);
+    var jaAvisou = p.getProperty('PROATIVO_BAT_AVISADO') === '1';
+    if (carregando === true) {
+      if (jaAvisou && !simular) { p.deleteProperty('PROATIVO_BAT_AVISADO'); disparos.push({ evento: 'bateria_rearmada' }); }
+    } else if (nivel <= limite && !jaAvisou) {
+      var critica = nivel <= 10;
+      var txtBat = 'Bruno, atenção: a bateria do celular está em ' + nivel +
+                   ' por cento e não está carregando. Melhor colocar no carregador.';
+      var rBat = _falarProativo('bateria_baixa', txtBat,
+        { cooldownMin: 60, prioridade: critica ? 'critica' : 'normal', simular: simular });
+      if (rBat.falou === true) p.setProperty('PROATIVO_BAT_AVISADO', '1');
+      disparos.push({ evento: 'bateria_baixa', nivel: nivel, limite: limite, critica: critica, resultado: rBat });
+    }
+  }
+
+  // ── grava o snapshot novo ──
+  if (!simular) {
+    p.setProperty('PROATIVO_SNAPSHOT', JSON.stringify({ local: localNovo, candidato: null, candN: 0,
+      nivel: nivel, carregando: carregando, ssid: ssid, ts: Date.now() }));
+  }
+  return { disparos: disparos, nivel: nivel, carregando: carregando, ssid: ssid,
+           local: localNovo, localAnterior: localAnt, transicao: transicao };
 }
 
-/** Simula a chegada de uma telemetria p/ testar as regras proativas SEM esperar 15 min.
- *  args {bateria, carregando, simular:false p/ FALAR de verdade no celular}. Default = só simula. */
+/** Simula a chegada de uma telemetria p/ testar as regras SEM esperar 15 min.
+ *  args {bateria, carregando, wifi, simular:false p/ AGIR de verdade}. Default = só simula. */
 function diagEventoProativo(args) {
   args = args || {};
   var tel = {
-    bateria_nivel: String(args.bateria !== undefined ? args.bateria : 15),
-    carregando: String(args.carregando !== undefined ? args.carregando : 'Desligar')
+    bateria_nivel: String(args.bateria !== undefined ? args.bateria : 50),
+    carregando: String(args.carregando !== undefined ? args.carregando : 'Desligar'),
+    wifi_nome: String(args.wifi !== undefined ? args.wifi : '')
   };
   var simular = args.simular !== false;
   var r = _avaliarEventosProativos(tel, { simular: simular });
-  var p = PropertiesService.getScriptProperties();
-  return { ok: true, simulado: simular, telemetriaUsada: tel, resultado: r,
-           estado: { PROATIVO_BATERIA_MIN: p.getProperty('PROATIVO_BATERIA_MIN') || '20 (default)',
-                     PROATIVO_BAT_AVISADO: p.getProperty('PROATIVO_BAT_AVISADO') || '(rearmado)' } };
+  return { ok: true, simulado: simular, telemetriaUsada: tel, resultado: r, estado: diagProativoEstado().estado };
 }
 
-/** Config das regras proativas. args {bateriaMin} e/ou {rearmar:true} (libera novo aviso de bateria). */
+/** Estado atual da governança + snapshot + config de presença. */
+function diagProativoEstado() {
+  var p = PropertiesService.getScriptProperties();
+  var snap = null; try { snap = JSON.parse(p.getProperty('PROATIVO_SNAPSHOT') || 'null'); } catch (e) {}
+  return { ok: true, estado: {
+    WIFI_CASA: p.getProperty('WIFI_CASA') || '(não configurado)',
+    WIFI_TRABALHO: p.getProperty('WIFI_TRABALHO') || '(não configurado)',
+    PROATIVO_BATERIA_MIN: p.getProperty('PROATIVO_BATERIA_MIN') || '20 (default)',
+    PROATIVO_MAX_DIA: p.getProperty('PROATIVO_MAX_DIA') || '5 (default)',
+    PROATIVO_SILENCIO: p.getProperty('PROATIVO_SILENCIO') || '22:30-07:00 (default)',
+    consumoHoje: (p.getProperty('PROATIVO_DIA') || '-') + ' → ' + (p.getProperty('PROATIVO_CONT') || '0'),
+    PROATIVO_BAT_AVISADO: p.getProperty('PROATIVO_BAT_AVISADO') || '(rearmado)',
+    snapshot: snap, minutosAtePonto: _minutosAtePonto()
+  } };
+}
+
+/** Config das regras proativas e da presença por Wi-Fi.
+ *  args {bateriaMin, maxDia, silencio:"22:30-07:00", wifiCasa:"A|B", wifiTrabalho:"A|B",
+ *        rearmar:true, resetarSnapshot:true, zerarOrcamento:true} */
 function configurarProativo(args) {
   args = args || {};
   var p = PropertiesService.getScriptProperties();
   if (args.bateriaMin !== undefined) p.setProperty('PROATIVO_BATERIA_MIN', String(Number(args.bateriaMin)));
+  if (args.maxDia !== undefined) p.setProperty('PROATIVO_MAX_DIA', String(Number(args.maxDia)));
+  if (args.silencio !== undefined) p.setProperty('PROATIVO_SILENCIO', String(args.silencio));
+  if (args.wifiCasa !== undefined) p.setProperty('WIFI_CASA', String(args.wifiCasa));
+  if (args.wifiTrabalho !== undefined) p.setProperty('WIFI_TRABALHO', String(args.wifiTrabalho));
   if (args.rearmar === true) p.deleteProperty('PROATIVO_BAT_AVISADO');
-  return { ok: true, PROATIVO_BATERIA_MIN: p.getProperty('PROATIVO_BATERIA_MIN') || '20 (default)',
-           PROATIVO_BAT_AVISADO: p.getProperty('PROATIVO_BAT_AVISADO') || '(rearmado)' };
+  if (args.resetarSnapshot === true) p.deleteProperty('PROATIVO_SNAPSHOT');
+  if (args.zerarOrcamento === true) { p.deleteProperty('PROATIVO_DIA'); p.deleteProperty('PROATIVO_CONT'); }
+  return diagProativoEstado();
 }
 
 /** TELEMETRIA PERIÓDICA · pinga o webhook jarvis_telemetria do MacroDroid; a macro responde POSTando
@@ -3301,6 +3470,7 @@ function _diagDispatch(body) {
     configurarEvolutionUrl: (typeof configurarEvolutionUrl !== 'undefined') ? configurarEvolutionUrl : null,
     diagEventoProativo:     (typeof diagEventoProativo !== 'undefined') ? diagEventoProativo : null,
     diagRotina:             (typeof diagRotina !== 'undefined') ? diagRotina : null,
+    diagProativoEstado:     (typeof diagProativoEstado !== 'undefined') ? diagProativoEstado : null,
     configurarProativo:     (typeof configurarProativo !== 'undefined') ? configurarProativo : null,
     diagTelemetria:         (typeof diagTelemetria !== 'undefined') ? diagTelemetria : null,
     pingTelemetria:         (typeof pingTelemetria !== 'undefined') ? pingTelemetria : null,

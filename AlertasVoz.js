@@ -1,0 +1,186 @@
+// ===================================================================================
+// AlertasVoz.js — ALERTAS DE ÁUDIO agendados no celular (o Jarvis FALA no Android em
+// horários definidos). Precisão de MINUTO via um tick dedicado (a cada 1 min) — separado
+// do tick de 15 min da Agenda (que entrega no WhatsApp por hora). Armazena em Script Property
+// (leve p/ ler a cada minuto). Cada alerta: {id, hora, minuto, dias[], texto, dinamico, ativo, ult}.
+//  - texto fixo  → fala o texto literal.
+//  - dinamico    → trata o texto como pedido e fala a RESPOSTA que o Jarvis gerar (ex.: "minha agenda de hoje").
+// ===================================================================================
+
+var AlertasVoz = (function () {
+  'use strict';
+
+  var KEY = 'ALERTAS_VOZ';
+  var TICK = 'tickAlertasVoz';
+  var TZ = 'America/Sao_Paulo';
+
+  function _ler() { try { return JSON.parse(PropertiesService.getScriptProperties().getProperty(KEY) || '[]'); } catch (e) { return []; } }
+  function _salvar(arr) { PropertiesService.getScriptProperties().setProperty(KEY, JSON.stringify(arr || [])); }
+  function _owner() { return PropertiesService.getScriptProperties().getProperty('OWNER_EMAIL') || 'owner'; }
+
+  // Garante o gatilho de 1 min (idempotente; respeita o limite de gatilhos).
+  function _garantirTick() {
+    try {
+      var ts = ScriptApp.getProjectTriggers().filter(function (t) { return t.getHandlerFunction() === TICK; });
+      if (ts.length === 0) ScriptApp.newTrigger(TICK).timeBased().everyMinutes(1).create();
+      else for (var i = 1; i < ts.length; i++) ScriptApp.deleteTrigger(ts[i]); // remove DUPLICADOS, mantém 1
+    } catch (e) { Logger.log('[AlertasVoz] tick: ' + e.message); }
+  }
+
+  /** Cria um alerta. o:{hora 0-23, minuto 0-59, dias[0=Dom..6=Sáb] (vazio=todos), texto, dinamico?} */
+  function criar(o) {
+    o = o || {};
+    var h = Number(o.hora);
+    if (!isFinite(h) || h < 0 || h > 23) return { ok: false, erro: 'Informe a hora (0-23).' };
+    var m = Number(o.minuto || 0); if (!isFinite(m) || m < 0 || m > 59) m = 0;
+    var texto = String(o.texto || '').trim();
+    if (!texto) return { ok: false, erro: 'Informe o texto do alerta.' };
+    var dias = Array.isArray(o.dias) ? o.dias.map(Number).filter(function (x) { return x >= 0 && x <= 6; }) : [];
+    var item = { id: Utilities.getUuid().slice(0, 8), hora: h, minuto: m, dias: dias, texto: texto, dinamico: !!o.dinamico, ativo: true, ult: '' };
+    var arr = _ler(); arr.push(item); _salvar(arr); _garantirTick();
+    return { ok: true, alerta: item, info: 'Alerta de voz às ' + _hhmm(h, m) + (dias.length ? (' (' + dias.map(_nomeDia).join(',') + ')') : ' (todos os dias)') + ' criado.' };
+  }
+
+  function listar() { return _ler().filter(function (a) { return a.ativo !== false; }); }
+
+  /** Edita um alerta pelo id. campos: {hora?, minuto?, dias?, texto?, dinamico?, ativo?}. */
+  function editar(id, campos) {
+    campos = campos || {};
+    var arr = _ler(), achou = null;
+    arr.forEach(function (a) {
+      if (a.id !== id) return;
+      if (campos.hora !== undefined && isFinite(Number(campos.hora))) a.hora = Math.max(0, Math.min(23, Number(campos.hora)));
+      if (campos.minuto !== undefined && isFinite(Number(campos.minuto))) a.minuto = Math.max(0, Math.min(59, Number(campos.minuto)));
+      if (Array.isArray(campos.dias)) a.dias = campos.dias.map(Number).filter(function (x) { return x >= 0 && x <= 6; });
+      if (campos.texto !== undefined && String(campos.texto).trim()) a.texto = String(campos.texto).trim();
+      if (campos.dinamico !== undefined) a.dinamico = !!campos.dinamico;
+      if (campos.ativo !== undefined) a.ativo = !!campos.ativo;
+      a.ult = ''; // reseta o dedup-do-dia (mudou de horário/estado)
+      achou = a;
+    });
+    if (!achou) return { ok: false, erro: 'Alerta não encontrado.' };
+    _salvar(arr); _garantirTick();
+    return { ok: true, alerta: achou };
+  }
+
+  /** Dispara um alerta AGORA (prévia): fala o texto (ou gera, se dinâmico) no celular. */
+  function testar(id) {
+    var a = null, arr = _ler();
+    for (var i = 0; i < arr.length; i++) { if (arr[i].id === id) { a = arr[i]; break; } }
+    if (!a) return { ok: false, erro: 'Alerta não encontrado.' };
+    var fala = a.texto;
+    if (a.dinamico) { try { fala = String(Jarvis.ask(_owner(), a.texto, [], null, { interativo: false }) || a.texto); } catch (e) { fala = a.texto; } }
+    try { if (typeof _prepararTextoFala === 'function') fala = _prepararTextoFala(fala); } catch (e) {}
+    var r; try { r = Jarvis.controlarDispositivo({ acao: 'falar', texto: fala }); } catch (e) { return { ok: false, erro: e.message }; }
+    return { ok: !!(r && r.status === 'success'), enviado: true };
+  }
+
+  function cancelar(idOuTrecho) {
+    var alvo = String(idOuTrecho || '').toLowerCase().trim();
+    if (!alvo) return { ok: false, erro: 'Informe o id ou um trecho do texto.' };
+    var arr = _ler(), antes = arr.length;
+    arr = arr.filter(function (a) { return !(a.id === idOuTrecho || String(a.texto || '').toLowerCase().indexOf(alvo) !== -1); });
+    _salvar(arr);
+    return { ok: true, removidos: antes - arr.length };
+  }
+
+  // Handler do tick (1 min): dispara os alertas cujo HH:MM (e dia) batem agora.
+  function tick() {
+    var lock = LockService.getScriptLock();
+    if (!lock.tryLock(1500)) return;
+    try {
+      var agora = new Date();
+      var h = Number(Utilities.formatDate(agora, TZ, 'H'));
+      var m = Number(Utilities.formatDate(agora, TZ, 'm'));
+      var dow = Number(Utilities.formatDate(agora, TZ, 'u')) % 7; // 1=Seg..7=Dom → %7: Dom=0..Sáb=6
+      var carimbo = Utilities.formatDate(agora, TZ, 'yyyy-MM-dd') + 'T' + h + ':' + m;
+      var arr = _ler(), mudou = false;
+      arr.forEach(function (a) {
+        if (a.ativo === false) return;
+        if (Number(a.hora) !== h || Number(a.minuto || 0) !== m) return;
+        if (a.dias && a.dias.length && a.dias.indexOf(dow) === -1) return;
+        if (a.ult === carimbo) return; // dedup (property, mesmo minuto)
+        // dedup à prova de múltiplos gatilhos/race (CacheService, atômico entre execuções): cada
+        // (alerta, minuto) dispara UMA vez — evita até a geração dinâmica (Jarvis.ask) em dobro.
+        try { var _ck = CacheService.getScriptCache(), _ckk = 'av_' + a.id + '_' + carimbo; if (_ck.get(_ckk)) return; _ck.put(_ckk, '1', 120); } catch (eAv) {}
+        var fala = a.texto;
+        if (a.dinamico) {
+          try { fala = String(Jarvis.ask(_owner(), a.texto, [], null, { interativo: false }) || a.texto); } catch (e) { fala = a.texto; }
+        }
+        try { if (typeof _prepararTextoFala === 'function') fala = _prepararTextoFala(fala); } catch (e) {}
+        try { Jarvis.controlarDispositivo({ acao: 'falar', texto: fala }); } catch (e) {}
+        a.ult = carimbo; mudou = true;
+      });
+      if (mudou) _salvar(arr);
+      // Auto-limpeza: sem alertas ativos → remove o gatilho de 1 min (criar() recria quando precisar).
+      if (!arr.some(function (a) { return a.ativo !== false; })) {
+        try { ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === TICK) ScriptApp.deleteTrigger(t); }); } catch (e) {}
+      }
+    } finally { lock.releaseLock(); }
+  }
+
+  function _hhmm(h, m) { return (h < 10 ? '0' + h : h) + ':' + (m < 10 ? '0' + m : m); }
+  function _nomeDia(d) { return ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'][d] || d; }
+
+  // ── TURNO DE TRABALHO (ponto) ────────────────────────────────────────────────
+  // "Jarvis, essa semana vou trabalhar no turno da manhã/tarde" → reconfigura os 4
+  // alertas falados de ponto (Seg–Sex) num comando só. Alertas de ponto levam tag:'ponto'
+  // (e, por compatibilidade, alertas antigos são reconhecidos pelo texto "marcar o ponto").
+  var _TURNOS = {
+    manha: {
+      nome: 'da manhã',
+      pontos: [[8, 0, 'início da jornada de trabalho'], [12, 0, 'início do intervalo de almoço'],
+               [13, 0, 'retorno do intervalo de almoço'], [16, 45, 'fim da jornada de trabalho']]
+    },
+    tarde: {
+      nome: 'da tarde',
+      pontos: [[14, 0, 'início da jornada de trabalho'], [19, 0, 'início do intervalo de janta'],
+               [20, 0, 'retorno do intervalo de janta'], [23, 0, 'fim da jornada de trabalho']]
+    }
+  };
+
+  /** Interpreta o turno a partir de texto livre ("turno da manhã", "vespertino"...). PURA (testável). */
+  function interpretarTurno(texto) {
+    var t = String(texto || '').toLowerCase();
+    if (/tarde|vespertin|noturn|noite/.test(t)) return 'tarde';
+    if (/manh|matutin|cedo/.test(t)) return 'manha';
+    return null;
+  }
+
+  /** Define o turno da semana: remove os alertas de ponto atuais e cria os 4 do turno (Seg–Sex). */
+  function definirTurno(turno) {
+    var t = _TURNOS[turno] ? turno : interpretarTurno(turno);
+    if (!t || !_TURNOS[t]) return { ok: false, erro: 'Turno não reconhecido. Diga "turno da manhã" ou "turno da tarde".' };
+    var def = _TURNOS[t];
+    var arr = _ler().filter(function (a) { return a.tag !== 'ponto' && !/marcar (o )?ponto/i.test(String(a.texto || '')); });
+    def.pontos.forEach(function (p) {
+      arr.push({ id: Utilities.getUuid().slice(0, 8), hora: p[0], minuto: p[1], dias: [1, 2, 3, 4, 5],
+                 texto: 'Bruno, lembre-se de marcar o ponto de ' + p[2] + '.', dinamico: false, ativo: true, ult: '', tag: 'ponto' });
+    });
+    _salvar(arr); _garantirTick();
+    var horarios = def.pontos.map(function (p) { return _hhmm(p[0], p[1]); }).join(', ');
+    try { PropertiesService.getScriptProperties().setProperty('TURNO_TRABALHO_ATUAL', t); } catch (e) {}
+    // Memória de longo prazo: registra a decisão na wiki (o Jarvis "aprende" a rotina do dono).
+    try {
+      if (typeof WikiMemoryService !== 'undefined' && WikiMemoryService.registrarNoLog) {
+        WikiMemoryService.registrarNoLog('Bruno definiu por comando o turno de trabalho ' + def.nome.toUpperCase() +
+          ' para esta semana. Alertas de ponto (Seg–Sex) reconfigurados para: ' + horarios + '.');
+      }
+    } catch (e) {}
+    return { ok: true, turno: t, resumo: 'Entendido, Bruno! Turno ' + def.nome + ' ativado. Vou te lembrar do ponto de segunda a sexta às ' + horarios + '.' };
+  }
+
+  /** Turno vigente ('manha'|'tarde'|null) — lido da property gravada em definirTurno. */
+  function turnoAtual() {
+    try { return PropertiesService.getScriptProperties().getProperty('TURNO_TRABALHO_ATUAL') || null; } catch (e) { return null; }
+  }
+
+  return { criar: criar, listar: listar, editar: editar, testar: testar, cancelar: cancelar, tick: tick,
+           definirTurno: definirTurno, interpretarTurno: interpretarTurno, turnoAtual: turnoAtual };
+})();
+
+/** Handler do gatilho temporal de 1 min (alertas de voz no celular). NÃO renomear. */
+function tickAlertasVoz() {
+  try { if (typeof Heartbeat !== 'undefined') Heartbeat.bater('alertasVoz'); } catch (e) {}
+  try { AlertasVoz.tick(); } catch (e) { Logger.log('[tickAlertasVoz] ' + e.message); }
+}

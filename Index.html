@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <base target="_top" />
+  <title>Soft_App_Web_Application · Chat IA</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+  <!-- Bibliotecas para Geração de PDF -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <!-- NOVO: Adiciona a biblioteca pdf-lib para manipulação avançada de PDFs -->
+  <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.23/jspdf.plugin.autotable.min.js"></script>
+  <?!= include('Stylesheet.html'); ?>
+</head>
+<body class="state-checking">
+  <!-- ===================== BOOT (verificando sessão) ===================== -->
+  <div id="authBoot"><div class="boot-spinner"></div></div>
+
+  <!-- ===================== LOGIN / CADASTRO ===================== -->
+  <div id="authScreen">
+    <div class="auth__card glass">
+      <div class="auth__brand">
+        <div class="brand__logo">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <circle cx="5" cy="5" r="1.6"/><circle cx="12" cy="5" r="1.6"/><circle cx="19" cy="5" r="1.6"/>
+            <circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>
+            <circle cx="5" cy="19" r="1.6"/><circle cx="12" cy="19" r="1.6"/><circle cx="19" cy="19" r="1.6"/>
+          </svg>
+        </div>
+        <div class="txt"><strong>Soft Web App Application</strong><span>Tecnologh</span></div>
+      </div>
+
+      <div class="auth__tabs">
+        <button type="button" class="auth__tab is-active" id="tabLogin">Entrar</button>
+        <button type="button" class="auth__tab" id="tabSignup">Criar conta</button>
+      </div>
+
+      <!-- LOGIN -->
+      <form class="auth__form is-active" id="loginForm" autocomplete="on">
+        <div class="auth__error" id="loginError"></div>
+        <div class="field">
+          <label for="loginEmail">E-mail</label>
+          <input type="email" id="loginEmail" placeholder="voce@email.com" required />
+        </div>
+        <div class="field">
+          <label for="loginSenha">Senha</label>
+          <div class="input-wrap">
+            <input type="password" id="loginSenha" placeholder="••••••••" required />
+            <button type="button" class="pw-toggle" data-target="loginSenha" aria-label="Mostrar senha">
+              <svg class="eye" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+              <svg class="eye-off" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19M14.12 14.12a3 3 0 1 1-4.24-4.24"/><path d="M1 1l22 22"/><path d="M6.61 6.61A18.5 18.5 0 0 0 1 12s4 8 11 8a9.12 9.12 0 0 0 5.39-1.61"/></svg>
+            </button>
+          </div>
+        </div>
+        <button type="submit" class="auth__submit" id="loginBtn">Entrar</button>
+      </form>
+
+      <!-- CADASTRO -->
+      <form class="auth__form" id="signupForm" autocomplete="on">
+        <div class="auth__error" id="signupError"></div>
+        <div class="auth__avatar">
+          <div class="auth__avatar-pic" id="avatarPic" title="Escolher foto">
+            <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          </div>
+          <span class="auth__avatar-hint">Toque para adicionar um avatar (opcional)</span>
+          <input type="file" id="avatarInput" accept="image/*" hidden />
+        </div>
+        <div class="field">
+          <label for="suNome">Nome</label>
+          <input type="text" id="suNome" placeholder="Seu nome completo" required />
+        </div>
+        <div class="field">
+          <label for="suEmail">E-mail</label>
+          <input type="email" id="suEmail" placeholder="voce@email.com" required />
+        </div>
+        <div class="field">
+          <label for="suSenha">Senha</label>
+          <div class="input-wrap">
+            <input type="password" id="suSenha" placeholder="Mínimo de 8 caracteres" required />
+            <button type="button" class="pw-toggle" data-target="suSenha" aria-label="Mostrar senha">
+              <svg class="eye" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+              <svg class="eye-off" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19M14.12 14.12a3 3 0 1 1-4.24-4.24"/><path d="M1 1l22 22"/><path d="M6.61 6.61A18.5 18.5 0 0 0 1 12s4 8 11 8a9.12 9.12 0 0 0 5.39-1.61"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="field">
+          <label for="suSenha2">Confirmar senha</label>
+          <div class="input-wrap">
+            <input type="password" id="suSenha2" placeholder="Repita a senha" required />
+            <button type="button" class="pw-toggle" data-target="suSenha2" aria-label="Mostrar senha">
+              <svg class="eye" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+              <svg class="eye-off" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19M14.12 14.12a3 3 0 1 1-4.24-4.24"/><path d="M1 1l22 22"/><path d="M6.61 6.61A18.5 18.5 0 0 0 1 12s4 8 11 8a9.12 9.12 0 0 0 5.39-1.61"/></svg>
+            </button>
+          </div>
+        </div>
+        <button type="submit" class="auth__submit" id="signupBtn">Criar conta</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="app">
+    <!-- ===================== SIDEBAR ===================== -->
+    <aside class="sidebar glass" id="sidebar" aria-label="Navegação principal">
+      <div class="brand">
+        <div class="brand__logo" id="brandLogo" title="Expandir / recolher">
+          <!-- logo Softtech (grade de pontos) -->
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <circle cx="5" cy="5" r="1.6"/><circle cx="12" cy="5" r="1.6"/><circle cx="19" cy="5" r="1.6"/>
+            <circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>
+            <circle cx="5" cy="19" r="1.6"/><circle cx="12" cy="19" r="1.6"/><circle cx="19" cy="19" r="1.6"/>
+          </svg>
+        </div>
+        <div class="brand__text">
+          <strong>Soft Web App Application</strong>
+          <span>Tecnologh</span>
+        </div>
+        <button class="brand__collapse" id="collapseBtn" aria-label="Recolher menu" title="Recolher menu">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+      </div>
+
+      <nav class="nav">
+        <p class="nav__label">Visão geral</p>
+        <ul class="nav__list" id="navOverview">
+          <li><a class="nav__item" data-tip="Dashboard" id="dashboardNav" tabindex="0">
+            <span class="nav__icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></span>
+            <span class="nav__text">Dashboard</span>
+          </a></li>
+          <li><a class="nav__item" data-tip="Dispositivo" id="dispositivoNav" tabindex="0">
+            <span class="nav__icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg></span>
+            <span class="nav__text">Dispositivo</span>
+          </a></li>
+          <!-- WhatsApp fica por ÚLTIMO: a Evolution API está fora do ar/escopo (Railway encerrou o free
+               tier). Mantido no menu para não perder a feature, mas sem ocupar posição de destaque. -->
+          <li><a class="nav__item" data-tip="WhatsApp" id="whatsappNav" tabindex="0">
+            <span class="nav__icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></span>
+            <span class="nav__text">WhatsApp</span>
+          </a></li>
+        </ul>
+
+        <p class="nav__label">Conta</p>
+        <ul class="nav__list" id="navAccount">
+          <li class="nav__group">
+            <a class="nav__item" data-tip="Chat" id="chatNav" tabindex="0">
+              <span class="nav__icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"/></svg></span>
+              <span class="nav__text">Chat</span>
+              <button type="button" class="conv-new" id="convNew" title="Nova conversa" aria-label="Nova conversa">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              </button>
+            </a>
+            <ul class="conv-list" id="convList"></ul>
+          </li>
+          <li><a class="nav__item" data-tip="Configurações" tabindex="0">
+            <span class="nav__icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg></span>
+            <span class="nav__text">Configurações</span>
+          </a></li>
+          <li><a class="nav__item" data-tip="Sair" tabindex="0">
+            <span class="nav__icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></span>
+            <span class="nav__text">Sair</span>
+          </a></li>
+        </ul>
+      </nav>
+
+      <div class="sidebar__footer">
+        <label class="theme-toggle" title="Alternar tema claro/escuro">
+          <span class="ico-sun"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M6.3 17.7l-1.4 1.4M19.1 4.9l-1.4 1.4"/></svg></span>
+          <span class="switch">
+            <input type="checkbox" id="themeToggle" role="switch" aria-label="Modo escuro" />
+            <span class="switch__track"><span class="switch__knob"></span></span>
+          </span>
+          <span class="ico-moon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg></span>
+        </label>
+      </div>
+    </aside>
+
+    <div class="scrim" id="scrim"></div>
+
+    <!-- ===================== MAIN ===================== -->
+    <main class="main">
+      <header class="topbar glass">
+        <button class="topbar__menu" id="mobileToggle" aria-label="Abrir menu">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </button>
+        <div class="topbar__heading">
+          <h1 id="viewTitle">Chat IA</h1>
+          <p id="viewSubtitle">Assistente · Soft Web App Application</p>
+        </div>
+        <span class="topbar__status" id="chatStatus"><span class="status-dot"></span> Online</span>
+
+        <div class="profile-wrap">
+          <button class="topbar__profile" id="profileBtn" aria-haspopup="true" aria-expanded="false">
+            <span class="avatar">—</span>
+            <span class="who"><strong>Carregando…</strong><span></span></span>
+          </button>
+          <div class="popover glass" id="profilePopover" role="menu">
+            <div class="popover__head">
+              <span class="avatar">—</span>
+              <span class="who"><strong>Carregando…</strong><span></span></span>
+            </div>
+            <a class="popover__item" role="menuitem" id="popoverEdit"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg> Editar perfil</a>
+            <a class="popover__item" role="menuitem" id="popoverVozes"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg> Vozes do Jarvis</a>
+            <a class="popover__item" role="menuitem" id="popoverHistorico"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg> Histórico de conversas</a>
+            <a class="popover__item" role="menuitem" id="popoverTurno"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> Meu turno de trabalho</a>
+            <a class="popover__item" role="menuitem" id="popoverPrefs"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg> Preferências do Jarvis</a>
+            <a class="popover__item" role="menuitem" id="popoverStatus"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg> Status do sistema</a>
+            <a class="popover__item" role="menuitem" id="popoverLogout"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg> Sair</a>
+            <div class="popover__foot">Jarvis v2.0 · por Bruno F. S. Marques</div>
+          </div>
+        </div>
+      </header>
+
+      <section class="chat glass">
+        <div class="dropzone" id="dropzone">
+          <div class="dropzone__inner">
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <span>Solte o arquivo aqui (imagem, PDF, CSV ou texto)</span>
+          </div>
+        </div>
+        <div class="chat__messages" id="messages">
+          <div class="welcome" id="welcome">
+            <div class="welcome__badge">
+              <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h2a4 4 0 0 1 4 4v1h1a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1a4 4 0 0 1-4 4H9a4 4 0 0 1-4-4H4a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h1v-1a4 4 0 0 1 4-4h2V5.73c-.6-.34-1-.99-1-1.73a2 2 0 0 1 2-2Z"/><circle cx="9" cy="13" r="1"/><circle cx="15" cy="13" r="1"/></svg>
+            </div>
+            <h2>Como posso ajudar hoje?</h2>
+            <p>Sou o Jarvis, seu assistente pessoal. Cuido de e-mail, agenda e Drive, controlo seu celular Android por voz e consulto seu segundo cérebro.</p>
+            <div class="suggestions">
+              <button class="chip">Resuma meus e-mails não lidos</button>
+              <button class="chip">Quais meus próximos compromissos?</button>
+              <button class="chip">Qual o status do meu celular?</button>
+              <button class="chip">Bíblia falada em Salmos 23:1</button>
+            </div>
+          </div>
+        </div>
+
+        <form class="composer glass" id="composer">
+          <div class="composer__preview" id="attachPreview" hidden></div>
+          <div class="composer__row">
+            <button type="button" class="composer__attach" id="attachBtn" aria-label="Anexar arquivo" title="Anexar imagem, PDF ou texto/CSV">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+            </button>
+            <input type="file" id="imageInput" accept="image/*,video/*,application/pdf,.csv,.txt,.json,.md,.tsv,.log,audio/*" multiple hidden />
+            <input type="file" id="audioInput" accept="audio/*" capture="microphone" hidden />
+            <button type="button" class="composer__attach" id="micBtn" aria-label="Gravar áudio" title="Gravar e enviar áudio (o Jarvis transcreve)">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+            </button>
+            <textarea id="input" rows="1" placeholder="Envie uma mensagem, anexe imagem/vídeo/áudio/PDF ou cole um link do YouTube…" autocomplete="off"></textarea>
+            <button type="submit" class="composer__send" id="sendBtn" aria-label="Enviar" disabled>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <!-- ===================== VIEW: CONEXÕES WHATSAPP ===================== -->
+      <!-- ===================== DASHBOARD · Centro de Comando ===================== -->
+      <section class="dash-view glass" id="dashboardView" hidden>
+        <div class="dash-head">
+          <div>
+            <h2 id="dashSaudacao">Olá! <span id="dashTurnoPill" class="dash-turno-pill" hidden></span></h2>
+            <p id="dashSub">Seu centro de comando</p>
+            <p id="dashResumoDia" class="dash-resumo-dia" hidden></p>
+          </div>
+          <button type="button" id="dashRefresh" class="dash-refresh" title="Atualizar" aria-label="Atualizar">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>
+          </button>
+        </div>
+        <div class="dash-grid" id="dashCards"><div class="conv-empty">Carregando…</div></div>
+      </section>
+
+      <section class="wpp-view glass" id="whatsappView" hidden>
+        <div class="wpp-head">
+          <div>
+            <h2>Conexões WhatsApp</h2>
+            <p>Conecte seu WhatsApp pessoal — orquestrado pelo Jarvis</p>
+          </div>
+          <div class="wpp-actions">
+            <a id="wppDashboard" class="btn-ghost" target="_blank" rel="noopener" hidden>Dashboard Evolution ↗</a>
+            <button type="button" class="btn-ghost" id="wppWebhook" title="Aponta o webhook da instância para o Jarvis — ele passa a receber e responder as mensagens">⚡ Ativar bot</button>
+            <button type="button" class="btn-ghost" id="wppRefresh">Atualizar</button>
+          </div>
+        </div>
+        <div class="wpp-instances" id="wppInstances"><div class="conv-empty">Carregando…</div></div>
+      </section>
+
+      <!-- ===================== VIEW: CONTROLE DE DISPOSITIVO (Celular) ===================== -->
+      <section class="wpp-view glass" id="dispositivoView" hidden>
+        <div class="wpp-head">
+          <div>
+            <h2>Controle de Dispositivo (Celular)</h2>
+            <p>Monitore a telemetria, veja logs de intents e envie comandos de teste ao vivo</p>
+          </div>
+          <div class="wpp-actions">
+            <button type="button" class="btn-ghost" id="dispRefresh">Atualizar Status</button>
+          </div>
+        </div>
+
+        <div class="dash-grid" style="margin-top:20px; display:grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px;">
+          <!-- Telemetria do Aparelho -->
+          <div class="dash-card dash-card--info">
+            <div class="dash-card__head">
+              <span class="dash-card__icon">📱</span>
+              <h3>Status do Celular</h3>
+            </div>
+            <ul class="dash-list" id="dispTelemetryList">
+              <li>Carregando status...</li>
+            </ul>
+          </div>
+
+          <!-- Simulador de Intents -->
+          <div class="dash-card dash-card--info">
+            <div class="dash-card__head">
+              <span class="dash-card__icon">⚡</span>
+              <h3>Simulador de Teste Rápido</h3>
+            </div>
+            <div style="padding: 14px; display: flex; flex-direction: column; gap: 10px;">
+              <div style="display: flex; gap: 8px;">
+                <select id="simAcao" style="flex: 1; padding: 8px; border-radius: 6px; border: 1px solid var(--glass-border); background: var(--glass-bg); color: inherit; font-size:13px;">
+                  <option value="abrirUrl">Ação: Abrir URL / Deep-link</option>
+                  <option value="abrirApp">Ação: Abrir App (por nome)</option>
+                  <option value="navegar">Ação: Navegar (Maps)</option>
+                  <option value="falar">Ação: Falar (TTS)</option>
+                  <option value="notificar">Ação: Notificar</option>
+                  <option value="intent">Ação: Enviar Intent (avançado)</option>
+                </select>
+              </div>
+              
+              <!-- Inputs de Intent (avançado; oculto por padrão — a ação padrão é Abrir URL) -->
+              <div id="simIntentFields" style="display: none; flex-direction: column; gap: 8px;">
+                <div style="display:flex; flex-direction:column; gap:3px;">
+                  <span style="font-size:10.5px; opacity:0.8; font-weight:500;">Ação do Intent (Action):</span>
+                  <input type="text" id="simIntentAction" placeholder="ex: android.intent.action.VIEW" style="padding: 8px; border-radius: 6px; border: 1px solid var(--glass-border); background: var(--glass-bg); color: inherit; font-size:12.5px;" value="android.intent.action.VIEW">
+                </div>
+                <div style="display:flex; flex-direction:column; gap:3px;">
+                  <span style="font-size:10.5px; opacity:0.8; font-weight:500;">Pacote do Aplicativo (Package Name):</span>
+                  <input type="text" id="simIntentPackage" placeholder="ex: com.spotify.music" style="padding: 8px; border-radius: 6px; border: 1px solid var(--glass-border); background: var(--glass-bg); color: inherit; font-size:12.5px;">
+                </div>
+                <div style="display:flex; flex-direction:column; gap:3px;">
+                  <span style="font-size:10.5px; opacity:0.8; font-weight:500;">Dados / URI (Data):</span>
+                  <input type="text" id="simIntentData" placeholder="ex: spotify:search:Nickelback" style="padding: 8px; border-radius: 6px; border: 1px solid var(--glass-border); background: var(--glass-bg); color: inherit; font-size:12.5px;">
+                </div>
+              </div>
+              
+              <!-- Input Geral (visível por padrão para a ação Abrir URL) -->
+              <input type="text" id="simTexto" placeholder="URL / deep-link (ex: youversion://bible?reference=MAT.6.7)" style="padding: 8px; border-radius: 6px; border: 1px solid var(--glass-border); background: var(--glass-bg); color: inherit; font-size:12.5px;">
+
+              <button type="button" id="simEnviarBtn" class="auth__submit" style="margin-top: 5px;">Disparar Webhook no Celular</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Ações Rápidas (testes ao vivo dos comandos que FUNCIONAM) -->
+        <div class="dash-card dash-card--info" style="margin-top:20px;">
+          <div class="dash-card__head">
+            <span class="dash-card__icon">🚀</span>
+            <h3>Ações Rápidas (teste ao vivo)</h3>
+          </div>
+          <div style="padding: 14px;">
+            <p style="font-size:12.5px; opacity:.8; margin:0 0 12px;">Um toque dispara o comando real no seu celular — os mesmos deep-links que o Jarvis usa por voz.</p>
+            <div id="dispQuickActions" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:8px;"></div>
+          </div>
+        </div>
+
+        <!-- Histórico de Eventos/Logs do Celular -->
+        <div class="dash-card dash-card--info" style="margin-top:20px;">
+          <div class="dash-card__head">
+            <span class="dash-card__icon">📋</span>
+            <h3>Histórico Recente de Disparos (Logs do Celular)</h3>
+          </div>
+          <ul class="dash-list" id="dispLogsList" style="max-height: 400px; overflow-y: auto; padding: 10px;">
+            <li>Carregando logs de telemetria...</li>
+          </ul>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- ===================== MODAL: EDITAR PERFIL ===================== -->
+  <div class="modal" id="profileModal" aria-hidden="true">
+    <div class="modal__backdrop" data-close></div>
+    <div class="modal__card glass" role="dialog" aria-modal="true" aria-labelledby="pmTitle">
+      <div class="modal__head">
+        <h2 id="pmTitle">Editar perfil</h2>
+        <button type="button" class="modal__close" data-close aria-label="Fechar">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <form class="modal__body" id="profileForm">
+        <div class="auth__error" id="pmError"></div>
+        <div class="pm-ok" id="pmOk">Perfil atualizado com sucesso!</div>
+        <div class="auth__avatar">
+          <div class="auth__avatar-pic" id="pmAvatarPic" title="Alterar foto">
+            <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          </div>
+          <span class="auth__avatar-hint">Toque para alterar o avatar</span>
+          <input type="file" id="pmAvatarInput" accept="image/*" hidden />
+        </div>
+        <div class="field">
+          <label for="pmNome">Nome</label>
+          <input type="text" id="pmNome" required />
+        </div>
+        <div class="field">
+          <label for="pmEmail">E-mail</label>
+          <input type="email" id="pmEmail" disabled />
+          <span class="field-hint">O e-mail não pode ser alterado.</span>
+        </div>
+        <div class="pm-divider">Alterar senha (opcional)</div>
+        <div class="field">
+          <label for="pmSenha">Nova senha</label>
+          <div class="input-wrap">
+            <input type="password" id="pmSenha" placeholder="Deixe em branco para manter" />
+            <button type="button" class="pw-toggle" data-target="pmSenha" aria-label="Mostrar senha">
+              <svg class="eye" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+              <svg class="eye-off" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19M14.12 14.12a3 3 0 1 1-4.24-4.24"/><path d="M1 1l22 22"/><path d="M6.61 6.61A18.5 18.5 0 0 0 1 12s4 8 11 8a9.12 9.12 0 0 0 5.39-1.61"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="field">
+          <label for="pmSenha2">Confirmar nova senha</label>
+          <div class="input-wrap">
+            <input type="password" id="pmSenha2" placeholder="Repita a nova senha" />
+            <button type="button" class="pw-toggle" data-target="pmSenha2" aria-label="Mostrar senha">
+              <svg class="eye" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+              <svg class="eye-off" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19M14.12 14.12a3 3 0 1 1-4.24-4.24"/><path d="M1 1l22 22"/><path d="M6.61 6.61A18.5 18.5 0 0 0 1 12s4 8 11 8a9.12 9.12 0 0 0 5.39-1.61"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="modal__foot">
+          <button type="button" class="btn-ghost" data-close>Cancelar</button>
+          <button type="submit" class="auth__submit" id="pmSave">Salvar alterações</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ===================== MODAL: PREFERÊNCIAS DO JARVIS (dono) ===================== -->
+  <div class="modal" id="prefsModal" aria-hidden="true">
+    <div class="modal__backdrop" data-prefsclose></div>
+    <div class="modal__card glass" role="dialog" aria-modal="true" aria-labelledby="prefsTitle">
+      <div class="modal__head">
+        <h2 id="prefsTitle">Preferências do Jarvis</h2>
+        <button type="button" class="modal__close" data-prefsclose aria-label="Fechar">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <form class="modal__body" id="prefsForm">
+        <div class="auth__error" id="prefsError"></div>
+        <div class="pm-ok" id="prefsOk">Preferências salvas! Valem já na próxima fala/mensagem.</div>
+        <div class="field">
+          <label for="prefEngine">Motor de voz (fala no Android)</label>
+          <select id="prefEngine">
+            <option value="gemini">Voz premium (Gemini TTS — expressiva)</option>
+            <option value="cloud">Google Cloud TTS (padrão)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="prefVoz">Voz Gemini</label>
+          <input type="text" id="prefVoz" placeholder="Enceladus" />
+          <span class="field-hint">Ex.: Enceladus, Sulafat, Kore, Puck, Charon…</span>
+        </div>
+        <div class="field">
+          <label for="prefEstilo">Estilo da fala (instrução natural)</label>
+          <input type="text" id="prefEstilo" maxlength="120" placeholder="tom caloroso e acolhedor" />
+        </div>
+        <div class="field">
+          <label for="prefVolume">Volume da fala (ganho na fonte): <strong id="prefVolumeVal">6</strong> dB</label>
+          <input type="range" id="prefVolume" min="0" max="16" step="1" value="6" />
+        </div>
+        <div class="field">
+          <label for="prefModoBot">Bot do WhatsApp (mensagens recebidas)</label>
+          <select id="prefModoBot">
+            <option value="auto">Automático — responde 1:1 sozinho (nunca grupos)</option>
+            <option value="secretaria">Modo Secretária — rascunha e pede sua aprovação</option>
+            <option value="off">Desligado — não responde nada</option>
+          </select>
+        </div>
+        <div class="modal__foot">
+          <button type="button" class="btn-ghost" data-prefsclose>Cancelar</button>
+          <button type="submit" class="auth__submit" id="prefsSave">Salvar preferências</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ===================== MODAL: STATUS DO SISTEMA (dono) ===================== -->
+  <div class="modal" id="statusModal" aria-hidden="true">
+    <div class="modal__backdrop" data-statusclose></div>
+    <div class="modal__card glass" role="dialog" aria-modal="true" aria-labelledby="statusTitle">
+      <div class="modal__head">
+        <h2 id="statusTitle">Status do sistema</h2>
+        <button type="button" class="modal__close" data-statusclose aria-label="Fechar">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="modal__body" id="statusBody">
+        <div class="conv-empty">Carregando status…</div>
+      </div>
+      <div class="modal__foot" style="padding:0 22px 18px">
+        <button type="button" class="btn-ghost" data-statusclose>Fechar</button>
+        <button type="button" class="auth__submit" id="statusRefresh">Atualizar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Lightbox para abrir anexos (imagem ampliada / texto) -->
+  <div class="lightbox" id="lightbox" hidden>
+    <button type="button" class="lightbox__close" id="lightboxClose" aria-label="Fechar">&times;</button>
+    <div class="lightbox__content" id="lightboxContent"></div>
+  </div>
+
+  <!-- Modal de QR Code (conexão WhatsApp) -->
+  <div class="modal" id="qrModal" aria-hidden="true">
+    <div class="modal__backdrop" data-qrclose></div>
+    <div class="modal__card glass" style="max-width:380px;text-align:center">
+      <div class="modal__head">
+        <h2 id="qrTitle">Conectar WhatsApp</h2>
+        <button type="button" class="modal__close" data-qrclose aria-label="Fechar">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div id="qrBody" class="qr-body"></div>
+    </div>
+  </div>
+
+  <?!= include('Javascript.html'); ?>
+</body>
+</html>

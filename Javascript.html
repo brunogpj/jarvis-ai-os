@@ -1,0 +1,2687 @@
+  <script>
+    (function () {
+      "use strict";
+      var root = document.documentElement;
+      var sidebar = document.getElementById("sidebar");
+      var collapseBtn = document.getElementById("collapseBtn");
+      var brandLogo = document.getElementById("brandLogo");
+      var themeToggle = document.getElementById("themeToggle");
+      var mobileToggle = document.getElementById("mobileToggle");
+      var scrim = document.getElementById("scrim");
+      var profileBtn = document.getElementById("profileBtn");
+      var popover = document.getElementById("profilePopover");
+
+      /* ===================== AUTENTICAÇÃO ===================== */
+      var AUTH_KEY = "softapp-token";
+      var authToken = localStorage.getItem(AUTH_KEY) || "";
+      var currentUser = null;
+      var hasBackend = (typeof google !== "undefined" && google.script && google.script.run);
+
+      var loginForm = document.getElementById("loginForm");
+      var signupForm = document.getElementById("signupForm");
+      var tabLogin = document.getElementById("tabLogin");
+      var tabSignup = document.getElementById("tabSignup");
+      var loginError = document.getElementById("loginError");
+      var signupError = document.getElementById("signupError");
+      var avatarInput = document.getElementById("avatarInput");
+      var avatarPic = document.getElementById("avatarPic");
+      var avatarPlaceholder = avatarPic ? avatarPic.innerHTML : "";
+      var avatarData = "";
+
+      function setAuthState(s) {
+        document.body.classList.remove("state-checking", "state-anon", "state-authed");
+        document.body.classList.add(s);
+      }
+      function initialsOf(nome) {
+        return String(nome || "?").trim().split(/\s+/)
+          .map(function (w) { return w.charAt(0); }).slice(0, 2).join("").toUpperCase();
+      }
+      function applyUser(u) {
+        currentUser = u;
+        var html = u.avatar ? '<img src="' + u.avatar + '" alt="">' : initialsOf(u.nome);
+        document.querySelectorAll(".topbar__profile .avatar, .popover__head .avatar").forEach(function (a) {
+          a.innerHTML = html; a.classList.toggle("has-img", !!u.avatar);
+        });
+        document.querySelectorAll(".topbar__profile .who, .popover__head .who").forEach(function (w) {
+          var st = w.querySelector("strong"), sp = w.querySelector("span");
+          if (st) st.textContent = u.nome;
+          if (sp) sp.textContent = u.email;
+        });
+        if (typeof loadConversas === "function") loadConversas();
+        atualizarStatusHeader();
+      }
+      /* Atualiza o indicador de status no header (🟢 Online / 🟡 Reserva / 🔴 Sem IA). */
+      function atualizarStatusHeader() {
+        var el = document.getElementById("chatStatus");
+        if (!el || !hasBackend || !authToken) return;
+        google.script.run
+          .withSuccessHandler(function (s) {
+            if (!s) return;
+            var cls = s.estado === "reserva" ? "reserva" : (s.estado === "offline" ? "offline" : "");
+            el.innerHTML = '<span class="status-dot ' + cls + '"></span> ' + (s.texto || "Online");
+            el.title = s.reserva ? "Provedor reserva (OpenRouter/Anthropic/NVIDIA) configurado" : "";
+          })
+          .withFailureHandler(function () {})
+          .estadoAssistente(authToken);
+      }
+      function showAuthError(el, msg) { el.textContent = msg; el.classList.add("is-show"); }
+      function clearAuthError(el) { el.textContent = ""; el.classList.remove("is-show"); }
+
+      function switchTab(which) {
+        var isLogin = which === "login";
+        tabLogin.classList.toggle("is-active", isLogin);
+        tabSignup.classList.toggle("is-active", !isLogin);
+        loginForm.classList.toggle("is-active", isLogin);
+        signupForm.classList.toggle("is-active", !isLogin);
+      }
+      tabLogin.addEventListener("click", function () { switchTab("login"); });
+      tabSignup.addEventListener("click", function () { switchTab("signup"); });
+
+      /* Redimensiona uma imagem no cliente (máx px) e devolve data URI base64. */
+      function resizeImageFile(file, max, cb) {
+        var reader = new FileReader();
+        reader.onload = function () {
+          var img = new Image();
+          img.onload = function () {
+            var scale = Math.min(1, max / Math.max(img.width, img.height));
+            var w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+            var c = document.createElement("canvas"); c.width = w; c.height = h;
+            c.getContext("2d").drawImage(img, 0, 0, w, h);
+            cb(c.toDataURL("image/jpeg", 0.85));
+          };
+          img.src = reader.result;
+        };
+        reader.readAsDataURL(file);
+      }
+
+      /* Avatar do cadastro */
+      avatarPic.addEventListener("click", function () { avatarInput.click(); });
+      avatarInput.addEventListener("change", function () {
+        var file = avatarInput.files && avatarInput.files[0];
+        if (!file) return;
+        resizeImageFile(file, 256, function (d) {
+          avatarData = d;
+          avatarPic.innerHTML = '<img src="' + d + '" alt="">';
+        });
+      });
+
+      /* Mostrar/ocultar senha */
+      document.querySelectorAll(".pw-toggle").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var input = document.getElementById(btn.getAttribute("data-target"));
+          if (!input) return;
+          var show = input.type === "password";
+          input.type = show ? "text" : "password";
+          btn.classList.toggle("is-on", show);
+          btn.setAttribute("aria-label", show ? "Ocultar senha" : "Mostrar senha");
+        });
+      });
+
+      loginForm.addEventListener("submit", function (e) {
+        e.preventDefault();
+        if (!hasBackend) { showAuthError(loginError, "Backend indisponível — rode pela URL do Apps Script."); return; }
+        clearAuthError(loginError);
+        var btn = document.getElementById("loginBtn"); btn.disabled = true;
+        google.script.run
+          .withSuccessHandler(function (res) {
+            btn.disabled = false;
+            if (res && res.ok) {
+              authToken = res.token; localStorage.setItem(AUTH_KEY, authToken);
+              applyUser(res.user); setAuthState("state-authed");
+            } else { showAuthError(loginError, (res && res.error) || "Falha no login."); }
+          })
+          .withFailureHandler(function (err) { btn.disabled = false; showAuthError(loginError, err.message); })
+          .login({ email: document.getElementById("loginEmail").value, senha: document.getElementById("loginSenha").value });
+      });
+
+      signupForm.addEventListener("submit", function (e) {
+        e.preventDefault();
+        if (!hasBackend) { showAuthError(signupError, "Backend indisponível — rode pela URL do Apps Script."); return; }
+        clearAuthError(signupError);
+        var senha = document.getElementById("suSenha").value, senha2 = document.getElementById("suSenha2").value;
+        if (senha !== senha2) { showAuthError(signupError, "As senhas não coincidem."); return; }
+        var btn = document.getElementById("signupBtn"); btn.disabled = true;
+        google.script.run
+          .withSuccessHandler(function (res) {
+            btn.disabled = false;
+            if (res && res.ok) {
+              authToken = res.token; localStorage.setItem(AUTH_KEY, authToken);
+              applyUser(res.user); setAuthState("state-authed");
+            } else { showAuthError(signupError, (res && res.error) || "Falha no cadastro."); }
+          })
+          .withFailureHandler(function (err) { btn.disabled = false; showAuthError(signupError, err.message); })
+          .signup({
+            nome: document.getElementById("suNome").value,
+            email: document.getElementById("suEmail").value,
+            senha: senha, avatar: avatarData
+          });
+      });
+
+      function doLogout() {
+        if (hasBackend && authToken) { google.script.run.logout(authToken); }
+        authToken = ""; currentUser = null; localStorage.removeItem(AUTH_KEY);
+        loginForm.reset(); signupForm.reset();
+        avatarData = ""; avatarPic.innerHTML = avatarPlaceholder;
+        switchTab("login");
+        setAuthState("state-anon");
+      }
+
+      function bootAuth() {
+        if (!hasBackend || !authToken) { setAuthState("state-anon"); return; }
+        setAuthState("state-checking");
+        google.script.run
+          .withSuccessHandler(function (u) {
+            if (u) { applyUser(u); setAuthState("state-authed"); }
+            else { authToken = ""; localStorage.removeItem(AUTH_KEY); setAuthState("state-anon"); }
+          })
+          .withFailureHandler(function () { setAuthState("state-anon"); })
+          .getSessionUser(authToken);
+      }
+      /* ===================== EDITAR PERFIL (updateProfile) ===================== */
+      var profileModal = document.getElementById("profileModal");
+      var profileForm = document.getElementById("profileForm");
+      var pmNome = document.getElementById("pmNome");
+      var pmEmail = document.getElementById("pmEmail");
+      var pmSenha = document.getElementById("pmSenha");
+      var pmSenha2 = document.getElementById("pmSenha2");
+      var pmError = document.getElementById("pmError");
+      var pmOk = document.getElementById("pmOk");
+      var pmAvatarPic = document.getElementById("pmAvatarPic");
+      var pmAvatarInput = document.getElementById("pmAvatarInput");
+      var pmAvatarPlaceholder = pmAvatarPic ? pmAvatarPic.innerHTML : "";
+      var pmAvatarData = "";
+
+      function openProfile() {
+        if (!currentUser) return;
+        popover.classList.remove("is-open");
+        clearAuthError(pmError); pmOk.classList.remove("is-show");
+        pmNome.value = currentUser.nome || "";
+        pmEmail.value = currentUser.email || "";
+        pmSenha.value = ""; pmSenha2.value = "";
+        pmAvatarData = currentUser.avatar || "";
+        pmAvatarPic.innerHTML = pmAvatarData ? '<img src="' + pmAvatarData + '" alt="">' : pmAvatarPlaceholder;
+        profileModal.classList.add("is-open");
+        profileModal.setAttribute("aria-hidden", "false");
+      }
+      function closeProfile() {
+        profileModal.classList.remove("is-open");
+        profileModal.setAttribute("aria-hidden", "true");
+      }
+
+      pmAvatarPic.addEventListener("click", function () { pmAvatarInput.click(); });
+      pmAvatarInput.addEventListener("change", function () {
+        var file = pmAvatarInput.files && pmAvatarInput.files[0];
+        if (!file) return;
+        resizeImageFile(file, 256, function (d) {
+          pmAvatarData = d;
+          pmAvatarPic.innerHTML = '<img src="' + d + '" alt="">';
+        });
+      });
+
+      profileModal.querySelectorAll("[data-close]").forEach(function (el) {
+        el.addEventListener("click", closeProfile);
+      });
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape" && profileModal.classList.contains("is-open")) closeProfile();
+      });
+
+      profileForm.addEventListener("submit", function (e) {
+        e.preventDefault();
+        if (!hasBackend) { showAuthError(pmError, "Backend indisponível."); return; }
+        clearAuthError(pmError); pmOk.classList.remove("is-show");
+        var nome = pmNome.value.trim();
+        if (nome.length < 2) { showAuthError(pmError, "Informe seu nome."); return; }
+        var payload = { nome: nome, avatar: pmAvatarData };
+        if (pmSenha.value) {
+          if (pmSenha.value.length < 8) { showAuthError(pmError, "A nova senha deve ter ao menos 8 caracteres."); return; }
+          if (pmSenha.value !== pmSenha2.value) { showAuthError(pmError, "As senhas não coincidem."); return; }
+          payload.novaSenha = pmSenha.value;
+        }
+        var btn = document.getElementById("pmSave"); btn.disabled = true;
+        google.script.run
+          .withSuccessHandler(function (res) {
+            btn.disabled = false;
+            if (res && res.ok) {
+              applyUser(res.user);
+              pmSenha.value = ""; pmSenha2.value = "";
+              pmOk.classList.add("is-show");
+              setTimeout(closeProfile, 1000);
+            } else { showAuthError(pmError, (res && res.error) || "Falha ao salvar."); }
+          })
+          .withFailureHandler(function (err) { btn.disabled = false; showAuthError(pmError, err.message); })
+          .updateProfile(authToken, payload);
+      });
+
+      /* Gatilhos para abrir o perfil / sair pelo popover */
+      var popoverEdit = document.getElementById("popoverEdit");
+      if (popoverEdit) popoverEdit.addEventListener("click", openProfile);
+      var popoverLogout = document.getElementById("popoverLogout");
+      if (popoverLogout) popoverLogout.addEventListener("click", function () { popover.classList.remove("is-open"); doLogout(); });
+      // Itens REAIS do popover (substituem os placeholders de template em inglês).
+      // showView/perguntarAoJarvis/loadConversas são declarações içadas do mesmo escopo — disponíveis no clique.
+      function _popoverAcao(id, fn) {
+        var el = document.getElementById(id);
+        if (el) el.addEventListener("click", function () {
+          popover.classList.remove("is-open");
+          profileBtn.setAttribute("aria-expanded", "false");
+          try { fn(); } catch (ePa) {}
+        });
+      }
+      _popoverAcao("popoverVozes", function () {
+        // Abre o chat e roda o comando /voz (painel de vozes TTS: ouvir e definir).
+        setNavActive(document.getElementById("chatNav"));
+        showView("chat");
+        input.value = "/voz";
+        form.dispatchEvent(new Event("submit", { cancelable: true }));
+      });
+      _popoverAcao("popoverHistorico", function () {
+        // Vai para o chat e destaca a lista de conversas na sidebar (recarregada).
+        setNavActive(document.getElementById("chatNav"));
+        showView("chat");
+        try { if (typeof loadConversas === "function") loadConversas(); } catch (eLc) {}
+        var lc = document.getElementById("convList");
+        if (window.innerWidth <= 860) { sidebar.classList.add("is-mobile-open"); scrim.classList.add("is-open"); }
+        if (lc) { try { lc.scrollIntoView({ behavior: "smooth", block: "nearest" }); } catch (eSc) {} }
+      });
+      _popoverAcao("popoverTurno", function () {
+        // Pergunta o turno vigente — rota direta do Jarvis (resposta imediata, sem custo de IA).
+        perguntarAoJarvis("qual meu turno atual?");
+      });
+
+      /* ── Preferências do Jarvis (modal do popover, somente dono) ── */
+      var prefsModal = document.getElementById("prefsModal");
+      var prefsForm = document.getElementById("prefsForm");
+      var prefsError = document.getElementById("prefsError");
+      var prefsOk = document.getElementById("prefsOk");
+      var prefEngine = document.getElementById("prefEngine");
+      var prefVoz = document.getElementById("prefVoz");
+      var prefEstilo = document.getElementById("prefEstilo");
+      var prefVolume = document.getElementById("prefVolume");
+      var prefVolumeVal = document.getElementById("prefVolumeVal");
+      var prefModoBot = document.getElementById("prefModoBot");
+      function _prefsErro(msg) { if (prefsError) { prefsError.textContent = msg; prefsError.classList.add("is-show"); } }
+      function fecharPrefs() { if (prefsModal) { prefsModal.classList.remove("is-open"); prefsModal.setAttribute("aria-hidden", "true"); } }
+      function abrirPrefs() {
+        if (!prefsModal) return;
+        prefsError.classList.remove("is-show"); prefsOk.classList.remove("is-show");
+        prefsModal.classList.add("is-open"); prefsModal.setAttribute("aria-hidden", "false");
+        if (!hasBackend) { _prefsErro("Backend indisponível neste preview."); return; }
+        google.script.run
+          .withSuccessHandler(function (r) {
+            if (!r || !r.ok) { _prefsErro((r && r.erro) || "Falha ao carregar as preferências."); return; }
+            prefEngine.value = r.ttsEngine;
+            prefVoz.value = r.vozGemini;
+            prefEstilo.value = r.estilo;
+            prefVolume.value = r.volumeDb; prefVolumeVal.textContent = r.volumeDb;
+            prefModoBot.value = r.modoBot;
+          })
+          .withFailureHandler(function (err) { _prefsErro("⚠️ " + err.message); })
+          .getPreferenciasUI(authToken);
+      }
+      if (prefVolume) prefVolume.addEventListener("input", function () { prefVolumeVal.textContent = prefVolume.value; });
+      document.querySelectorAll("[data-prefsclose]").forEach(function (b) { b.addEventListener("click", fecharPrefs); });
+      if (prefsForm) prefsForm.addEventListener("submit", function (e) {
+        e.preventDefault();
+        prefsError.classList.remove("is-show"); prefsOk.classList.remove("is-show");
+        var btn = document.getElementById("prefsSave"); if (btn) btn.disabled = true;
+        google.script.run
+          .withSuccessHandler(function (r) {
+            if (btn) btn.disabled = false;
+            if (!r || !r.ok) { _prefsErro((r && r.erro) || "Falha ao salvar."); return; }
+            prefsOk.classList.add("is-show");
+            setTimeout(fecharPrefs, 1400);
+          })
+          .withFailureHandler(function (err) { if (btn) btn.disabled = false; _prefsErro("⚠️ " + err.message); })
+          .salvarPreferenciasUI(authToken, {
+            ttsEngine: prefEngine.value,
+            vozGemini: prefVoz.value.trim(),
+            estilo: prefEstilo.value.trim(),
+            volumeDb: Number(prefVolume.value),
+            modoBot: prefModoBot.value
+          });
+      });
+      _popoverAcao("popoverPrefs", abrirPrefs);
+
+      /* ── Status do sistema (modal do popover, somente dono) ── */
+      var statusModal = document.getElementById("statusModal");
+      var statusBody = document.getElementById("statusBody");
+      function fecharStatus() { if (statusModal) { statusModal.classList.remove("is-open"); statusModal.setAttribute("aria-hidden", "true"); } }
+      function _statusCarregar() {
+        if (!statusBody) return;
+        statusBody.innerHTML = '<div class="conv-empty">Carregando status…</div>';
+        if (!hasBackend) { statusBody.innerHTML = '<div class="conv-empty">Backend indisponível neste preview.</div>'; return; }
+        google.script.run
+          .withSuccessHandler(function (r) {
+            if (!r || !r.ok) { statusBody.innerHTML = '<div class="conv-empty">⚠️ ' + escapeHtml((r && r.erro) || 'Falha ao carregar.') + '</div>'; return; }
+            var h = '<div class="pm-divider">Batimentos (processos de fundo)</div>';
+            if (r.heartbeat && r.heartbeat.itens && r.heartbeat.itens.length) {
+              h += r.heartbeat.itens.map(function (i) {
+                var detal = (i.idadeMin == null) ? 'sem batida' : ('há ' + i.idadeMin + ' min (limite ' + i.limiteMin + ')');
+                if (!i.ativo) detal = 'inativo (ok)';
+                return '<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 0;font-size:13px">' +
+                  '<span>' + (i.atrasado ? '⚠️' : '✅') + ' ' + escapeHtml(i.nome) + (i.temTrigger ? '' : ' <em style="opacity:.7">(sem gatilho!)</em>') + '</span>' +
+                  '<span style="opacity:.72">' + escapeHtml(detal) + '</span></div>';
+              }).join('');
+            } else { h += '<div class="conv-empty">Sem dados de heartbeat.</div>'; }
+            h += '<div class="pm-divider">Provedores de IA (últimas 120 chamadas)</div>';
+            if (r.provedores && r.provedores.itens && r.provedores.itens.length) {
+              h += r.provedores.itens.map(function (s) { return '<div style="padding:3px 0;font-size:13px">• ' + escapeHtml(s) + '</div>'; }).join('');
+              h += '<div style="padding:5px 0 0;font-size:12px;opacity:.72">Prioridade de cota: ' + escapeHtml(String(r.provedores.ordem || '')) + '</div>';
+            } else { h += '<div class="conv-empty">Sem chamadas recentes.</div>'; }
+            h += '<div class="pm-divider">Rotina</div>';
+            var modoRot = ({ auto: 'Automático', secretaria: 'Modo Secretária', off: 'Desligado' })[r.modoBot] || r.modoBot || '—';
+            h += '<div style="font-size:13px;line-height:1.9">' +
+              '🕗 Turno da semana: <strong>' + (r.turno === 'manha' ? 'manhã' : (r.turno === 'tarde' ? 'tarde' : '—')) + '</strong><br>' +
+              '🔔 Alertas de voz ativos: <strong>' + (r.alertasVoz || 0) + '</strong><br>' +
+              '💬 Bot do WhatsApp: <strong>' + escapeHtml(modoRot) + '</strong></div>';
+            statusBody.innerHTML = h;
+          })
+          .withFailureHandler(function (err) { statusBody.innerHTML = '<div class="conv-empty">⚠️ ' + escapeHtml(err.message) + '</div>'; })
+          .statusSistemaUI(authToken);
+      }
+      function abrirStatus() {
+        if (!statusModal) return;
+        statusModal.classList.add("is-open"); statusModal.setAttribute("aria-hidden", "false");
+        _statusCarregar();
+      }
+      document.querySelectorAll("[data-statusclose]").forEach(function (b) { b.addEventListener("click", fecharStatus); });
+      var statusRefresh = document.getElementById("statusRefresh");
+      if (statusRefresh) statusRefresh.addEventListener("click", _statusCarregar);
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape") {
+          if (prefsModal && prefsModal.classList.contains("is-open")) fecharPrefs();
+          if (statusModal && statusModal.classList.contains("is-open")) fecharStatus();
+        }
+      });
+      _popoverAcao("popoverStatus", abrirStatus);
+
+      bootAuth();
+
+      /* ---------- Tema (persistente) ---------- */
+      var savedTheme = localStorage.getItem("softtech-theme");
+      if (savedTheme === "dark") { root.setAttribute("data-theme", "dark"); themeToggle.checked = true; }
+      themeToggle.addEventListener("change", function () {
+        var dark = themeToggle.checked;
+        root.setAttribute("data-theme", dark ? "dark" : "light");
+        localStorage.setItem("softtech-theme", dark ? "dark" : "light");
+      });
+
+      /* ---------- Recolher sidebar (persistente) ---------- */
+      if (localStorage.getItem("softtech-collapsed") === "1") sidebar.classList.add("is-collapsed");
+      function toggleCollapse() {
+        sidebar.classList.toggle("is-collapsed");
+        localStorage.setItem("softtech-collapsed", sidebar.classList.contains("is-collapsed") ? "1" : "0");
+      }
+      collapseBtn.addEventListener("click", toggleCollapse);
+      brandLogo.addEventListener("click", function () {
+        if (sidebar.classList.contains("is-collapsed")) toggleCollapse();
+      });
+
+      /* ---------- Menu mobile ---------- */
+      function openMobile() { sidebar.classList.add("is-mobile-open"); scrim.classList.add("is-open"); }
+      function closeMobile() { sidebar.classList.remove("is-mobile-open"); scrim.classList.remove("is-open"); }
+      mobileToggle.addEventListener("click", openMobile);
+      scrim.addEventListener("click", closeMobile);
+
+      /* ---------- Item ativo da navegação ---------- */
+      document.querySelectorAll(".nav__item").forEach(function (item) {
+        item.addEventListener("click", function () {
+          if (item.getAttribute("data-tip") === "Sair") { doLogout(); return; }
+          if (item.getAttribute("data-tip") === "Configurações") { openProfile(); return; }
+          document.querySelectorAll(".nav__item").forEach(function (i) { i.classList.remove("is-active"); });
+          item.classList.add("is-active");
+          if (window.innerWidth <= 860) closeMobile();
+        });
+        item.addEventListener("keydown", function (e) {
+          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); item.click(); }
+        });
+      });
+
+      /* ---------- Popover de perfil ---------- */
+      profileBtn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        var open = popover.classList.toggle("is-open");
+        profileBtn.setAttribute("aria-expanded", open ? "true" : "false");
+      });
+      document.addEventListener("click", function (e) {
+        if (!popover.contains(e.target) && !profileBtn.contains(e.target)) {
+          popover.classList.remove("is-open");
+          profileBtn.setAttribute("aria-expanded", "false");
+        }
+      });
+
+      /* ===================== CHAT IA ===================== */
+      var messages = document.getElementById("messages");
+      var welcome = document.getElementById("welcome");
+      var welcomeHTML = welcome ? welcome.outerHTML : "";
+      var form = document.getElementById("composer");
+      var input = document.getElementById("input");
+      var sendBtn = document.getElementById("sendBtn");
+
+      /* ---------- Anexos (imagem / PDF / texto-CSV) + visão/OCR ---------- */
+      var imageInput = document.getElementById("imageInput");
+      var attachBtn = document.getElementById("attachBtn");
+      var attachPreview = document.getElementById("attachPreview");
+      var dropzone = document.getElementById("dropzone");
+      var pendingAttachments = [];    // MULTI-ANEXO: [{ tipo:'inline'|'texto', mimeType, data, dataUrl, texto, nome, isImage, isVideo, isAudio }]
+      var MAX_ANEXOS = 5;             // teto por mensagem (limite prático do request inline da IA)
+      var attachmentStore = [];        // anexos já enviados (para abrir ao clicar)
+      function _addPending(att) {
+        if (pendingAttachments.length >= MAX_ANEXOS) { alert("Máximo de " + MAX_ANEXOS + " anexos por mensagem."); return; }
+        pendingAttachments.push(att);
+        showAttachPreview(); input.focus();
+      }
+
+      var fileIconSvg = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
+      function escapeHtml(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+      function readAs(file, how, cb) {
+        var r = new FileReader();
+        r.onload = function () { cb(r.result); };
+        if (how === "text") r.readAsText(file); else r.readAsDataURL(file);
+      }
+
+      function clearAttachment() {
+        pendingAttachments = [];
+        attachPreview.hidden = true;
+        attachPreview.innerHTML = "";
+        imageInput.value = "";
+        autoResize();
+      }
+      function showAttachPreview() {
+        if (!pendingAttachments.length) { clearAttachment(); return; }
+        var html = pendingAttachments.map(function (a, i) {
+          var inner;
+          if (a.isImage) inner = '<img class="att-thumb" src="' + a.dataUrl + '" alt="anexo" />';
+          else if (a.isVideo) inner = '<span class="att-chip">🎬 <span class="att-name">' + escapeHtml(a.nome) + '</span></span>';
+          else if (a.isAudio) inner = '<span class="att-chip">🎤 <span class="att-name">Gravação ' + fmtDur(a.dur || 0) + '</span></span>';
+          else inner = '<span class="att-chip">' + fileIconSvg + '<span class="att-name">' + escapeHtml(a.nome) + '</span></span>';
+          return '<span class="att-item">' + inner + '<button type="button" class="att-remove" data-rm="' + i + '" aria-label="Remover anexo">&times;</button></span>';
+        }).join('');
+        attachPreview.innerHTML = html;
+        attachPreview.hidden = false;
+        attachPreview.querySelectorAll(".att-remove").forEach(function (b) {
+          b.addEventListener("click", function () {
+            pendingAttachments.splice(Number(b.getAttribute("data-rm")), 1);
+            showAttachPreview();
+          });
+        });
+        autoResize();
+      }
+
+      function handleFile(file) {
+        if (!file) return;
+        if (file.size > 15 * 1024 * 1024) { alert("Arquivo muito grande (máx 15 MB)."); return; }
+        var type = file.type || "";
+        var name = file.name || "arquivo";
+        if (type.indexOf("image/") === 0) {
+          resizeImageFile(file, 1280, function (dataUrl) {
+            var m = dataUrl.match(/^data:([^;]+);base64,(.*)$/); if (!m) return;
+            _addPending({ tipo: "inline", mimeType: m[1], data: m[2], dataUrl: dataUrl, nome: name, isImage: true });
+          });
+        } else if (/^video\//.test(type) || /\.(mp4|m4v|mov|3gp|mkv)$/i.test(name)) {
+          // 🎬 Vídeo: o Gemini assiste IMAGEM e ÁUDIO. Inline até ~12 MB (≈1–2 min) por limite da API.
+          if (file.size > 12 * 1024 * 1024) { alert("Vídeo muito grande (máx 12 MB ≈ 1–2 min). Corte o trecho relevante e reenvie."); return; }
+          readAs(file, "dataurl", function (dataUrl) {
+            var res = String(dataUrl), comma = res.indexOf(","); if (comma < 0) return;
+            var mt = res.substring(5, comma).split(";")[0] || "video/mp4";
+            _addPending({ tipo: "inline", mimeType: mt, data: res.substring(comma + 1), nome: name, isImage: false, isVideo: true });
+          });
+        } else if (type === "application/pdf" || /\.pdf$/i.test(name)) {
+          readAs(file, "dataurl", function (dataUrl) {
+            var m = dataUrl.match(/^data:([^;]+);base64,(.*)$/); if (!m) return;
+            _addPending({ tipo: "inline", mimeType: "application/pdf", data: m[2], dataUrl: dataUrl, nome: name, isImage: false });
+          });
+        } else if (/^audio\//.test(type) || /\.(ogg|oga|opus|mp3|wav|m4a|aac|webm|flac)$/i.test(name)) {
+          readAs(file, "dataurl", function (dataUrl) {
+            var res = String(dataUrl), comma = res.indexOf(","); if (comma < 0) return;
+            var mt = res.substring(5, comma).split(";")[0] || "audio/ogg";
+            _addPending({ tipo: "inline", mimeType: mt, data: res.substring(comma + 1), nome: name, isImage: false, isAudio: true });
+          });
+        } else if (/^text\//.test(type) || type === "application/json" || /\.(csv|txt|json|md|tsv|log)$/i.test(name)) {
+          readAs(file, "text", function (txt) {
+            _addPending({ tipo: "texto", texto: String(txt).slice(0, 200000), nome: name, isImage: false });
+          });
+        } else {
+          alert("Tipo não suportado: " + (type || name) + "\nUse imagem, vídeo, PDF, áudio, CSV ou texto.");
+        }
+      }
+
+      attachBtn.addEventListener("click", function () { imageInput.click(); });
+      imageInput.addEventListener("change", function () {
+        var fs = imageInput.files || [];
+        for (var fi = 0; fi < fs.length; fi++) handleFile(fs[fi]); // MULTI-ANEXO
+      });
+
+      /* ---------- Gravação de áudio pelo microfone (com fallback p/ arquivo) ---------- */
+      var micBtn = document.getElementById("micBtn");
+      var audioInput = document.getElementById("audioInput");
+      var micBloqueado = false; // se o sandbox bloquear o microfone, passamos a usar o seletor de arquivo
+      if (audioInput) audioInput.addEventListener("change", function () { handleFile(audioInput.files && audioInput.files[0]); audioInput.value = ""; });
+      var mediaRec = null, recChunks = [], recStream = null, recAutoStop = null, recStart = 0;
+      function fmtDur(s) { var m = Math.floor(s / 60), ss = s % 60; return m + ":" + (ss < 10 ? "0" : "") + ss; }
+      function pickRecMime() {
+        var prefs = ["audio/ogg;codecs=opus", "audio/webm;codecs=opus", "audio/webm", "audio/mp4"];
+        for (var i = 0; i < prefs.length; i++) { if (window.MediaRecorder && MediaRecorder.isTypeSupported(prefs[i])) return prefs[i]; }
+        return "";
+      }
+      function setMicRec(on) {
+        if (!micBtn) return;
+        micBtn.classList.toggle("is-rec", on);
+        micBtn.title = on ? "Parar e anexar a gravação" : "Gravar e enviar áudio (o Jarvis transcreve)";
+      }
+      function pararGravacao() { if (mediaRec && mediaRec.state === "recording") mediaRec.stop(); }
+      if (micBtn) micBtn.addEventListener("click", function () {
+        if (mediaRec && mediaRec.state === "recording") { pararGravacao(); return; }
+        // Sem suporte OU já bloqueado pelo sandbox → usa o seletor de arquivo (no celular abre o gravador).
+        if (micBloqueado || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
+          if (audioInput) audioInput.click(); else alert("Gravação indisponível neste navegador.");
+          return;
+        }
+        navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+          recStream = stream; recChunks = [];
+          var mime = pickRecMime();
+          mediaRec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+          mediaRec.ondataavailable = function (e) { if (e.data && e.data.size) recChunks.push(e.data); };
+          mediaRec.onstop = function () {
+            setMicRec(false);
+            if (recAutoStop) { clearTimeout(recAutoStop); recAutoStop = null; }
+            if (recStream) { recStream.getTracks().forEach(function (t) { t.stop(); }); recStream = null; }
+            var dur = Math.max(1, Math.round((Date.now() - recStart) / 1000));
+            var blob = new Blob(recChunks, { type: (recChunks[0] && recChunks[0].type) || mime || "audio/webm" });
+            var r = new FileReader();
+            r.onload = function () {
+              var res = String(r.result), comma = res.indexOf(",");
+              if (comma < 0) { alert("Falha ao processar a gravação."); return; }
+              var meta = res.substring(5, comma), b64 = res.substring(comma + 1);
+              var mt = meta.split(";")[0] || "audio/webm";
+              _addPending({ tipo: "inline", mimeType: mt, data: b64, nome: "gravacao-" + fmtDur(dur).replace(":", "m") + "s." + ((mt.split("/")[1] || "webm").split(";")[0]), isImage: false, isAudio: true, dur: dur });
+            };
+            r.readAsDataURL(blob);
+          };
+          recStart = Date.now();
+          mediaRec.start();
+          setMicRec(true);
+          recAutoStop = setTimeout(pararGravacao, 120000); // parada automática em 2 min
+        }).catch(function (err) {
+          setMicRec(false);
+          // O sandbox do Apps Script costuma bloquear o microfone → cai para o seletor de arquivo de áudio.
+          micBloqueado = true;
+          if (audioInput) {
+            audioInput.click();
+          } else {
+            alert("Não foi possível acessar o microfone (" + (err && err.name || "bloqueado") + "). Anexe um arquivo de áudio pelo clipe.");
+          }
+        });
+      });
+
+      /* Drag & drop sobre a área de chat */
+      var chatSection = document.querySelector(".chat");
+      var dragDepth = 0;
+      if (chatSection) {
+        chatSection.addEventListener("dragenter", function (e) { e.preventDefault(); dragDepth++; dropzone.classList.add("is-active"); });
+        chatSection.addEventListener("dragover", function (e) { e.preventDefault(); });
+        chatSection.addEventListener("dragleave", function (e) { e.preventDefault(); dragDepth--; if (dragDepth <= 0) { dragDepth = 0; dropzone.classList.remove("is-active"); } });
+        chatSection.addEventListener("drop", function (e) {
+          e.preventDefault(); dragDepth = 0; dropzone.classList.remove("is-active");
+          var fs = (e.dataTransfer && e.dataTransfer.files) || [];
+          for (var fi = 0; fi < fs.length; fi++) handleFile(fs[fi]); // MULTI-ANEXO: aceita vários de uma vez
+        });
+      }
+
+      /* Colar imagem (Ctrl+V) direto no composer — ex.: print/recorte da área de transferência */
+      input.addEventListener("paste", function (e) {
+        var items = (e.clipboardData && e.clipboardData.items) || [];
+        for (var i = 0; i < items.length; i++) {
+          if (items[i].kind === "file" && items[i].type.indexOf("image/") === 0) {
+            var blob = items[i].getAsFile();
+            if (blob) {
+              if (!blob.name) {
+                try { blob = new File([blob], "colado-" + Date.now() + "-" + i + "." + ((blob.type.split("/")[1]) || "png"), { type: blob.type }); } catch (e2) {}
+              }
+              handleFile(blob);
+              e.preventDefault(); // não cola o "binário" como texto no campo
+            }
+            // MULTI-ANEXO: sem break — cola todas as imagens da área de transferência
+          }
+        }
+      });
+
+      /* Lightbox — abrir anexo ao clicar */
+      var lightbox = document.getElementById("lightbox");
+      var lightboxContent = document.getElementById("lightboxContent");
+      function openLightbox(html) { lightboxContent.innerHTML = html; lightbox.hidden = false; lightbox.classList.add("is-open"); }
+      function closeLightbox() { lightbox.classList.remove("is-open"); lightbox.hidden = true; lightboxContent.innerHTML = ""; }
+      document.getElementById("lightboxClose").addEventListener("click", closeLightbox);
+      lightbox.addEventListener("click", function (e) { if (e.target === lightbox) closeLightbox(); });
+      document.addEventListener("keydown", function (e) { if (e.key === "Escape" && lightbox.classList.contains("is-open")) closeLightbox(); });
+
+      messages.addEventListener("click", function (e) {
+        var chip = e.target.closest ? e.target.closest(".chip") : null;
+        if (chip) { input.value = chip.textContent; autoResize(); input.focus(); return; }
+        var el = e.target.closest ? e.target.closest("[data-att]") : null;
+        if (!el) return;
+        var att = attachmentStore[Number(el.getAttribute("data-att"))];
+        if (!att) return;
+        if (att.driveUrl) { window.open(att.driveUrl, "_blank"); return; } // abre no Google Drive
+        if (att.isImage) {
+          openLightbox('<img src="' + att.dataUrl + '" alt="' + escapeHtml(att.nome || "imagem") + '" />');
+        } else if (att.tipo === "texto") {
+          openLightbox('<pre>' + escapeHtml(att.texto) + '</pre>');
+        } else if (att.mimeType === "application/pdf" && att.data) {
+          try {
+            var bin = atob(att.data), arr = new Uint8Array(bin.length);
+            for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+            window.open(URL.createObjectURL(new Blob([arr], { type: "application/pdf" })), "_blank");
+          } catch (err) { openLightbox('<pre>Não foi possível abrir o PDF.</pre>'); }
+        }
+      });
+
+      function autoResize() {
+        input.style.height = "auto";
+        input.style.height = Math.min(input.scrollHeight, 160) + "px";
+        sendBtn.disabled = (input.value.trim() === "" && !pendingAttachments.length);
+      }
+      input.addEventListener("input", autoResize);
+      input.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); }
+      });
+
+      function scrollBottom() { messages.scrollTop = messages.scrollHeight; }
+
+      /* Revela o texto progressivamente (sensação de streaming token a token) */
+      var prefersReduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      function typeOut(el, text, done) {
+        text = String(text == null ? "" : text);
+        if (prefersReduced || text.length < 2) { el.textContent = text; scrollBottom(); if (done) done(); return; }
+        el.textContent = "";
+        var i = 0, step = Math.max(2, Math.round(text.length / 350)); // textos longos terminam em ~6s
+        var timer = setInterval(function () {
+          i += step;
+          el.textContent = text.slice(0, i);
+          scrollBottom();
+          if (i >= text.length) { clearInterval(timer); el.textContent = text; if (done) done(); }
+        }, 16);
+      }
+
+      function agora() { return new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }); }
+      // Mostra só a hora se a mensagem for de HOJE; senão prefixa a data (dd/mm/aaaa) — útil ao reabrir conversas antigas.
+      function fmtHora(ms) {
+        if (!ms) return agora();
+        var d = new Date(Number(ms));
+        var hora = d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+        var hoje = new Date();
+        var mesmoDia = d.getDate() === hoje.getDate() && d.getMonth() === hoje.getMonth() && d.getFullYear() === hoje.getFullYear();
+        return mesmoDia ? hora : (d.toLocaleDateString("pt-BR") + " " + hora);
+      }
+
+      function addMessage(role, text, att, tsMs) {
+        if (welcome) { welcome.remove(); welcome = null; }
+        var wrap = document.createElement("div");
+        wrap.className = "msg " + (role === "user" ? "is-user" : "is-ai");
+        var userAvatar = (currentUser && currentUser.avatar)
+          ? '<img src="' + currentUser.avatar + '" alt="">'
+          : (currentUser ? initialsOf(currentUser.nome) : "EU");
+        var attHtml = "";
+        if (att) {
+          var idx = attachmentStore.push(att) - 1;
+          attHtml = (att.isImage && att.dataUrl)
+            ? '<img class="msg__img" data-att="' + idx + '" src="' + att.dataUrl + '" alt="anexo" />'
+            : '<span class="att-chip msg__file" data-att="' + idx + '" title="Abrir">' + (att.isAudio ? "🎤" : fileIconSvg) + '<span class="att-name">' + escapeHtml(att.nome) + '</span></span>';
+        }
+        wrap.innerHTML =
+          '<div class="msg__avatar ' + (role === "user" ? "user" : "ai") + (role === "user" && currentUser && currentUser.avatar ? " has-img" : "") + '">' +
+            (role === "user" ? userAvatar :
+             '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 8V4M9 14h.01M15 14h.01"/></svg>') +
+          '</div>' +
+          '<div class="msg__body"><div class="msg__who">' + (role === "user" ? "Você" : "Assistente · Soft Web App Application") +
+            '<span class="msg__time">' + fmtHora(tsMs) + '</span></div>' +
+          attHtml +
+          '<div class="msg__text"></div></div>';
+        wrap.querySelector(".msg__text").textContent = text;
+        // 🔊 nas respostas CARREGADAS do histórico (as novas ganham o botão no fluxo de envio).
+        if (role !== "user" && text && text.length > 1 && hasBackend && String(text).indexOf("⚠️") !== 0) {
+          var metaOld = document.createElement("div");
+          metaOld.className = "msg__meta";
+          var btnOld = document.createElement("button");
+          btnOld.type = "button"; btnOld.className = "msg__tts"; btnOld.title = "Ouvir resposta";
+          btnOld.innerHTML = "🔊";
+          btnOld.addEventListener("click", function () { ouvirResposta(btnOld, text); });
+          metaOld.appendChild(btnOld);
+          anexarFeedback(metaOld, text);
+          wrap.querySelector(".msg__body").appendChild(metaOld);
+        }
+        messages.appendChild(wrap);
+        scrollBottom();
+        return wrap;
+      }
+
+      /* P-D · botões 👍/👎 de feedback numa barra de meta. Registra no Firestore via backend. */
+      function anexarFeedback(metaEl, texto) {
+        if (!metaEl || !hasBackend || !texto || String(texto).indexOf("⚠️") === 0) return;
+        ["up", "down"].forEach(function (voto) {
+          var b = document.createElement("button");
+          b.type = "button"; b.className = "msg__fb";
+          b.title = voto === "up" ? "Resposta útil" : "Resposta ruim";
+          b.innerHTML = voto === "up" ? "👍" : "👎";
+          b.addEventListener("click", function () {
+            if (b._enviado) return; b._enviado = true;
+            metaEl.querySelectorAll(".msg__fb").forEach(function (x) { x.classList.remove("is-on"); x.disabled = true; });
+            b.classList.add("is-on");
+            google.script.run.registrarFeedback(authToken, conversaId, voto, String(texto).substring(0, 500));
+          });
+          metaEl.appendChild(b);
+        });
+      }
+
+      function showTyping() {
+        var wrap = document.createElement("div");
+        wrap.className = "msg is-ai";
+        wrap.innerHTML =
+          '<div class="msg__avatar ai"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 8V4M9 14h.01M15 14h.01"/></svg></div>' +
+          '<div class="msg__body"><div class="msg__who">Assistente · Soft Web App Application</div>' +
+          '<div class="typing"><span></span><span></span><span></span></div></div>';
+        messages.appendChild(wrap);
+        scrollBottom();
+        return wrap;
+      }
+
+      var chatHistory = [];
+      var conversaId = null;
+
+      /* Backend: usa google.script.run no GAS; senão, resposta stub local. */
+      function askBackend(text, history, image, onReply) {
+        if (typeof google !== "undefined" && google.script && google.script.run) {
+          google.script.run
+            .withSuccessHandler(onReply)
+            .withFailureHandler(function (err) { onReply({ resposta: "⚠️ Erro ao falar com o servidor: " + err.message }); })
+            .askIA(text, authToken, history, image, conversaId);
+        } else {
+          setTimeout(function () {
+            onReply({ resposta: 'Recebi: "' + text + '". (demonstração — backend GAS não conectado neste preview)' });
+          }, 850);
+        }
+      }
+
+      /* Separa URLs de imagem gerada (Drive thumbnail) do texto da resposta */
+      function extrairImagensGeradas(text) {
+        text = String(text == null ? "" : text);
+        var urls = [];
+        var push = function (id) { urls.push("https://drive.google.com/thumbnail?id=" + id + "&sz=w600"); return ""; };
+        var limpo = text
+          .replace(/https:\/\/drive\.google\.com\/thumbnail\?id=([A-Za-z0-9_\-]+)(?:&sz=[A-Za-z0-9]+)?/g, function (m, id) { return push(id); })
+          .replace(/https:\/\/drive\.google\.com\/file\/d\/([A-Za-z0-9_\-]+)\/[^\s)]*/g, function (m, id) { return push(id); })
+          .replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+        return { urls: urls, texto: limpo };
+      }
+      /* Renderiza a miniatura da imagem gerada no balão do assistente (clique abre maior) */
+      function anexarImagemGerada(aiWrap, url) {
+        var body = aiWrap.querySelector(".msg__body");
+        if (!body) return;
+        var img = document.createElement("img");
+        img.className = "msg__img";
+        img.src = url;
+        img.alt = "imagem gerada";
+        img.addEventListener("click", function () {
+          var grande = url.replace(/&sz=[A-Za-z0-9]+/, "") + "&sz=w1200";
+          openLightbox('<img src="' + grande + '" alt="imagem gerada">');
+        });
+        body.appendChild(img);
+        scrollBottom();
+      }
+
+      /* Detecta links do YouTube na resposta e adiciona botões "▶ Abrir no YouTube" (abre nova aba). */
+      function anexarYouTube(aiWrap, text) {
+        var body = aiWrap.querySelector(".msg__body");
+        if (!body) return;
+        var re = /https?:\/\/(?:youtu\.be\/[A-Za-z0-9_\-]+|(?:www\.)?youtube\.com\/(?:watch\?v=[A-Za-z0-9_\-]+|results\?search_query=[^\s)]+))/g;
+        var vistos = {}, m, achou = false;
+        while ((m = re.exec(String(text || ""))) !== null) {
+          var url = m[0];
+          if (vistos[url]) continue; vistos[url] = 1; achou = true;
+          var ehBusca = /results\?search_query=/.test(url);
+          var b = document.createElement("button");
+          b.type = "button"; b.className = "ingest-btn";
+          b.textContent = ehBusca ? "🔎 Abrir busca no YouTube" : "▶ Abrir no YouTube";
+          b.addEventListener("click", function (u) { return function () { window.open(u, "_blank", "noopener"); }; }(url));
+          body.appendChild(b);
+        }
+        if (achou) scrollBottom();
+      }
+
+      function adicionarBotaoIngestao(aiWrap, fileId, categoria) {
+        var body = aiWrap.querySelector(".msg__body");
+        if (!body) return;
+        var btn = document.createElement("button");
+        btn.className = "ingest-btn";
+        btn.textContent = "📥 Ingerir na wiki" + (categoria ? " (" + categoria + ")" : "");
+        btn.addEventListener("click", function () {
+          btn.disabled = true; btn.textContent = "Ingerindo…";
+          var t = showTyping();
+          google.script.run
+            .withSuccessHandler(function (r) { t.remove(); addMessage("ai", (r && r.resposta) || "Ingestão concluída."); btn.remove(); })
+            .withFailureHandler(function (err) { t.remove(); btn.disabled = false; btn.textContent = "📥 Ingerir na wiki"; addMessage("ai", "⚠️ " + err.message); })
+            .ingerirAnexoWiki(authToken, fileId);
+        });
+        body.appendChild(btn);
+      }
+
+      /* Painel de vozes (comando /voz): ouvir amostra + definir voz padrão do Jarvis */
+      var vozAudioEl = null;
+      function renderVozPanel(r) {
+        if (!r || !r.ok) { addMessage("ai", "⚠️ " + ((r && r.erro) || "Não consegui listar as vozes.")); return; }
+        var wrap = document.createElement("div"); wrap.className = "msg is-ai";
+        var rows = (r.vozes || []).map(function (v) {
+          var atual = v.name === r.atual ? ' <span class="voz-atual">(em uso)</span>' : '';
+          return '<div class="voz-row" data-voz="' + v.name + '">' +
+            '<span class="voz-nome">' + escapeHtml(v.name) + ' · ' + escapeHtml(v.genero || '') + atual + '</span>' +
+            '<span class="voz-actions"><button type="button" class="voz-btn voz-play" data-voz="' + v.name + '">▶ Ouvir</button>' +
+            '<button type="button" class="voz-btn voz-use" data-voz="' + v.name + '">✓ Usar</button></span></div>';
+        }).join("");
+        var g = r.gemini || {};
+        var gVozOpts = (g.vozes || ['Enceladus']).map(function (v) { return '<option value="' + escapeHtml(v) + '"' + (v === g.voz ? ' selected' : '') + '>' + escapeHtml(v) + '</option>'; }).join("");
+        var geminiBox =
+          '<div class="vg-box">' +
+            '<label class="vg-row"><input type="checkbox" id="vg-on"' + (g.engine === 'gemini' ? ' checked' : '') + '> <b>🎚️ Tom expressivo (Gemini TTS)</b></label>' +
+            '<div class="vg-sub">Controla o tom por instrução natural (ex.: caloroso, animado). Vale no 🔊 do chat e na fala do Android.</div>' +
+            '<input id="vg-style" class="vg-in" placeholder="estilo (ex.: tom caloroso e acolhedor)" value="' + escapeHtml(g.estilo || "") + '">' +
+            '<select id="vg-voice" class="vg-in">' + gVozOpts + '</select>' +
+            '<div class="vg-actions"><button type="button" class="voz-btn" id="vg-preview">▶ Ouvir amostra</button><button type="button" class="voz-btn" id="vg-save">✓ Salvar</button></div>' +
+          '</div>';
+        wrap.innerHTML =
+          '<div class="msg__avatar ai"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4"/></svg></div>' +
+          '<div class="msg__body"><div class="msg__who">Assistente · Vozes (' + (r.vozes || []).length + ')</div>' +
+          geminiBox +
+          '<div class="msg__text">Ou escolha uma voz fixa (Cloud TTS): <b>▶ Ouvir</b> para testar e <b>✓ Usar</b> para definir.</div>' +
+          '<div class="voz-list">' + rows + '</div></div>';
+        messages.appendChild(wrap); scrollBottom();
+        (function () {
+          var on = wrap.querySelector('#vg-on'), st = wrap.querySelector('#vg-style'), vo = wrap.querySelector('#vg-voice');
+          var bp = wrap.querySelector('#vg-preview'), bs = wrap.querySelector('#vg-save');
+          if (bp) bp.addEventListener('click', function () {
+            bp.disabled = true; bp.textContent = '⏳…';
+            google.script.run
+              .withSuccessHandler(function (res) { bp.disabled = false; bp.textContent = '▶ Ouvir amostra';
+                if (!res || !res.ok) { alert('⚠️ ' + ((res && res.erro) || 'falha')); return; }
+                try { if (vozAudioEl) vozAudioEl.pause(); vozAudioEl = new Audio('data:' + (res.mime || 'audio/wav') + ';base64,' + res.base64); vozAudioEl.play(); } catch (e2) { alert('Não consegui tocar: ' + e2.message); } })
+              .withFailureHandler(function (err) { bp.disabled = false; bp.textContent = '▶ Ouvir amostra'; alert('⚠️ ' + err.message); })
+              .previewVozGemini(authToken, { estilo: st.value, voz: vo.value });
+          });
+          if (bs) bs.addEventListener('click', function () {
+            bs.disabled = true;
+            google.script.run
+              .withSuccessHandler(function (res) { bs.disabled = false;
+                if (!res || !res.ok) { alert('⚠️ ' + ((res && res.erro) || 'falha')); return; }
+                addMessage('ai', res.engine === 'gemini' ? ('✅ Tom expressivo LIGADO — voz ' + res.voz + ', estilo "' + res.estilo + '". Vale no 🔊 do chat e na fala do Android.') : '✅ Tom expressivo desligado (voltou ao Cloud TTS).'); })
+              .withFailureHandler(function (err) { bs.disabled = false; alert('⚠️ ' + err.message); })
+              .definirVozGemini(authToken, { engine: on.checked ? 'gemini' : 'cloud', estilo: st.value, voz: vo.value });
+          });
+        })();
+        wrap.querySelectorAll(".voz-play").forEach(function (b) {
+          b.addEventListener("click", function () {
+            var voz = b.getAttribute("data-voz");
+            b.disabled = true; b.textContent = "⏳…";
+            google.script.run
+              .withSuccessHandler(function (res) {
+                b.disabled = false; b.textContent = "▶ Ouvir";
+                if (!res || !res.ok) { alert("⚠️ " + ((res && res.erro) || "falha ao gerar amostra")); return; }
+                try { if (vozAudioEl) { vozAudioEl.pause(); } vozAudioEl = new Audio("data:" + (res.mime || "audio/ogg") + ";base64," + res.base64); vozAudioEl.play(); }
+                catch (e2) { alert("Não consegui tocar o áudio: " + e2.message); }
+              })
+              .withFailureHandler(function (err) { b.disabled = false; b.textContent = "▶ Ouvir"; alert("⚠️ " + err.message); })
+              .previewVoz(authToken, voz);
+          });
+        });
+        wrap.querySelectorAll(".voz-use").forEach(function (b) {
+          b.addEventListener("click", function () {
+            var voz = b.getAttribute("data-voz");
+            b.disabled = true;
+            google.script.run
+              .withSuccessHandler(function (res) {
+                b.disabled = false;
+                if (!res || !res.ok) { alert("⚠️ " + ((res && res.erro) || "falha")); return; }
+                wrap.querySelectorAll(".voz-atual").forEach(function (s) { s.remove(); });
+                var nomeEl = b.closest(".voz-row").querySelector(".voz-nome");
+                if (nomeEl) nomeEl.innerHTML += ' <span class="voz-atual">(em uso)</span>';
+                addMessage("ai", "✅ Voz definida: " + res.voz + ". A partir de agora o Jarvis responde em áudio com essa voz.");
+              })
+              .withFailureHandler(function (err) { b.disabled = false; alert("⚠️ " + err.message); })
+              .definirVozTTS(authToken, voz);
+          });
+        });
+      }
+
+      /* Painel de contatos (comando /contatos): escolher um contato → insere no campo */
+      function renderContatosPanel(r) {
+        if (!r || !r.ok) { addMessage("ai", "⚠️ " + ((r && r.erro) || "Não consegui listar os contatos.")); return; }
+        if (!r.contatos || !r.contatos.length) { addMessage("ai", "Nenhum contato encontrado."); return; }
+        var wrap = document.createElement("div"); wrap.className = "msg is-ai";
+        var rows = r.contatos.map(function (c, i) {
+          var sub = [c.telefone, c.empresa].filter(Boolean).join(" · ");
+          return '<div class="voz-row" data-i="' + i + '">' +
+            '<span class="voz-nome">' + escapeHtml(c.nome || c.telefone) + (sub ? ' <span class="voz-atual" style="color:var(--text-mute);font-weight:400">· ' + escapeHtml(sub) + '</span>' : '') + '</span>' +
+            '<span class="voz-actions"><button type="button" class="voz-btn ct-use" data-i="' + i + '">Usar</button></span></div>';
+        }).join("");
+        wrap.innerHTML =
+          '<div class="msg__avatar ai"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>' +
+          '<div class="msg__body"><div class="msg__who">Assistente · Contatos (' + r.contatos.length + ')</div>' +
+          '<div class="msg__text">Clique em <b>Usar</b> para inserir o contato no campo de mensagem (depois é só digitar a ação).</div>' +
+          '<div class="voz-list">' + rows + '</div></div>';
+        messages.appendChild(wrap); scrollBottom();
+        wrap.querySelectorAll(".ct-use").forEach(function (b) {
+          b.addEventListener("click", function () {
+            var c = r.contatos[Number(b.getAttribute("data-i"))];
+            var ref = (c.nome || "") + (c.telefone ? " " + c.telefone : "");
+            input.value = (input.value ? input.value.replace(/\s*$/, "") + " " : "") + ref.trim() + " ";
+            input.focus(); autoResize();
+          });
+        });
+      }
+
+      /* Botão 🔊 ouvir: usa o Cloud TTS do servidor (gratuito no free tier e com voz melhor;
+         NÃO usa cota do Gemini). Toca inline. */
+      var _ttsAudioEl = null;
+      function _pararTTS(btn) {
+        try { if (_ttsAudioEl) _ttsAudioEl.pause(); } catch (e) {}
+        btn._tocando = false; btn.innerHTML = "🔊";
+      }
+      function ouvirResposta(btn, texto) {
+        if (btn._tocando) { _pararTTS(btn); return; }
+        _cloudTTS(btn, texto);
+      }
+      /* Cloud TTS no servidor (não usa cota Gemini; usa o free tier do Cloud Text-to-Speech). */
+      function _cloudTTS(btn, texto) {
+        btn.disabled = true; btn.innerHTML = "⏳";
+        google.script.run
+          .withSuccessHandler(function (r) {
+            btn.disabled = false;
+            if (!r || !r.ok) { btn.innerHTML = "🔇"; btn.title = (r && r.erro) || "Falha ao gerar áudio"; return; }
+            try {
+              if (_ttsAudioEl) _ttsAudioEl.pause();
+              _ttsAudioEl = new Audio("data:" + r.mime + ";base64," + r.base64);
+              btn.innerHTML = "⏸"; btn._tocando = "cloud";
+              _ttsAudioEl.onended = function () { btn.innerHTML = "🔊"; btn._tocando = false; };
+              _ttsAudioEl.play();
+            } catch (e) { btn.innerHTML = "🔊"; }
+          })
+          .withFailureHandler(function (err) { btn.disabled = false; btn.innerHTML = "🔇"; btn.title = err.message; })
+          .sintetizarTexto(authToken, texto);
+      }
+
+      /* Botões de CONFIRMAÇÃO P2 (✅/❌) sob o preview de ação sensível — 1 clique em vez de digitar "sim". */
+      function anexarConfirmacao(aiWrap) {
+        var body = aiWrap.querySelector(".msg__body");
+        if (!body) return;
+        var box = document.createElement("div");
+        box.style.cssText = "display:flex;gap:8px;margin-top:10px";
+        [["✅ Confirmar", "sim"], ["❌ Cancelar", "não, cancele"]].forEach(function (par, i) {
+          var b = document.createElement("button");
+          b.type = "button";
+          b.textContent = par[0];
+          b.style.cssText = "font-size:12.5px;font-weight:600;padding:8px 16px;border-radius:999px;cursor:pointer;transition:transform .12s;" +
+            (i === 0
+              ? "border:none;color:#fff;background:linear-gradient(135deg, var(--accent), var(--accent-2));"
+              : "border:1px solid var(--glass-border);background:transparent;color:inherit;");
+          b.addEventListener("mouseenter", function () { b.style.transform = "translateY(-1px)"; });
+          b.addEventListener("mouseleave", function () { b.style.transform = ""; });
+          b.addEventListener("click", function () {
+            box.remove();
+            input.value = par[1];
+            form.dispatchEvent(new Event("submit", { cancelable: true }));
+          });
+          box.appendChild(b);
+        });
+        body.appendChild(box);
+      }
+
+      /* Chips de sugestões de próximos passos sob a resposta (porta do Antigravity). */
+      function anexarSugestoes(aiWrap, sugestoes) {
+        var body = aiWrap.querySelector(".msg__body");
+        if (!body) return;
+        var box = document.createElement("div");
+        box.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;margin-top:8px";
+        sugestoes.slice(0, 3).forEach(function (s) {
+          var b = document.createElement("button");
+          b.type = "button";
+          b.textContent = s;
+          b.style.cssText = "font-size:12px;padding:6px 12px;border-radius:999px;cursor:pointer;" +
+            "background:var(--glass-bg, rgba(255,255,255,.06));border:1px solid var(--glass-border, rgba(255,255,255,.14));" +
+            "color:inherit;transition:transform .12s";
+          b.addEventListener("mouseenter", function () { b.style.transform = "translateY(-1px)"; });
+          b.addEventListener("mouseleave", function () { b.style.transform = ""; });
+          b.addEventListener("click", function () {
+            input.value = s;
+            if (typeof autoResize === "function") autoResize();
+            form.dispatchEvent(new Event("submit", { cancelable: true }));
+          });
+          box.appendChild(b);
+        });
+        body.appendChild(box);
+      }
+
+      /* ── Menu de slash commands no composer (porta do Antigravity) ──
+       * Digite "/" e aparece o popup com os comandos; clique preenche o campo. */
+      var SLASH_CMDS = [
+        { cmd: "/voz",      desc: "Painel de vozes TTS (ouvir e escolher)", ex: "/voz" },
+        { cmd: "/contatos", desc: "Buscar contato do Google e inserir",     ex: "/contatos Bruno" },
+        { cmd: "/imagem",   desc: "Gerar imagem (preset de prompt)",        ex: "/imagem um robô futurista — estilo aquarela, 16:9" },
+        { cmd: "/ajuda",    desc: "Ver os comandos disponíveis",            ex: "/ajuda" }
+      ];
+      (function initSlashMenu() {
+        if (!input || !form) return;
+        var popup = document.createElement("div");
+        popup.id = "slashCmdPopup";
+        popup.style.cssText = "position:absolute;bottom:calc(100% + 8px);left:0;right:0;display:none;z-index:60;" +
+          "background:var(--glass-bg, rgba(30,36,48,.92));backdrop-filter:blur(14px);border:1px solid var(--glass-border, rgba(255,255,255,.12));" +
+          "border-radius:14px;overflow:hidden;box-shadow:0 10px 30px rgba(0,0,0,.35)";
+        form.style.position = "relative";
+        form.appendChild(popup);
+        function render(filtro) {
+          var matches = SLASH_CMDS.filter(function (c) { return c.cmd.indexOf(filtro) === 0; });
+          if (!matches.length || filtro === matches[0].cmd) { popup.style.display = "none"; return; }
+          popup.innerHTML = matches.map(function (c, i) {
+            return '<div class="slash-item" data-cmd="' + c.cmd + '" style="padding:9px 14px;cursor:pointer;font-size:12.5px;' +
+              (i < matches.length - 1 ? "border-bottom:1px solid var(--glass-border, rgba(255,255,255,.08));" : "") +
+              (i === 0 ? "background:rgba(120,160,255,.12);" : "") + '">' +
+              '<b style="color:var(--accent, #7aa2ff)">' + c.cmd + '</b> <span style="opacity:.65">— ' + c.desc + '</span>' +
+              '<br><small style="opacity:.45">Ex.: ' + c.ex + "</small></div>";
+          }).join("");
+          popup.style.display = "block";
+          popup.querySelectorAll(".slash-item").forEach(function (el) {
+            el.addEventListener("mousedown", function (ev) { // mousedown: dispara antes do blur do input
+              ev.preventDefault();
+              input.value = el.getAttribute("data-cmd") + " ";
+              input.focus(); popup.style.display = "none";
+              if (typeof autoResize === "function") autoResize();
+            });
+          });
+        }
+        input.addEventListener("input", function () {
+          var v = input.value;
+          if (v.charAt(0) === "/" && v.indexOf(" ") === -1) render(v); else popup.style.display = "none";
+        });
+        input.addEventListener("blur", function () { setTimeout(function () { popup.style.display = "none"; }, 160); });
+        input.addEventListener("keydown", function (e) { if (e.key === "Escape") popup.style.display = "none"; });
+      })();
+
+      form.addEventListener("submit", function (e) {
+        e.preventDefault();
+        var text = input.value.trim();
+        var atts = pendingAttachments.slice(); // MULTI-ANEXO: cópia (o clear zera o original)
+        var att = atts[0] || null;             // 1º anexo = "principal" (compatibilidade com os fluxos existentes)
+        if (!text && !att) return;
+        // Comando /ajuda — lista os comandos disponíveis (local, sem IA).
+        if (!att && /^\/ajuda\b/i.test(text)) {
+          addMessage("user", text); input.value = ""; clearAttachment();
+          var linhasAjuda = SLASH_CMDS.map(function (c) { return c.cmd + " — " + c.desc + " (ex.: " + c.ex + ")"; }).join("\n");
+          addMessage("ai", "📋 Comandos disponíveis:\n\n" + linhasAjuda);
+          return;
+        }
+        // Comando /imagem — preset de geração: com argumento reescreve e envia; sem, insere o modelo.
+        if (!att && /^\/imagem\b/i.test(text)) {
+          var restoImg = text.replace(/^\/imagem\b/i, "").trim();
+          if (restoImg) {
+            text = "Gere uma imagem de " + restoImg;
+          } else {
+            input.value = "Gere uma imagem de [descrição] — estilo [realista/aquarela/cartoon/neon], proporção [1:1/16:9/9:16]";
+            autoResize(); input.focus();
+            return;
+          }
+        }
+        // Comando /voz — abre o seletor de vozes (ouvir + definir) sem chamar a IA.
+        if (!att && /^\/voz\b/i.test(text)) {
+          addMessage("user", text); input.value = ""; clearAttachment();
+          var tv = showTyping();
+          google.script.run
+            .withSuccessHandler(function (r) { tv.remove(); renderVozPanel(r); })
+            .withFailureHandler(function (err) { tv.remove(); addMessage("ai", "⚠️ " + err.message); })
+            .vozesTTS(authToken);
+          return;
+        }
+        // Comando /contatos [termo] — lista/busca contatos do Google e insere no campo ao escolher.
+        if (!att && /^\/contatos\b/i.test(text)) {
+          var termoC = text.replace(/^\/contatos\b/i, "").trim();
+          addMessage("user", text); input.value = ""; clearAttachment();
+          var tc = showTyping();
+          google.script.run
+            .withSuccessHandler(function (r) { tc.remove(); renderContatosPanel(r); })
+            .withFailureHandler(function (err) { tc.remove(); addMessage("ai", "⚠️ " + err.message); })
+            .contatosUI(authToken, termoC);
+          return;
+        }
+        var userWrap = addMessage("user", text || (atts.length > 1 ? "(" + atts.length + " anexos)" : "(anexo)"), att);
+        // MULTI-ANEXO: os demais anexos aparecem como chips extras na bolha do usuário.
+        if (atts.length > 1) {
+          try {
+            var bodyU = userWrap.querySelector(".msg__body") || userWrap;
+            var extrasEl = document.createElement("div");
+            extrasEl.className = "msg__extras";
+            extrasEl.textContent = "📎 " + atts.slice(1).map(function (a) { return a.nome || "arquivo"; }).join(" · ");
+            bodyU.appendChild(extrasEl);
+          } catch (eEx) {}
+        }
+        var attEl = userWrap.querySelector("[data-att]");
+        input.value = ""; clearAttachment();
+        var typing = showTyping();
+        // Até 30 turnos: o servidor COMPRIME os antigos (Memory Summarization — porta do Antigravity).
+        var snapshot = chatHistory.slice(-30);
+        var wasNew = !conversaId;
+        var t0 = Date.now();
+        var _toPayload = function (a) {
+          return a.tipo === "inline"
+            ? { tipo: "inline", mimeType: a.mimeType, data: a.data, nome: a.nome }
+            : { tipo: "texto", nome: a.nome, texto: a.texto };
+        };
+        var payload = null;
+        if (atts.length === 1) payload = _toPayload(atts[0]);
+        else if (atts.length > 1) payload = { tipo: "multi", anexos: atts.map(_toPayload) };
+        askBackend(text, snapshot, payload, function (res) {
+          typing.remove();
+          res = res || {};
+          var lat = ((Date.now() - t0) / 1000).toFixed(1);
+          var reply = res.resposta || "(sem resposta)";
+          // Status ao vivo no header: 🔁 modo reserva → 🟡; resposta normal → 🟢.
+          var stEl = document.getElementById("chatStatus");
+          if (stEl) {
+            if (reply.indexOf("🔁") === 0) stEl.innerHTML = '<span class="status-dot reserva"></span> Modo reserva';
+            else if (reply.indexOf("⚠️") !== 0) stEl.innerHTML = '<span class="status-dot"></span> Online';
+          }
+          // Anexo salvo no Drive → o chip passa a abrir o Google Drive
+          if (res.anexoUrl && attEl) {
+            var idx = Number(attEl.getAttribute("data-att"));
+            if (attachmentStore[idx]) attachmentStore[idx].driveUrl = res.anexoUrl;
+            attEl.title = "Abrir no Drive" + (res.categoria ? " · " + res.categoria : "");
+          }
+          if (res.conversaId) { conversaId = res.conversaId; if (wasNew && typeof loadConversas === "function") loadConversas(); }
+          var parsed = extrairImagensGeradas(reply); // separa miniaturas de imagem do texto
+          var aiWrap = addMessage("ai", "");
+          typeOut(aiWrap.querySelector(".msg__text"), parsed.texto, function () {
+            parsed.urls.forEach(function (u) { anexarImagemGerada(aiWrap, u); });
+            anexarYouTube(aiWrap, parsed.texto);
+            if (res.sugereIngestao && res.fileId) adicionarBotaoIngestao(aiWrap, res.fileId, res.categoria);
+            var body = aiWrap.querySelector(".msg__body");
+            if (body) {
+              var meta = document.createElement("div");
+              meta.className = "msg__meta";
+              meta.innerHTML = '<span>⏱ respondido em ' + lat + 's</span>';
+              // Botão 🔊 ouvir — sintetiza a resposta via Cloud TTS (não usa cota do Gemini).
+              if (hasBackend && parsed.texto && parsed.texto.length > 1) {
+                var ouvir = document.createElement("button");
+                ouvir.type = "button"; ouvir.className = "msg__tts"; ouvir.title = "Ouvir resposta";
+                ouvir.innerHTML = "🔊";
+                ouvir.addEventListener("click", function () { ouvirResposta(ouvir, parsed.texto); });
+                meta.appendChild(ouvir);
+              }
+              anexarFeedback(meta, parsed.texto);
+              // MODO ESPELHO: você mandou áudio → a resposta volta em áudio (player + autoplay).
+              if (res.audioResposta && res.audioResposta.base64) {
+                var player = document.createElement("audio");
+                player.controls = true;
+                player.src = "data:" + (res.audioResposta.mime || "audio/mpeg") + ";base64," + res.audioResposta.base64;
+                player.style.cssText = "display:block;margin-top:8px;height:32px;max-width:280px";
+                body.appendChild(player);
+                try { var pp = player.play(); if (pp && pp.catch) pp.catch(function () {}); } catch (ePl) {}
+              }
+              body.appendChild(meta);
+            }
+            // Preview de ação sensível (P2) → botões ✅ Confirmar / ❌ Cancelar (1 clique).
+            if (/Confirma[çc][ãa]o necess[áa]ria/i.test(parsed.texto)) anexarConfirmacao(aiWrap);
+            // Chips de PRÓXIMOS PASSOS (porta do Antigravity): clicar envia a sugestão como mensagem.
+            if (res.sugestoes && res.sugestoes.length) anexarSugestoes(aiWrap, res.sugestoes);
+            scrollBottom();
+          });
+          chatHistory.push({ role: "user", text: text || (atts.length > 1 ? ("[" + atts.length + " anexos: " + atts.map(function (a) { return a.nome || "arquivo"; }).join(", ") + "]") : ("[anexo: " + (att ? att.nome : "arquivo") + "]")) });
+          chatHistory.push({ role: "assistant", text: parsed.texto || reply });
+        });
+      });
+
+      /* ===================== HISTÓRICO DE CONVERSAS ===================== */
+      var convList = document.getElementById("convList");
+      var convNewBtn = document.getElementById("convNew");
+      var chatNav = document.getElementById("chatNav");
+
+      function loadConversas() {
+        if (!hasBackend || !authToken) return;
+        google.script.run
+          .withSuccessHandler(renderConvList)
+          .withFailureHandler(function () {})
+          .listarConversas(authToken);
+      }
+
+      function renderConvList(res) {
+        if (!convList) return;
+        convList.innerHTML = "";
+        var convs = (res && res.conversas) || [];
+        if (!convs.length) { convList.innerHTML = '<li class="conv-empty">Sem conversas ainda</li>'; return; }
+        convs.forEach(function (c) {
+          var li = document.createElement("li");
+          li.className = "conv-item" + (c.id === conversaId ? " is-active" : "");
+          li.innerHTML = '<span class="conv-title"></span>' +
+            '<button class="conv-edit" title="Renomear" aria-label="Renomear">✎</button>' +
+            '<button class="conv-del" title="Excluir" aria-label="Excluir">&times;</button>';
+          li.querySelector(".conv-title").textContent = c.titulo || "Conversa";
+          li.querySelector(".conv-title").addEventListener("click", function () { abrirConversa(c.id); });
+          li.querySelector(".conv-edit").addEventListener("click", function (e) { e.stopPropagation(); renomearConversaUI(c.id, c.titulo); });
+          li.querySelector(".conv-del").addEventListener("click", function (e) { e.stopPropagation(); excluirConversaUI(c.id); });
+          convList.appendChild(li);
+        });
+      }
+
+      function renomearConversaUI(id, atual) {
+        var novo = window.prompt("Renomear conversa:", atual || "");
+        if (novo == null) return;
+        novo = novo.trim();
+        if (!novo || novo === atual) return;
+        google.script.run
+          .withSuccessHandler(function (r) { if (r && r.ok) loadConversas(); })
+          .withFailureHandler(function () {})
+          .renomearConversa(authToken, id, novo);
+      }
+
+      function novaConversa() {
+        conversaId = null;
+        chatHistory = [];
+        attachmentStore = [];
+        clearAttachment();
+        if (typeof showView === "function") showView("chat");
+        messages.innerHTML = welcomeHTML;
+        welcome = document.getElementById("welcome");
+        if (convList) [].forEach.call(convList.querySelectorAll(".conv-item.is-active"), function (li) { li.classList.remove("is-active"); });
+        if (window.innerWidth <= 860) closeMobile();
+        input.focus();
+      }
+
+      function abrirConversa(id) {
+        if (!hasBackend) return;
+        google.script.run
+          .withSuccessHandler(function (res) {
+            if (!res || !res.ok) { addMessage("ai", "⚠️ Não foi possível carregar a conversa."); return; }
+            conversaId = id;
+            if (typeof showView === "function") showView("chat");
+            chatHistory = [];
+            attachmentStore = [];
+            messages.innerHTML = "";
+            welcome = null;
+            (res.mensagens || []).forEach(function (m) {
+              var att = (m.anexo && (m.anexo.nome || m.anexo.url))
+                ? { isImage: false, nome: m.anexo.nome || "anexo", driveUrl: m.anexo.url || "" }
+                : null;
+              if (m.role === "assistant") {
+                // Reidrata miniaturas de imagem geradas (antes apareciam como URL crua no histórico).
+                var parsedH = extrairImagensGeradas(m.text);
+                var wrapH = addMessage("ai", parsedH.texto, att, m.ts);
+                parsedH.urls.forEach(function (u) { anexarImagemGerada(wrapH, u); });
+                anexarYouTube(wrapH, parsedH.texto);
+              } else {
+                addMessage("user", m.text, att, m.ts);
+              }
+              chatHistory.push({ role: m.role, text: m.text });
+            });
+            loadConversas(); // re-renderiza marcando a ativa
+            if (window.innerWidth <= 860) closeMobile();
+          })
+          .withFailureHandler(function (err) { addMessage("ai", "⚠️ " + err.message); })
+          .carregarConversa(authToken, id);
+      }
+
+      function excluirConversaUI(id) {
+        if (!hasBackend) return;
+        if (!confirm("Excluir esta conversa?")) return;
+        google.script.run
+          .withSuccessHandler(function () { if (id === conversaId) novaConversa(); loadConversas(); })
+          .withFailureHandler(function () { loadConversas(); })
+          .excluirConversa(authToken, id);
+      }
+
+      if (chatNav) chatNav.addEventListener("click", function () { setNavActive(chatNav); novaConversa(); });
+      if (convNewBtn) convNewBtn.addEventListener("click", function (e) { e.stopPropagation(); novaConversa(); });
+
+      /* ===================== CONEXÕES WHATSAPP ===================== */
+      var whatsappView = document.getElementById("whatsappView");
+      var whatsappNav = document.getElementById("whatsappNav");
+      var wppInstancesEl = document.getElementById("wppInstances");
+      var wppRefreshBtn = document.getElementById("wppRefresh");
+      var wppDashboard = document.getElementById("wppDashboard");
+      var wppWebhookBtn = document.getElementById("wppWebhook");
+      var wppInstName = "";
+      var qrModal = document.getElementById("qrModal");
+      var qrBody = document.getElementById("qrBody");
+      var qrTitle = document.getElementById("qrTitle");
+      var wppPoll = null;
+
+      /* Título/subtítulo do topo por VIEW — antes era fixo em "Chat IA" em todas as telas. */
+      var VIEW_HEADINGS = {
+        chat:        ["Chat IA", "Assistente · Soft Web App Application"],
+        dashboard:   ["Dashboard", "Visão geral do seu dia"],
+        dispositivo: ["Dispositivo", "Controle do seu Android"],
+        whatsapp:    ["WhatsApp", "Conexões da sua instância"]
+      };
+      function setViewHeading(v) {
+        var h = VIEW_HEADINGS[v] || VIEW_HEADINGS.chat;
+        var t = document.getElementById("viewTitle");
+        var s = document.getElementById("viewSubtitle");
+        if (t) t.textContent = h[0];
+        if (s) s.textContent = h[1];
+      }
+
+      function showView(v) {
+        if (!chatSection || !whatsappView) return;
+        var dash = document.getElementById("dashboardView");
+        var disp = document.getElementById("dispositivoView");
+        chatSection.style.display = (v === "whatsapp" || v === "dashboard" || v === "dispositivo") ? "none" : "";
+        whatsappView.hidden = (v !== "whatsapp");
+        if (dash) dash.hidden = (v !== "dashboard");
+        if (disp) {
+          disp.hidden = (v !== "dispositivo");
+          if (v === "dispositivo") loadDispositivo();
+        }
+        setViewHeading(v);
+      }
+      /* Marca o item ativo na sidebar. */
+      function setNavActive(el) {
+        document.querySelectorAll(".nav__item.is-active").forEach(function (n) { n.classList.remove("is-active"); });
+        if (el) el.classList.add("is-active");
+      }
+
+      /* ===================== DASHBOARD · Centro de Comando ===================== */
+      function loadDashboard() {
+        var cards = document.getElementById("dashCards");
+        if (!cards) return;
+        if (!hasBackend || !authToken) { cards.innerHTML = '<div class="conv-empty">Backend indisponível.</div>'; return; }
+        cards.innerHTML = '<div class="conv-empty">Carregando seu dia…</div>';
+        google.script.run
+          .withSuccessHandler(renderDashboard)
+          .withFailureHandler(function (err) { cards.innerHTML = '<div class="conv-empty">⚠️ ' + err.message + '</div>'; })
+          .dashboardResumo(authToken);
+      }
+      /* Card clicado → abre o chat já perguntando ao Jarvis. */
+      function perguntarAoJarvis(pergunta) {
+        setNavActive(document.getElementById("chatNav"));
+        showView("chat");
+        input.value = pergunta;
+        form.dispatchEvent(new Event("submit", { cancelable: true }));
+      }
+      function renderDashboard(d) {
+        var cards = document.getElementById("dashCards");
+        var saud = document.getElementById("dashSaudacao");
+        var sub = document.getElementById("dashSub");
+        if (!cards) return;
+        if (!d || !d.ok) { cards.innerHTML = '<div class="conv-empty">⚠️ ' + ((d && d.erro) || "Falha ao carregar.") + "</div>"; return; }
+        function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+        var h = new Date().getHours();
+        var saudacao = (h >= 6 && h < 12 ? "Bom dia" : (h >= 12 && h < 18 ? "Boa tarde" : "Boa noite")) + ", " + esc(d.nome || "Bruno") + "! 👋";
+        // Pill de TURNO no cabeçalho (contexto que governa os alertas de ponto). Clique = trocar via chat.
+        var turnoNome = d.turno === "manha" ? "manhã" : (d.turno === "tarde" ? "tarde" : null);
+        var pill = turnoNome ? ' <span id="dashTurnoPill" class="dash-turno-pill" title="Clique para trocar de turno">🕗 Turno da ' + turnoNome + '</span>' : "";
+        if (saud) saud.innerHTML = saudacao + pill;
+        if (sub) sub.textContent = "Seu centro de comando · atualizado às " + new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+        // Clique no pill → vai ao chat e prepara a troca de turno (sem enviar; você completa).
+        var pillEl = document.getElementById("dashTurnoPill");
+        if (pillEl) pillEl.addEventListener("click", function () {
+          setNavActive(document.getElementById("chatNav"));
+          showView("chat");
+          input.value = "essa semana vou trabalhar no turno da ";
+          input.focus();
+        });
+        // 📋 Resumo do dia (uma linha, determinístico, sem custo de IA — reusa os dados já carregados).
+        var resumoEl = document.getElementById("dashResumoDia");
+        if (resumoEl) {
+          var partes = [];
+          var nEv = (d.eventos || []).length, nTa = (d.tarefas || []).length, nEm = d.emailsNaoLidos || 0, nAu = (d.autorizacoes || []).length;
+          partes.push(nEv ? ("📅 " + nEv + (nEv > 1 ? " compromissos" : " compromisso")) : "📅 agenda livre");
+          partes.push(nTa ? ("✅ " + nTa + (nTa > 1 ? " tarefas" : " tarefa")) : "✅ sem tarefas");
+          if (nEm) partes.push("📧 " + nEm + (nEm > 1 ? " e-mails" : " e-mail"));
+          if (nAu) partes.push("🔐 " + nAu + " p/ aprovar");
+          resumoEl.textContent = partes.join("  ·  ");
+          resumoEl.hidden = false;
+        }
+        function card(icone, titulo, count, itens, vazio, pergunta, info, customClass) {
+          var lis = (itens || []).slice(0, 5).map(function (i) { return "<li>" + esc(i) + "</li>"; }).join("");
+          var extraClass = (info ? " dash-card--info" : "") + (customClass ? " " + customClass : "");
+          return '<div class="dash-card' + extraClass + '" data-ask="' + esc(pergunta || "") + '" title="' + (info ? "Dado do painel" : "Abrir no chat") + '">' +
+            '<div class="dash-card__head"><span class="dash-card__icon">' + icone + '</span><h3>' + esc(titulo) + "</h3>" +
+            (count != null ? '<span class="dash-card__count">' + count + "</span>" : "") + "</div>" +
+            (lis ? '<ul class="dash-list">' + lis + "</ul>" : '<p class="dash-empty">' + esc(vazio) + "</p>") + "</div>";
+        }
+        window.__pendLista = d.pendencias || [];
+        var at = d.atividade || { total: 0, ok: 0, erros: 0, msMedio: 0, itens: [] };
+        var rv = d.revisao || { positivos: 0, negativos: 0, itens: [] };
+        window.__revisaoLista = rv.itens || [];
+        var pv = d.provedores || { itens: [], reserva: 0, ordem: 'billing_first' };
+        var lp = d.loop || { itens: [], maxSteps: 12, maxTools: 16, budgetDay: 200 };
+        window.__avLista = d.alertasVoz || [];          /* guarda p/ o form de edição achar por id */
+
+        // Cada card é construído uma vez e indexado por chave; a ORDEM vem do backend
+        // (d.ordemCards — os cards com conteúdo/urgência flutuam ao topo). Fallback: ordem natural.
+        var cardHtml = {
+          evento: eventoCardHtml(d.eventos || [], d.conflitoAgenda, esc),
+          tarefa: tarefaCardHtml(d.tarefas || [], esc),
+          autoriz: autorizCardHtml(d.autorizacoes || [], esc),
+          pendencia: pendenciaCardHtml(window.__pendLista, d.modoSecretaria, esc, d.emailsNaoLidos),
+          conhecimento: conhecimentoCardHtml(d, esc),
+          objetivos: objetivosCardHtml(d, esc),
+          midia: midiaCardHtml(d, esc),
+          agendada: agendadaCardHtml(d.agendadas || [], esc),
+          monitor: monitorCardHtml(d.monitores || [], esc),
+          atividade: atividadeCardHtml(at, esc),
+          revisao: revisaoCardHtml(rv, esc),
+          provedores: provedoresCardHtml(pv, esc),
+          loop: loopCardHtml(lp, esc),
+          alertasVoz: avCardHtml(window.__avLista, esc)
+        };
+        var ordemPadrao = ["evento", "tarefa", "autoriz", "pendencia", "conhecimento", "objetivos", "midia", "agendada", "monitor", "atividade", "revisao", "provedores", "loop", "alertasVoz"];
+        var ordem = (d.ordemCards && d.ordemCards.length) ? d.ordemCards : ordemPadrao;
+        // garante que nenhum card se perca se o backend omitir alguma chave
+        ordemPadrao.forEach(function (k) { if (ordem.indexOf(k) === -1) ordem.push(k); });
+        var html = ordem.map(function (k) { return cardHtml[k] || ""; }).join("");
+        cards.innerHTML = html;
+        wireAvCard(cards);
+        cards.querySelectorAll(".act-card").forEach(function (c) { wireActCard(c, c.getAttribute("data-cardkey")); });
+        var _pc = cards.querySelector(".pend-card"); if (_pc) {
+          wirePendCard(_pc);
+          wireResumoBriefing(_pc, esc);
+        }
+        wireWikiDragDrop(cards);
+        wireProductivityActions(cards);
+        wireAutomationTriggers(cards);
+        wireMediaGalleryActions(cards);
+        wireAgendadaCard(cards);
+        wireLoopCard(cards);
+        wireAtividadeCard(cards);
+        wireRevisaoCard(cards);
+        wireProvedoresCard(cards);
+
+        /* subtítulo (agregado) abaixo do título de um card identificado pelo seu data-ask */
+        function subDoCard(ask, texto) {
+          if (!texto) return;
+          var el = cards.querySelector('.dash-card[data-ask="' + ask + '"]');
+          if (!el) return;
+          var head = el.querySelector('.dash-card__head');
+          if (!head) return;
+          var sp = document.createElement('div'); sp.className = 'dash-card__sub'; sp.textContent = texto;
+          head.insertAdjacentElement('afterend', sp);
+        }
+        subDoCard("Como anda o desempenho do agente hoje?", atResumo);
+        subDoCard("Analise as respostas que recebi 👎 e sugira como melhorar", rvResumo);
+        subDoCard("Como está o orçamento dos meus loops de agente?", lpResumo);
+        cards.querySelectorAll(".dash-card").forEach(function (c) {
+          var q = c.getAttribute("data-ask");
+          /* DASH-1: cards informativos (telemetria) não abrem o chat — o dado já está no card */
+          if (q && !c.classList.contains("dash-card--info")) c.addEventListener("click", function () { perguntarAoJarvis(q); });
+        });
+      }
+
+      /* ===== 🔔 ALERTAS DE VOZ (card interativo no Dashboard) ===== */
+      function toast(msg) {
+        try {
+          var t = document.getElementById("__toast");
+          if (!t) { t = document.createElement("div"); t.id = "__toast"; document.body.appendChild(t); }
+          t.textContent = msg; t.classList.add("toast-show");
+          clearTimeout(window.__toastT); window.__toastT = setTimeout(function () { t.classList.remove("toast-show"); }, 3200);
+        } catch (e) {}
+      }
+      var DIAS_LBL = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+      function avFmtHora(a) { return (a.hora < 10 ? "0" + a.hora : a.hora) + ":" + (a.minuto < 10 ? "0" + a.minuto : a.minuto); }
+      function avFmtDias(a) { return (a.dias && a.dias.length) ? a.dias.map(function (d) { return DIAS_LBL[d]; }).join(",") : "todos os dias"; }
+      function avCardHtml(lista, esc) {
+        var rows = (lista || []).map(function (a) {
+          return '<li class="av-row" data-id="' + esc(a.id) + '">' +
+            '<div class="av-info"><div class="av-top"><b>' + avFmtHora(a) + '</b> <span class="av-dias">' + esc(avFmtDias(a)) + '</span>' +
+            (a.dinamico ? ' <span class="av-badge">dinâmico</span>' : '') + '</div>' +
+            '<div class="av-texto">' + esc(a.texto) + '</div></div>' +
+            '<div class="av-acts">' +
+            '<button type="button" class="av-btn" data-act="testar" title="Tocar agora no celular">▶</button>' +
+            '<button type="button" class="av-btn" data-act="editar" title="Editar">✏️</button>' +
+            '<button type="button" class="av-btn av-btn--del" data-act="excluir" title="Excluir">🗑️</button>' +
+            '</div></li>';
+        }).join("");
+        return '<div class="dash-card dash-card--info av-card">' +
+          '<div class="dash-card__head"><span class="dash-card__icon">🔔</span><h3>Alertas de voz (Android)</h3>' +
+          '<span class="dash-card__count">' + (lista || []).length + '</span></div>' +
+          (rows ? '<ul class="dash-list av-ul">' + rows + '</ul>' : '<p class="dash-empty">Nenhum alerta de voz agendado</p>') +
+          '<button type="button" class="av-novo" data-act="novo">+ Novo alerta</button>' +
+          '<div class="av-form" hidden></div></div>';
+      }
+      function wireAvCard(cards) {
+        var avCard = cards.querySelector(".av-card");
+        if (!avCard) return;
+        avCard.addEventListener("click", function (ev) {
+          var btn = ev.target.closest("[data-act]"); if (!btn) return;
+          ev.stopPropagation();
+          var act = btn.getAttribute("data-act");
+          var row = btn.closest(".av-row"); var id = row ? row.getAttribute("data-id") : "";
+          if (act === "testar") avTestar(id, btn);
+          else if (act === "excluir") avExcluir(id);
+          else if (act === "editar") avAbrirForm(avCard, id);
+          else if (act === "novo") avAbrirForm(avCard, null);
+        });
+      }
+      function avAlertaPorId(id) { return (window.__avLista || []).filter(function (a) { return a.id === id; })[0] || null; }
+      function avAbrirForm(avCard, id) {
+        var box = avCard.querySelector(".av-form"); if (!box) return;
+        var a = id ? avAlertaPorId(id) : { hora: 8, minuto: 0, dias: [], texto: "", dinamico: false };
+        if (!a) return;
+        var diasChk = DIAS_LBL.map(function (lbl, i) {
+          var on = (a.dias && a.dias.indexOf(i) !== -1) ? " checked" : "";
+          return '<label class="av-dchk"><input type="checkbox" value="' + i + '"' + on + '>' + lbl + "</label>";
+        }).join("");
+        box.innerHTML =
+          '<div class="av-frow"><label>Hora</label><input type="number" class="av-h" min="0" max="23" value="' + a.hora + '">' +
+          '<label>Min</label><input type="number" class="av-m" min="0" max="59" value="' + (a.minuto || 0) + '"></div>' +
+          '<div class="av-frow av-dias-wrap">' + diasChk + '</div>' +
+          '<textarea class="av-t" rows="2" placeholder="O que falar... (ou um pedido, se dinâmico)"></textarea>' +
+          '<label class="av-dchk"><input type="checkbox" class="av-din"' + (a.dinamico ? " checked" : "") + '> Dinâmico (o Jarvis gera no horário: agenda, e-mails, notícias...)</label>' +
+          '<div class="av-frow av-fbtns"><button type="button" class="av-save">' + (id ? "Salvar" : "Criar") + '</button>' +
+          '<button type="button" class="av-cancel">Cancelar</button></div>';
+        box.querySelector(".av-t").value = a.texto || "";
+        box.hidden = false;
+        box.querySelector(".av-cancel").onclick = function () { box.hidden = true; box.innerHTML = ""; };
+        box.querySelector(".av-save").onclick = function () {
+          var dias = Array.prototype.slice.call(box.querySelectorAll(".av-dias-wrap input:checked")).map(function (c) { return Number(c.value); });
+          var campos = {
+            hora: Number(box.querySelector(".av-h").value), minuto: Number(box.querySelector(".av-m").value),
+            dias: dias, texto: box.querySelector(".av-t").value.trim(), dinamico: box.querySelector(".av-din").checked
+          };
+          if (!campos.texto) { toast && toast("Escreva o texto do alerta."); return; }
+          this.disabled = true; this.textContent = "Salvando…";
+          var fn = id ? function (cb) { google.script.run.withSuccessHandler(cb).withFailureHandler(cb).uiEditarAlertaVoz(authToken, id, campos); }
+            : function (cb) { google.script.run.withSuccessHandler(cb).withFailureHandler(cb).uiCriarAlertaVoz(authToken, campos); };
+          fn(function (r) { toast && toast(r && r.ok ? (id ? "Alerta atualizado ✅" : "Alerta criado ✅") : ("⚠️ " + ((r && r.erro) || "falha"))); loadDashboard(); });
+        };
+      }
+      function avTestar(id, btn) {
+        if (btn) { btn.disabled = true; btn.textContent = "…"; }
+        google.script.run.withSuccessHandler(function (r) {
+          toast && toast(r && r.ok ? "Tocando no seu celular ▶" : ("⚠️ " + ((r && r.erro) || "falha")));
+          if (btn) { btn.disabled = false; btn.textContent = "▶"; }
+        }).withFailureHandler(function (e) { toast && toast("⚠️ " + e.message); if (btn) { btn.disabled = false; btn.textContent = "▶"; } })
+          .uiTestarAlertaVoz(authToken, id);
+      }
+      function avExcluir(id) {
+        google.script.run.withSuccessHandler(function (r) { toast && toast(r && r.ok ? "Alerta excluído 🗑️" : "⚠️ falha"); loadDashboard(); })
+          .withFailureHandler(function (e) { toast && toast("⚠️ " + e.message); }).uiCancelarAlertaVoz(authToken, id);
+      }
+
+      /* ===== Mini-framework de CARDS INTERATIVOS (data-cardkey + data-act + data-id) ===== */
+      var IC_REG = {
+        tarefa: { concluir: { fn: "uiTarefaConcluir", okMsg: "Tarefa concluída ✅" }, excluir: { fn: "uiTarefaExcluir", okMsg: "Tarefa excluída 🗑️" }, __add: { fn: "uiTarefaAdicionar", okMsg: "Tarefa adicionada ✅" } },
+        autoriz: { autorizar: { fn: "uiAutorizar", okMsg: "Autorizado ✅", busy: true }, negar: { fn: "uiNegar", okMsg: "Pedido negado ✖️" } },
+        agendada: { cancelar: { fn: "uiCancelarAgendada", okMsg: "Agendamento cancelado 🗑️" } },
+        monitor: { remover: { fn: "uiMonitorRemover", okMsg: "Monitor removido 🗑️" } },
+        evento: { excluir: { fn: "uiEventoExcluir", okMsg: "Compromisso cancelado 🗑️" }, __add: { fn: "uiEventoAdicionar", okMsg: "Compromisso agendado 📅" } }
+      };
+      function icRun(fnName, args, btn, okMsg, oldTxt) {
+        var row = btn ? btn.closest(".av-row") : null;
+        var delay = 0;
+        if (row && btn) {
+          var act = btn.getAttribute("data-act");
+          if (act === "autorizar" || act === "aprovar") {
+            row.classList.add("approved");
+            delay = 450;
+          } else if (act === "negar" || act === "remover" || act === "cancelar" || act === "excluir" || act === "ignorar") {
+            row.classList.add("rejected");
+            delay = 450;
+          }
+        }
+        setTimeout(function() {
+          var runner = google.script.run
+            .withSuccessHandler(function (r) {
+              toast(r && r.ok ? (okMsg || "Feito ✅") : ("⚠️ " + ((r && r.erro) || "falha")));
+              loadDashboard();
+            })
+            .withFailureHandler(function (e) {
+              toast("⚠️ " + e.message);
+              if (row) {
+                row.classList.remove("approved");
+                row.classList.remove("rejected");
+              }
+              if (btn) {
+                btn.disabled = false;
+                btn.textContent = oldTxt;
+              }
+            });
+          runner[fnName].apply(runner, [authToken].concat(args));
+        }, delay);
+      }
+      function wireActCard(cardEl, cardKey) {
+        var reg = IC_REG[cardKey] || {};
+        cardEl.addEventListener("click", function (ev) {
+          var btn = ev.target.closest("[data-act]"); if (!btn) return;
+          ev.stopPropagation();
+          var act = btn.getAttribute("data-act");
+          if (act === "add") {                       /* botão de adicionar (usa o input do card) */
+            if (cardKey === "monitor") {
+              var inpUrl = cardEl.querySelector(".ic-add-in.mon-url");
+              var inpDesc = cardEl.querySelector(".ic-add-in.mon-desc");
+              var urlVal = inpUrl ? inpUrl.value.trim() : "";
+              var descVal = inpDesc ? inpDesc.value.trim() : "";
+              if (!urlVal) { if (inpUrl) inpUrl.focus(); return; }
+              var ob = btn.textContent; btn.disabled = true; btn.textContent = "…";
+              icRun("uiMonitorAdicionar", [urlVal, descVal], btn, "Monitor adicionado 🌐", ob);
+              return;
+            }
+            var inp = cardEl.querySelector(".ic-add-in"); var val = inp ? inp.value.trim() : "";
+            if (!val || !reg.__add) { if (inp) inp.focus(); return; }
+            var ob = btn.textContent; btn.disabled = true; btn.textContent = "…";
+            icRun(reg.__add.fn, [val], btn, reg.__add.okMsg, ob); return;
+          }
+          var row = btn.closest("[data-id]"); var id = row ? row.getAttribute("data-id") : "";
+          var a = reg[act]; if (!a || !id) return;
+          var ob = btn.textContent; btn.disabled = true; if (a.busy) btn.textContent = "…";
+          icRun(a.fn, [id], btn, a.okMsg, ob);
+        });
+        var inp = cardEl.querySelector(".ic-add-in");
+        if (inp) inp.addEventListener("keydown", function (ev) { if (ev.key === "Enter") { ev.preventDefault(); var b = cardEl.querySelector('[data-act="add"]'); if (b) b.click(); } });
+      }
+
+      function wireAgendadaCard(container) {
+        var card = container.querySelector('[data-cardkey="agendada"]');
+        if (!card) return;
+        var btn = card.querySelector(".agend-btn");
+        if (!btn) return;
+        btn.addEventListener("click", function(ev) {
+          ev.stopPropagation();
+          var inpContato = card.querySelector(".agend-contato");
+          var inpData = card.querySelector(".agend-data");
+          var inpTexto = card.querySelector(".agend-texto");
+          
+          var contato = inpContato ? inpContato.value.trim() : "";
+          var dataISO = inpData ? inpData.value : "";
+          var mensagem = inpTexto ? inpTexto.value.trim() : "";
+          
+          if (!contato || !dataISO || !mensagem) {
+            toast("⚠️ Preencha todos os campos do agendamento.");
+            return;
+          }
+          
+          btn.disabled = true;
+          btn.textContent = "…";
+          
+          google.script.run
+            .withSuccessHandler(function(r) {
+              if (r && r.ok) {
+                toast("WhatsApp agendado com sucesso! ⏰");
+                loadDashboard();
+              } else {
+                toast("⚠️ Erro: " + (r ? r.erro : "Falha"));
+                btn.disabled = false;
+                btn.textContent = "＋";
+              }
+            })
+            .withFailureHandler(function(e) {
+              toast("⚠️ Falha: " + e.message);
+              btn.disabled = false;
+              btn.textContent = "＋";
+            })
+            .uiAgendarWhatsApp(authToken, contato, mensagem, dataISO, 0, 0);
+        });
+      }
+
+      function wireLoopCard(container) {
+        var card = container.querySelector('[data-cardkey="loop"]');
+        if (!card) return;
+        
+        var sliderSteps = card.querySelector(".slider-steps");
+        var valSteps = card.querySelector(".val-steps");
+        if (sliderSteps && valSteps) {
+          sliderSteps.addEventListener("input", function() { valSteps.textContent = sliderSteps.value; });
+        }
+        
+        var sliderTools = card.querySelector(".slider-tools");
+        var valTools = card.querySelector(".val-tools");
+        if (sliderTools && valTools) {
+          sliderTools.addEventListener("input", function() { valTools.textContent = sliderTools.value; });
+        }
+        
+        var btnSave = card.querySelector(".loop-save-btn");
+        if (btnSave) {
+          btnSave.addEventListener("click", function(ev) {
+            ev.stopPropagation();
+            var maxSteps = sliderSteps ? sliderSteps.value : 12;
+            var maxTools = sliderTools ? sliderTools.value : 16;
+            var inpBudget = card.querySelector(".loop-budget-input");
+            var budget = inpBudget ? inpBudget.value : 200;
+            
+            btnSave.disabled = true;
+            btnSave.textContent = "…";
+            
+            google.script.run
+              .withSuccessHandler(function(r) {
+                toast(r && r.ok ? "Loop atualizado 🔁" : "⚠️ falha ao salvar");
+                loadDashboard();
+              })
+              .withFailureHandler(function(e) {
+                toast("⚠️ Erro: " + e.message);
+                btnSave.disabled = false;
+                btnSave.textContent = "Salvar";
+              })
+              .uiUpdateLoopSettings(authToken, maxSteps, maxTools, budget);
+          });
+        }
+      }
+
+      function wireAtividadeCard(container) {
+        var card = container.querySelector('[data-cardkey="atividade"]');
+        if (!card) return;
+        
+        var filterIn = card.querySelector(".log-filter");
+        if (filterIn) {
+          filterIn.addEventListener("keyup", function() {
+            var q = filterIn.value.toLowerCase().trim();
+            var rows = card.querySelectorAll(".log-row");
+            rows.forEach(function(row) {
+              var txt = row.textContent.toLowerCase();
+              if (txt.indexOf(q) !== -1) {
+                row.style.display = "";
+              } else {
+                row.style.display = "none";
+              }
+            });
+          });
+        }
+        
+        var clearBtn = card.querySelector(".log-clear-btn");
+        if (clearBtn) {
+          clearBtn.addEventListener("click", function(ev) {
+            ev.stopPropagation();
+            clearBtn.disabled = true;
+            clearBtn.textContent = "…";
+            google.script.run
+              .withSuccessHandler(function(r) {
+                toast(r && r.ok ? "Logs de atividade limpos 🗑️" : "⚠️ falha ao limpar");
+                loadDashboard();
+              })
+              .withFailureHandler(function(e) {
+                toast("⚠️ Erro: " + e.message);
+                clearBtn.disabled = false;
+                clearBtn.textContent = "🗑️";
+              })
+              .uiLimparLogsEventos(authToken);
+          });
+        }
+      }
+
+      function wireRevisaoCard(container) {
+        var card = container.querySelector('[data-cardkey="revisao"]');
+        if (!card) return;
+        
+        card.addEventListener("click", function(ev) {
+          var btn = ev.target.closest("[data-act]"); if (!btn) return;
+          ev.stopPropagation();
+          var act = btn.getAttribute("data-act");
+          var row = btn.closest("[data-id]"); if (!row) return;
+          var id = row.getAttribute("data-id");
+          
+          if (act === "resolver") {
+            row.classList.add("rejected");
+            btn.disabled = true;
+            google.script.run
+              .withSuccessHandler(function(r) {
+                toast(r && r.ok ? "Feedback resolvido 🗑️" : "⚠️ erro");
+                loadDashboard();
+              })
+              .withFailureHandler(function(e) {
+                toast("⚠️ Falha: " + e.message);
+                row.classList.remove("rejected");
+                btn.disabled = false;
+              })
+              .uiRevisaoResolver(authToken, id, "", true);
+          } else if (act === "corrigir") {
+            var box = row.querySelector(".revis-corr-box");
+            if (box) box.hidden = !box.hidden;
+          }
+        });
+        
+        card.querySelectorAll(".av-row").forEach(function(row) {
+          var id = row.getAttribute("data-id");
+          var btnCancel = row.querySelector(".revis-corr-cancel");
+          var btnSave = row.querySelector(".revis-corr-save");
+          var txtArea = row.querySelector(".revis-corr-txt");
+          
+          if (btnCancel) {
+            btnCancel.addEventListener("click", function(ev) {
+              ev.stopPropagation();
+              var box = row.querySelector(".revis-corr-box");
+              if (box) box.hidden = true;
+            });
+          }
+          
+          if (btnSave && txtArea) {
+            btnSave.addEventListener("click", function(ev) {
+              ev.stopPropagation();
+              var val = txtArea.value.trim();
+              if (!val) {
+                toast("⚠️ Digite a correção da Wiki.");
+                return;
+              }
+              btnSave.disabled = true;
+              btnSave.textContent = "…";
+              row.classList.add("approved");
+              
+              google.script.run
+                .withSuccessHandler(function(r) {
+                  if (r && r.ok) {
+                    toast("Correção salva na Wiki com sucesso! 🧠");
+                    loadDashboard();
+                  } else {
+                    toast("⚠️ Erro: " + (r ? r.erro : "Falha"));
+                    row.classList.remove("approved");
+                    btnSave.disabled = false;
+                    btnSave.textContent = "Salvar na Wiki";
+                  }
+                })
+                .withFailureHandler(function(e) {
+                  toast("⚠️ Falha: " + e.message);
+                  row.classList.remove("approved");
+                  btnSave.disabled = false;
+                  btnSave.textContent = "Salvar na Wiki";
+                })
+                .uiRevisaoResolver(authToken, id, val, true);
+            });
+          }
+        });
+      }
+
+      function wireProvedoresCard(container) {
+        var card = container.querySelector('[data-cardkey="provedores"]');
+        if (!card) return;
+        
+        var select = card.querySelector(".provedor-select");
+        if (select) {
+          select.addEventListener("change", function() {
+            var val = select.value;
+            select.disabled = true;
+            google.script.run
+              .withSuccessHandler(function(r) {
+                toast(r && r.ok ? "Prioridade de chaves atualizada! 🛰️" : "⚠️ falha");
+                loadDashboard();
+              })
+              .withFailureHandler(function(e) {
+                toast("⚠️ Erro: " + e.message);
+                select.disabled = false;
+              })
+              .uiDefinirOrdemGemini(authToken, val);
+          });
+        }
+      }
+      function tarefaCardHtml(lista, esc) {
+        var rows = (lista || []).map(function (t) {
+          return '<li class="av-row" data-id="' + esc(t.id) + '"><div class="av-info"><div class="av-texto">' + esc(t.titulo) + '</div></div>' +
+            '<div class="av-acts"><button type="button" class="av-btn" data-act="concluir" title="Concluir">✓</button>' +
+            '<button type="button" class="av-btn av-btn--del" data-act="excluir" title="Excluir">🗑️</button></div></li>';
+        }).join("");
+        var organizarBtn = '<button type="button" class="dash-card-btn" data-act="organizardia" title="Organizar e priorizar minhas tarefas via Jarvis"><i class="fas fa-tasks"></i> Organizar meu Dia</button>';
+        return '<div class="dash-card dash-card--info act-card" data-cardkey="tarefa">' +
+          '<div class="dash-card__head"><span class="dash-card__icon">✅</span><h3>Tarefas</h3><span class="dash-card__count">' + (lista || []).length + '</span></div>' +
+          (rows ? '<ul class="dash-list av-ul">' + rows + '</ul>' : '<p class="dash-empty">Nenhuma tarefa pendente 🙌</p>') +
+          '<div class="ic-add" style="margin-bottom:8px;"><input type="text" class="ic-add-in" placeholder="Nova tarefa…" maxlength="200"><button type="button" class="av-btn ic-add-btn" data-act="add" title="Adicionar">＋</button></div>' +
+          organizarBtn +
+          '</div>';
+      }
+      function eventoCardHtml(lista, conflito, esc) {
+        var rows = (lista || []).map(function (ev) {
+          return '<li class="av-row" data-id="' + esc(ev.titulo) + '">' +
+            '<div class="av-info"><div class="av-top"><b>' + esc(ev.inicio) + '</b></div>' +
+            '<div class="av-texto">' + esc(ev.titulo) + '</div></div>' +
+            '<div class="av-acts"><button type="button" class="av-btn av-btn--del" data-act="excluir" title="Excluir compromisso">🗑️</button></div></li>';
+        }).join("");
+        var extraEvClass = conflito ? " dash-card--conflict" : "";
+        return '<div class="dash-card dash-card--info act-card' + extraEvClass + '" data-cardkey="evento">' +
+          '<div class="dash-card__head"><span class="dash-card__icon">📅</span><h3>Próximos eventos</h3><span class="dash-card__count">' + (lista || []).length + '</span></div>' +
+          (rows ? '<ul class="dash-list av-ul">' + rows + '</ul>' : '<p class="dash-empty">Nada nos próximos 7 dias</p>') +
+          '<div class="ic-add"><input type="text" class="ic-add-in" placeholder="Novo compromisso (ex: Reunião amanhã 15h)…" maxlength="200"><button type="button" class="av-btn ic-add-btn" data-act="add" title="Agendar">＋</button></div>' +
+          '</div>';
+      }
+
+      function autorizCardHtml(lista, esc) {
+        var rows = (lista || []).map(function (a) {
+          return '<li class="av-row" data-id="' + esc(a.id) + '"><div class="av-info"><div class="av-top"><b>' + esc(a.de || a.numero || "contato") + '</b></div>' +
+            '<div class="av-texto">' + esc(a.pedido || "") + '</div></div>' +
+            '<div class="av-acts"><button type="button" class="av-btn" data-act="autorizar" title="Autorizar">✅</button>' +
+            '<button type="button" class="av-btn av-btn--del" data-act="negar" title="Negar">✖️</button></div></li>';
+        }).join("");
+        return '<div class="dash-card dash-card--info act-card" data-cardkey="autoriz">' +
+          '<div class="dash-card__head"><span class="dash-card__icon">🔐</span><h3>Autorizações pendentes</h3><span class="dash-card__count">' + (lista || []).length + '</span></div>' +
+          (rows ? '<ul class="dash-list av-ul">' + rows + '</ul>' : '<p class="dash-empty">Nenhum pedido aguardando</p>') + '</div>';
+      }
+
+      function agendadaCardHtml(lista, esc) {
+        var rows = (lista || []).map(function (m) {
+          var quando = String(m.quando || "").substring(0, 16).replace("T", " ");
+          var rep = (m.repete && m.repete !== "uma vez") ? (" · " + m.repete) : "";
+          return '<li class="av-row" data-id="' + esc(m.id) + '"><div class="av-info"><div class="av-top"><b>' + esc(quando) + '</b> → ' + esc(m.contato || "") + '</div>' +
+            '<div class="av-texto">' + esc(m.mensagem || "") + esc(rep) + '</div></div>' +
+            '<div class="av-acts"><button type="button" class="av-btn av-btn--del" data-act="cancelar" title="Cancelar envio">🗑️</button></div></li>';
+        }).join("");
+        
+        var formAgendar = '<div class="av-form agend-form" style="display:flex; flex-direction:column; gap:6px; margin-top:8px;">' +
+          '<input type="text" class="ic-add-in agend-contato" placeholder="Contato (Nome/JID/número)…" style="font-size:11.5px; padding:5px 8px;">' +
+          '<input type="datetime-local" class="ic-add-in agend-data" style="font-size:11.5px; padding:5px 8px;">' +
+          '<div style="display:flex; gap:6px;">' +
+            '<input type="text" class="ic-add-in agend-texto" placeholder="Mensagem WhatsApp…" style="font-size:11.5px; padding:5px 8px; flex:1;">' +
+            '<button type="button" class="av-btn agend-btn" style="padding:4px 10px; font-weight:bold;" title="Agendar envio">＋</button>' +
+          '</div>' +
+          '</div>';
+
+        return '<div class="dash-card dash-card--info act-card" data-cardkey="agendada">' +
+          '<div class="dash-card__head"><span class="dash-card__icon">⏰</span><h3>Mensagens agendadas</h3><span class="dash-card__count">' + (lista || []).length + '</span></div>' +
+          (rows ? '<ul class="dash-list av-ul">' + rows + '</ul>' : '<p class="dash-empty">Nada programado</p>') + 
+          formAgendar +
+          '</div>';
+      }
+
+      function monitorCardHtml(lista, esc) {
+        var rows = (lista || []).map(function (m) {
+          var desc = m.descricao ? m.descricao : m.url;
+          return '<li class="av-row" data-id="' + esc(m.id) + '"><div class="av-info"><div class="av-texto">' + esc(desc) + '</div><div class="av-texto" style="font-size:10px; opacity:0.6;">' + esc(m.url) + '</div></div>' +
+            '<div class="av-acts"><button type="button" class="av-btn av-btn--del" data-act="remover" title="Remover monitor">🗑️</button></div></li>';
+        }).join("");
+        return '<div class="dash-card dash-card--info act-card" data-cardkey="monitor">' +
+          '<div class="dash-card__head"><span class="dash-card__icon">🌐</span><h3>Monitores web</h3><span class="dash-card__count">' + (lista || []).length + '</span></div>' +
+          (rows ? '<ul class="dash-list av-ul">' + rows + '</ul>' : '<p class="dash-empty">Nenhuma página monitorada</p>') +
+          '<div class="ic-add" style="display:flex; flex-direction:column; gap:6px;">' +
+            '<input type="text" class="ic-add-in mon-url" placeholder="https://… (página a monitorar)" maxlength="300">' +
+            '<div style="display:flex; gap:6px;">' +
+              '<input type="text" class="ic-add-in mon-desc" placeholder="Descrição (ex: Preço de Docker)…" maxlength="150" style="flex:1;">' +
+              '<button type="button" class="av-btn ic-add-btn" data-act="add" title="Adicionar monitor">＋</button>' +
+            '</div>' +
+          '</div></div>';
+      }
+
+      function atividadeCardHtml(at, esc) {
+        var lis = (at.itens || []).map(function (i) { return '<li class="log-row">' + esc(i) + "</li>"; }).join("");
+        return '<div class="dash-card dash-card--info act-card" data-cardkey="atividade">' +
+          '<div class="dash-card__head"><span class="dash-card__icon">📊</span><h3>Atividade do agente</h3><span class="dash-card__count">' + (at.total || 0) + '</span></div>' +
+          '<div class="ic-add" style="margin-bottom:8px;"><input type="text" class="ic-add-in log-filter" placeholder="Filtrar ferramentas…" style="font-size:11.5px; padding:5px 8px;">' +
+          '<button type="button" class="av-btn av-btn--del log-clear-btn" data-act="limpar" title="Limpar Logs" style="font-size:11px; padding:3px 7px;">🗑️</button></div>' +
+          (lis ? '<ul class="dash-list log-ul">' + lis + '</ul>' : '<p class="dash-empty">Nenhuma execução registrada ainda</p>') + '</div>';
+      }
+
+      function revisaoCardHtml(rv, esc) {
+        var rows = (rv.itens || []).map(function (i) {
+          return '<li class="av-row" data-id="' + esc(i.id) + '">' +
+            '<div class="av-info"><div class="av-texto" style="font-size:12px; font-style:italic;">' + esc(i.texto) + '</div></div>' +
+            '<div class="av-acts">' +
+              '<button type="button" class="av-btn revis-btn-corr" data-act="corrigir" title="Corrigir e injetar na Wiki">📝</button>' +
+              '<button type="button" class="av-btn av-btn--del" data-act="resolver" title="Resolver (ignorar)">🗑️</button>' +
+            '</div>' +
+            '<div class="revis-corr-box" hidden>' +
+              '<textarea class="revis-corr-txt" placeholder="Dite a correção para esta falha. Ex: O correto sobre Docker é..."></textarea>' +
+              '<div class="revis-corr-btns">' +
+                '<button type="button" class="av-btn av-cancel revis-corr-cancel">Cancelar</button>' +
+                '<button type="button" class="av-btn av-save revis-corr-save">Salvar na Wiki</button>' +
+              '</div>' +
+            '</div>' +
+            '</li>';
+        }).join("");
+        return '<div class="dash-card dash-card--info act-card" data-cardkey="revisao">' +
+          '<div class="dash-card__head"><span class="dash-card__icon">🩹</span><h3>Para revisar (👎)</h3><span class="dash-card__count">' + (rv.negativos || 0) + '</span></div>' +
+          (rows ? '<ul class="dash-list av-ul">' + rows + '</ul>' : '<p class="dash-empty">Nenhuma resposta marcada com 👎</p>') + '</div>';
+      }
+
+      function provedoresCardHtml(pv, esc) {
+        var lis = (pv.itens || []).map(function (i) { return "<li>" + esc(i) + "</li>"; }).join("");
+        var select = '<select class="provedor-select" title="Prioridade de API do Gemini">' +
+          '<option value="billing_first"' + (pv.ordem === 'billing_first' ? ' selected' : '') + '>💳 Faturamento Primeiro</option>' +
+          '<option value="free_first"' + (pv.ordem === 'free_first' ? ' selected' : '') + '>🆓 Grátis Primeiro</option>' +
+          '</select>';
+        // 🩺 Saúde: destaca a taxa de erro quando alta (>=25% crítico, >=10% atenção).
+        var taxa = Number(pv.taxaErro || 0), tot = Number(pv.totalChamadas || 0);
+        var saudeHtml = "", cardExtra = "";
+        if (tot > 0) {
+          if (taxa >= 25) {
+            cardExtra = " dash-card--erro";
+            saudeHtml = '<div class="prov-saude prov-saude--crit">🔴 Taxa de erro alta: <strong>' + taxa + '%</strong> (' + (pv.totalErros || 0) + '/' + tot + '). Verifique cota/chaves das APIs.</div>';
+          } else if (taxa >= 10) {
+            cardExtra = " dash-card--aviso";
+            saudeHtml = '<div class="prov-saude prov-saude--warn">🟡 Erros em ' + taxa + '% das chamadas (' + (pv.totalErros || 0) + '/' + tot + ').</div>';
+          } else {
+            saudeHtml = '<div class="prov-saude prov-saude--ok">🟢 Saudável · ' + taxa + '% de erro em ' + tot + ' chamadas.</div>';
+          }
+        }
+        return '<div class="dash-card dash-card--info act-card' + cardExtra + '" data-cardkey="provedores">' +
+          '<div class="dash-card__head"><span class="dash-card__icon">🛰️</span><h3>Provedores (cota)</h3><span class="dash-card__count">' + (pv.itens || []).length + '</span></div>' +
+          saudeHtml +
+          (lis ? '<ul class="dash-list">' + lis + '</ul>' : '<p class="dash-empty">Sem chamadas registradas ainda</p>') +
+          '<div style="margin-top:10px;"><label style="font-size:11px; color:var(--text-mute);">Prioridade de Quota:</label>' + select + '</div>' +
+          '</div>';
+      }
+
+      function loopCardHtml(lp, esc) {
+        var lis = (lp.itens || []).map(function (i) { return "<li>" + esc(i) + "</li>"; }).join("");
+        
+        var formLoop = '<div class="loop-slider-container">' +
+          '<div class="loop-slider-row">' +
+            '<label>Passos Max:</label>' +
+            '<input type="range" class="loop-slider slider-steps" min="3" max="25" value="' + lp.maxSteps + '">' +
+            '<span class="loop-slider-val val-steps">' + lp.maxSteps + '</span>' +
+          '</div>' +
+          '<div class="loop-slider-row">' +
+            '<label>Tools Max:</label>' +
+            '<input type="range" class="loop-slider slider-tools" min="4" max="32" value="' + lp.maxTools + '">' +
+            '<span class="loop-slider-val val-tools">' + lp.maxTools + '</span>' +
+          '</div>' +
+          '<div class="loop-slider-row" style="margin-top:2px;">' +
+            '<label>Teto Diário:</label>' +
+            '<input type="number" class="ic-add-in loop-budget-input" value="' + (lp.budgetDay || 200) + '" style="max-width:65px; padding:3px 6px; font-size:11.5px; text-align:center;">' +
+            '<button type="button" class="av-btn loop-save-btn" style="padding:4px 10px; font-weight:bold;">Salvar</button>' +
+          '</div>' +
+          '</div>';
+
+        return '<div class="dash-card dash-card--info act-card" data-cardkey="loop">' +
+          '<div class="dash-card__head"><span class="dash-card__icon">🔁</span><h3>Loop / governança</h3><span class="dash-card__count">' + (lp.maxTools || 16) + '</span></div>' +
+          (lis ? '<ul class="dash-list" style="margin-bottom:8px;">' + lis + '</ul>' : '<p class="dash-empty">Sem dados de loop ainda</p>') +
+          formLoop +
+          '</div>';
+      }
+      /* 🛡️ Modo Secretária — caixa de DECISÕES (aprovar/editar/ignorar rascunhos da IA) */
+      function pendUrgente(txt) { return /(urgent|imediat|\bagora\b|emerg[êe]nc|problema|contrato|fechar neg|preciso j[áa]|hoje ainda|cobran[çc]a)/i.test(txt || ""); }
+      
+      function pendenciaCardHtml(lista, modoOn, esc, emailsCount) {
+        var arr = (lista || []).slice().sort(function (a, b) { return (pendUrgente(b.recebida) ? 1 : 0) - (pendUrgente(a.recebida) ? 1 : 0); });
+        var rows = arr.map(function (p) {
+          var urg = pendUrgente(p.recebida);
+          return '<li class="av-row pend-row' + (urg ? " pend-urgent" : "") + '" data-id="' + esc(p.id) + '">' +
+            '<div class="av-info"><div class="av-top"><b>' + esc(p.de || p.numero || "contato") + '</b>' + (urg ? ' <span class="pend-urg-tag">⚡ urgente</span>' : "") + '</div>' +
+            '<div class="pend-recebida">' + esc(p.recebida || "") + '</div>' +
+            '<div class="pend-rascunho">💬 <i>IA sugere:</i> ' + esc(p.rascunho || "") + '</div></div>' +
+            '<div class="av-acts">' +
+            '<button type="button" class="av-btn pend-ok" data-act="aprovar" title="Aprovar e enviar como está">✓</button>' +
+            '<button type="button" class="av-btn" data-act="editar" title="Editar antes de enviar">✏️</button>' +
+            '<button type="button" class="av-btn av-btn--del" data-act="ignorar" title="Ignorar (não responde)">🗑️</button>' +
+            '</div></li>';
+        }).join("");
+        
+        var emailStatus = emailsCount != null ? 'Emails não lidos: <b>' + emailsCount + '</b>' : '';
+        var statusSummary = '<div class="pend-status-summary" style="margin-bottom:10px;">' +
+          '<div class="av-texto" style="font-size:12px;opacity:0.85;">🛡️ ' + arr.length + ' pendências no WhatsApp. ' + emailStatus + '</div>' +
+          '</div>';
+        var briefingBox = '<div class="briefing-box" id="briefingBox" hidden></div>';
+        var resumoBtn = '<button type="button" class="dash-card-btn" data-act="resumorapido" style="margin-top:12px;" title="Resumo rápido das últimas 2 horas"><i class="fas fa-magic"></i> Resumo Rápido</button>';
+        var subtitulo = modoOn ? "" : '<p class="pend-hint">Modo Secretária está <b>desligado</b> — só enche quando ativo (o bot rascunha p/ você aprovar).</p>';
+        
+        return '<div class="dash-card dash-card--info pend-card' + (arr.length ? " pend-has" : "") + '">' +
+          '<div class="dash-card__head"><span class="dash-card__icon">🛡️</span><h3>Modo Secretária & Comunicação</h3>' +
+          '<button type="button" class="pend-toggle' + (modoOn ? " on" : "") + '" data-act="togglemode" title="Ligar/desligar o Modo Secretária">' + (modoOn ? "🟢 ON" : "⚪ OFF") + '</button>' +
+          '<span class="dash-card__count">' + arr.length + '</span></div>' +
+          statusSummary +
+          (rows ? '<ul class="dash-list av-ul">' + rows + '</ul>' : '<p class="dash-empty">Nenhuma pendência aguardando ✨</p>') +
+          briefingBox +
+          resumoBtn +
+          subtitulo + '<div class="av-form pend-form" hidden></div></div>';
+      }
+
+      function conhecimentoCardHtml(d, esc) {
+        var rg = d.rag || { chamadas: 0, itens: [] };
+        var conceitos = ["Docker", "Makefiles", "WhatsApp", "Firestore", "Google Script"];
+        if (rg.itens && rg.itens.length) {
+          rg.itens.forEach(function (it) {
+            var termo = it.split(':')[0];
+            if (termo && conceitos.indexOf(termo) === -1) conceitos.push(termo);
+          });
+        }
+        var tagCloud = '<div style="display:flex;flex-wrap:wrap;gap:5px;margin:8px 0 12px;">' +
+          conceitos.slice(0, 5).map(function (c) {
+            return '<span class="av-badge" style="background:var(--accent-soft);color:var(--accent);border:1px solid var(--glass-border);font-size:10.5px;padding:3px 8px;cursor:pointer;" onclick="perguntarAoJarvis(\'Pesquise na wiki sobre ' + esc(c) + '\')">' + esc(c) + '</span>';
+          }).join('') +
+          '</div>';
+
+        var dropZone = '<div class="drag-drop-zone" id="wikiDragDropZone" title="Arraste arquivos aqui para ingerir na Wiki">' +
+          '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block;margin:0 auto 4px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>' +
+          '<span>Solte arquivos aqui para Ingestão Wiki</span>' +
+          '</div>';
+
+        var lis = (rg.itens || []).slice(0, 3).map(function (i) { return "<li>" + esc(i) + "</li>"; }).join("");
+        return '<div class="dash-card dash-card--info" style="cursor:default;">' +
+          '<div class="dash-card__head"><span class="dash-card__icon">🧠</span><h3>RAG / Conhecimento</h3><span class="dash-card__count">' + (rg.chamadas || 0) + '</span></div>' +
+          '<div class="av-texto" style="font-size:12px;margin-bottom:4px;"><b>Conceitos Relacionados:</b></div>' +
+          tagCloud +
+          (lis ? '<ul class="dash-list" style="margin-bottom:10px;">' + lis + '</ul>' : '<p class="dash-empty">Sem buscas de conhecimento ainda</p>') +
+          dropZone +
+          '</div>';
+      }
+
+      function objetivosCardHtml(d, esc) {
+        var lista = d.objetivosAtivos || [];
+        var rows = lista.map(function (o) {
+          var prog = o.totalPassos ? Math.round((o.passoAtual / o.totalPassos) * 100) : 0;
+          return '<li class="av-row" style="display:block;margin-bottom:10px;">' +
+            '<div class="av-top"><b>🎯 ' + esc(o.objetivo) + '</b> <span class="av-dias" style="margin-left:auto;">' + o.passoAtual + '/' + o.totalPassos + '</span></div>' +
+            '<div class="progress-container"><div class="progress-bar" style="width:' + prog + '%;"></div></div>' +
+            '</li>';
+        }).join("");
+        
+        var triggersRapidos = '<div style="margin-top:12px;">' +
+          '<div class="av-texto" style="font-size:12px;margin-bottom:6px;"><b>Triggers Rápidos:</b></div>' +
+          '<div style="display:flex;gap:6px;">' +
+            '<button type="button" class="av-btn" style="flex:1;font-size:11px;padding:6px;" data-act="trigger" data-script="Relatório de FIIs"><i class="fas fa-chart-line"></i> Relatório FIIs</button>' +
+            '<button type="button" class="av-btn" style="flex:1;font-size:11px;padding:6px;" data-act="trigger" data-script="Relatório de Atividade"><i class="fas fa-tasks"></i> Atividades</button>' +
+          '</div>' +
+        '</div>';
+
+        return '<div class="dash-card dash-card--info" style="cursor:default;">' +
+          '<div class="dash-card__head"><span class="dash-card__icon">🎯</span><h3>Automação & Objetivos</h3><span class="dash-card__count">' + lista.length + '</span></div>' +
+          (rows ? '<ul class="dash-list av-ul">' + rows + '</ul>' : '<p class="dash-empty">Nenhum objetivo ativo no momento</p>') +
+          triggersRapidos +
+          '</div>';
+      }
+
+      function midiaCardHtml(d, esc) {
+        var imgs = d.imagensRecentes || [];
+        var rows = imgs.map(function (img) {
+          return '<div class="media-thumb" data-name="' + esc(img.nome) + '" title="Compor com referência: ' + esc(img.nome) + '">' +
+            '<img src="' + img.thumbUrl + '" alt="' + esc(img.nome) + '" />' +
+            '</div>';
+        }).join("");
+
+        return '<div class="dash-card dash-card--info" style="cursor:default;">' +
+          '<div class="dash-card__head"><span class="dash-card__icon">🖼️</span><h3>Galeria de Mídia</h3><span class="dash-card__count">' + imgs.length + '</span></div>' +
+          (rows ? '<div class="media-gallery">' + rows + '</div>' : '<p class="dash-empty">Nenhuma imagem recente gerada</p>') +
+          '</div>';
+      }
+
+      function wireResumoBriefing(cardEl, esc) {
+        var resumenBtn = cardEl.querySelector('[data-act="resumorapido"]');
+        if (resumenBtn) {
+          resumenBtn.addEventListener("click", function (ev) {
+            ev.stopPropagation();
+            resumenBtn.disabled = true;
+            resumenBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sintetizando...';
+            var box = cardEl.querySelector("#briefingBox");
+            if (box) {
+              box.hidden = false;
+              box.innerHTML = "<i>Aguardando resposta do Jarvis...</i>";
+            }
+            google.script.run
+              .withSuccessHandler(function (r) {
+                resumenBtn.disabled = false;
+                resumenBtn.innerHTML = '<i class="fas fa-magic"></i> Resumo Rápido';
+                if (r && r.ok && r.briefing) {
+                  box.innerHTML = '<strong>Briefing:</strong> ' + esc(r.briefing) +
+                    '<br><button type="button" class="msg__tts" style="margin-top:6px;opacity:1;" id="btnOuvirBriefing">🔊 Ouvir Briefing</button>';
+                  var listenBtn = box.querySelector("#btnOuvirBriefing");
+                  if (listenBtn) {
+                    listenBtn.onclick = function () {
+                      ouvirResposta(listenBtn, r.briefing);
+                    };
+                  }
+                } else {
+                  box.innerHTML = "⚠️ " + ((r && r.erro) || "Falha ao sintetizar.");
+                }
+              })
+              .withFailureHandler(function (err) {
+                resumenBtn.disabled = false;
+                resumenBtn.innerHTML = '<i class="fas fa-magic"></i> Resumo Rápido';
+                box.innerHTML = "⚠️ " + err.message;
+              })
+              .uiSintetizarBriefing(authToken);
+          });
+        }
+      }
+
+      function wireWikiDragDrop(cards) {
+        var dragZone = cards.querySelector("#wikiDragDropZone");
+        if (dragZone) {
+          dragZone.addEventListener("dragover", function (e) {
+            e.preventDefault();
+            dragZone.classList.add("dragover");
+          });
+          dragZone.addEventListener("dragleave", function (e) {
+            e.preventDefault();
+            dragZone.classList.remove("dragover");
+          });
+          dragZone.addEventListener("drop", function (e) {
+            e.preventDefault();
+            dragZone.classList.remove("dragover");
+            var files = e.dataTransfer.files;
+            if (files.length) {
+              var file = files[0];
+              var reader = new FileReader();
+              reader.onload = function (event) {
+                var base64 = event.target.result.split(',')[1];
+                toast("Subindo arquivo para a Wiki: " + file.name + "...");
+                google.script.run
+                  .withSuccessHandler(function (r) {
+                    toast(r && r.ok ? r.mensagem : ("⚠️ " + ((r && r.erro) || "falha")));
+                    loadDashboard();
+                  })
+                  .withFailureHandler(function (err) {
+                    toast("⚠️ " + err.message);
+                  })
+                  .uiUploadEIngerir(authToken, base64, file.name, file.type);
+              };
+              reader.readAsDataURL(file);
+            }
+          });
+          dragZone.addEventListener("click", function () {
+            var input = document.createElement("input");
+            input.type = "file";
+            input.onchange = function (e) {
+              var files = e.target.files;
+              if (files.length) {
+                var file = files[0];
+                var reader = new FileReader();
+                reader.onload = function (event) {
+                  var base64 = event.target.result.split(',')[1];
+                  toast("Subindo arquivo para a Wiki: " + file.name + "...");
+                  google.script.run
+                    .withSuccessHandler(function (r) {
+                      toast(r && r.ok ? r.mensagem : ("⚠️ " + ((r && r.erro) || "falha")));
+                      loadDashboard();
+                    })
+                    .withFailureHandler(function (err) {
+                      toast("⚠️ " + err.message);
+                    })
+                    .uiUploadEIngerir(authToken, base64, file.name, file.type);
+                };
+                reader.readAsDataURL(file);
+              }
+            };
+            input.click();
+          });
+        }
+      }
+
+      function wireProductivityActions(cards) {
+        var orgBtn = cards.querySelector('[data-act="organizardia"]');
+        if (orgBtn) {
+          orgBtn.addEventListener("click", function (ev) {
+            ev.stopPropagation();
+            orgBtn.disabled = true;
+            orgBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Organizando...';
+            google.script.run
+              .withSuccessHandler(function (r) {
+                orgBtn.disabled = false;
+                orgBtn.innerHTML = '<i class="fas fa-tasks"></i> Organizar meu Dia';
+                toast(r && r.ok ? r.mensagem : ("⚠️ " + ((r && r.erro) || "falha")));
+              })
+              .withFailureHandler(function (err) {
+                orgBtn.disabled = false;
+                orgBtn.innerHTML = '<i class="fas fa-tasks"></i> Organizar meu Dia';
+                toast("⚠️ " + err.message);
+              })
+              .uiOrganizarDia(authToken);
+          });
+        }
+      }
+
+      function wireAutomationTriggers(cards) {
+        cards.querySelectorAll('[data-act="trigger"]').forEach(function (btn) {
+          btn.addEventListener("click", function (ev) {
+            ev.stopPropagation();
+            var script = btn.getAttribute("data-script");
+            toast("Disparando: " + script + "...");
+            perguntarAoJarvis("Execute a automação: " + script);
+          });
+        });
+      }
+
+      function wireMediaGalleryActions(cards) {
+        cards.querySelectorAll('.media-thumb').forEach(function (thumb) {
+          thumb.addEventListener("click", function (ev) {
+            ev.stopPropagation();
+            var name = thumb.getAttribute("data-name");
+            setNavActive(document.getElementById("chatNav"));
+            showView("chat");
+            input.value = "Com base na imagem recente '" + name + "', ";
+            input.focus();
+            if (typeof autoResize === "function") autoResize();
+          });
+        });
+      }
+
+      function pendRun(fn, args, btn, okMsg, ob) {
+        var runner = google.script.run
+          .withSuccessHandler(function (r) { toast(r && r.ok ? okMsg : ("⚠️ " + ((r && r.erro) || "falha"))); loadDashboard(); })
+          .withFailureHandler(function (e) { toast("⚠️ " + e.message); if (btn) { btn.disabled = false; btn.textContent = ob; } });
+        runner[fn].apply(runner, [authToken].concat(args));
+      }
+      function wirePendCard(cardEl) {
+        cardEl.addEventListener("click", function (ev) {
+          var btn = ev.target.closest("[data-act]"); if (!btn) return;
+          ev.stopPropagation();
+          var act = btn.getAttribute("data-act");
+          if (act === "togglemode") {                 /* liga/desliga o Modo Secretária (sem id) */
+            var turnOn = !btn.classList.contains("on"); var ob0 = btn.textContent; btn.disabled = true; btn.textContent = "…";
+            pendRun("uiToggleSecretaria", [turnOn], btn, turnOn ? "Modo Secretária LIGADO 🛡️" : "Modo Secretária desligado", ob0); return;
+          }
+          var row = btn.closest(".pend-row"); var id = row ? row.getAttribute("data-id") : ""; if (!id) return;
+          var ob = btn.textContent;
+          if (act === "aprovar") { btn.disabled = true; btn.textContent = "…"; pendRun("uiPendenciaResponder", [id, ""], btn, "Resposta enviada ✅", ob); }
+          else if (act === "ignorar") { btn.disabled = true; pendRun("uiPendenciaIgnorar", [id], btn, "Pendência ignorada 🗑️", ob); }
+          else if (act === "editar") { pendAbrirEdit(cardEl, id); }
+        });
+      }
+      function pendAbrirEdit(cardEl, id) {
+        var p = (window.__pendLista || []).filter(function (x) { return x.id === id; })[0]; if (!p) return;
+        var box = cardEl.querySelector(".pend-form"); if (!box) return;
+        box.innerHTML = '<div class="pend-edit-lbl">Resposta para <b>' + (p.de || p.numero || "contato").replace(/[&<>"]/g, "") + '</b>:</div>' +
+          '<textarea class="av-t pend-edit-t" rows="3"></textarea>' +
+          '<div class="av-frow av-fbtns"><button type="button" class="av-save pend-send">Enviar ✈️</button><button type="button" class="av-cancel pend-cancel">Cancelar</button></div>';
+        box.querySelector(".pend-edit-t").value = p.rascunho || "";
+        box.hidden = false; box.scrollIntoView({ block: "nearest" });
+        box.querySelector(".pend-cancel").onclick = function () { box.hidden = true; box.innerHTML = ""; };
+        box.querySelector(".pend-send").onclick = function () {
+          var txt = box.querySelector(".pend-edit-t").value.trim();
+          if (!txt) { toast("Escreva a resposta."); return; }
+          this.disabled = true; this.textContent = "Enviando…";
+          var runner = google.script.run
+            .withSuccessHandler(function (r) { toast(r && r.ok ? "Resposta enviada ✅" : ("⚠️ " + ((r && r.erro) || "falha"))); loadDashboard(); })
+            .withFailureHandler(function (e) { toast("⚠️ " + e.message); });
+          runner.uiPendenciaResponder(authToken, id, txt);
+        };
+      }
+
+
+      var dashboardNav = document.getElementById("dashboardNav");
+      if (dashboardNav) dashboardNav.addEventListener("click", function () {
+        setNavActive(dashboardNav); showView("dashboard"); loadDashboard();
+        if (window.innerWidth <= 860) closeMobile();
+      });
+      var dashRefreshBtn = document.getElementById("dashRefresh");
+      if (dashRefreshBtn) dashRefreshBtn.addEventListener("click", loadDashboard);
+
+      function loadWppInstancias() {
+        if (!hasBackend) { wppInstancesEl.innerHTML = '<div class="conv-empty">Backend indisponível.</div>'; return; }
+        wppInstancesEl.innerHTML = '<div class="conv-empty">Carregando…</div>';
+        google.script.run
+          .withSuccessHandler(renderWpp)
+          .withFailureHandler(function (err) { wppInstancesEl.innerHTML = '<div class="conv-empty">⚠️ ' + err.message + '</div>'; })
+          .wppInstancias(authToken);
+      }
+
+      function renderWpp(res) {
+        if (res && res.dashboardUrl && wppDashboard) { wppDashboard.href = res.dashboardUrl; wppDashboard.hidden = false; }
+        if (wppWebhookBtn) {
+          if (res && res.botAtivo) { wppWebhookBtn.textContent = "✅ Bot ativo"; wppWebhookBtn.classList.add("is-on"); wppWebhookBtn.title = "O Jarvis está recebendo as mensagens. Clique para reativar."; }
+          else { wppWebhookBtn.textContent = "⚡ Ativar bot"; wppWebhookBtn.classList.remove("is-on"); }
+        }
+        if (!res || !res.ok) { wppInstancesEl.innerHTML = '<div class="conv-empty">🔒 ' + ((res && res.error) || "Restrito ao proprietário.") + '</div>'; return; }
+        var insts = res.instancias || [];
+        if (!insts.length) { wppInstancesEl.innerHTML = '<div class="conv-empty">Nenhuma instância configurada.</div>'; return; }
+        wppInstName = insts[0].nome; // instância principal (WhatsApp pessoal)
+        wppInstancesEl.innerHTML = "";
+        insts.forEach(function (i) {
+          var conectado = String(i.estado).toUpperCase() === "CONNECTED";
+          var card = document.createElement("div");
+          card.className = "wpp-card";
+          card.innerHTML =
+            '<h3></h3>' +
+            '<div class="wpp-badge ' + (conectado ? "on" : "off") + '"><span class="dot"></span><span class="est"></span></div>' +
+            (i.numero ? '<div class="wpp-num"></div>' : '') +
+            '<button type="button">' + (conectado ? "Reconectar" : "Conectar / Ver QR") + '</button>';
+          card.querySelector("h3").textContent = i.nome;
+          card.querySelector(".est").textContent = conectado ? "Conectado" : (i.estado || "desconectado");
+          if (i.numero) card.querySelector(".wpp-num").textContent = "📱 " + i.numero + (i.perfil ? " · " + i.perfil : "");
+          card.querySelector("button").addEventListener("click", function () { conectarWpp(i.nome); });
+          wppInstancesEl.appendChild(card);
+        });
+      }
+
+      function abrirQr(titulo, html) { qrTitle.textContent = titulo; qrBody.innerHTML = html; qrModal.classList.add("is-open"); qrModal.hidden = false; }
+      function fecharQr() { qrModal.classList.remove("is-open"); qrModal.hidden = true; qrBody.innerHTML = ""; if (wppPoll) { clearInterval(wppPoll); wppPoll = null; } }
+
+      function conectarWpp(nome) {
+        abrirQr("Conectar: " + nome, '<div class="qr-spin"></div><div class="qr-status">Obtendo QR Code…</div>');
+        google.script.run
+          .withSuccessHandler(function (r) {
+            if (!r || !r.ok) { qrBody.innerHTML = '<div class="qr-status">⚠️ ' + ((r && r.error) || "Falha.") + '</div>'; return; }
+            if (r.status === "CONNECTED") { qrBody.innerHTML = '<div class="qr-status">✅ Já conectado' + (r.numero ? " (" + r.numero + ")" : "") + ".</div>"; loadWppInstancias(); return; }
+            if (r.status === "QRCODE" && r.base64) {
+              var src = String(r.base64).indexOf("data:") === 0 ? r.base64 : ("data:image/png;base64," + r.base64);
+              qrBody.innerHTML = '<img src="' + src + '" alt="QR Code"><div class="qr-status">No WhatsApp: Aparelhos conectados → Conectar aparelho → escaneie.</div>';
+              iniciarPoll(nome);
+            } else { qrBody.innerHTML = '<div class="qr-status">' + (r.erro || "QR não disponível. Tente novamente.") + '</div>'; }
+          })
+          .withFailureHandler(function (err) { qrBody.innerHTML = '<div class="qr-status">⚠️ ' + err.message + '</div>'; })
+          .wppConectar(authToken, nome);
+      }
+
+      function iniciarPoll(nome) {
+        if (wppPoll) clearInterval(wppPoll);
+        wppPoll = setInterval(function () {
+          google.script.run.withSuccessHandler(function (r) {
+            if (r && r.ok && String(r.status).toUpperCase() === "CONNECTED") {
+              clearInterval(wppPoll); wppPoll = null;
+              qrBody.innerHTML = '<div class="qr-status">✅ Conectado com sucesso!</div>';
+              loadWppInstancias();
+              setTimeout(fecharQr, 1800);
+            }
+          }).withFailureHandler(function () {}).wppStatus(authToken, nome);
+        }, 4000);
+      }
+
+      function ativarBotWpp() {
+        if (!wppWebhookBtn) return;
+        wppWebhookBtn.disabled = true; wppWebhookBtn.textContent = "Ativando…";
+        google.script.run
+          .withSuccessHandler(function (r) {
+            wppWebhookBtn.disabled = false;
+            if (r && r.ok) { wppWebhookBtn.textContent = "✅ Bot ativo"; wppWebhookBtn.classList.add("is-on"); loadWppInstancias(); }
+            else { wppWebhookBtn.textContent = "⚡ Ativar bot"; wppWebhookBtn.classList.remove("is-on"); alert("⚠️ " + ((r && r.error) || "Falha ao ativar o bot.")); }
+          })
+          .withFailureHandler(function (err) { wppWebhookBtn.disabled = false; wppWebhookBtn.textContent = "⚡ Ativar bot"; alert("⚠️ " + err.message); })
+          .wppApontarWebhook(authToken, wppInstName || "");
+      }
+
+      if (whatsappNav) whatsappNav.addEventListener("click", function () { setNavActive(whatsappNav); showView("whatsapp"); loadWppInstancias(); if (window.innerWidth <= 860) closeMobile(); });
+      if (wppRefreshBtn) wppRefreshBtn.addEventListener("click", loadWppInstancias);
+      if (wppWebhookBtn) wppWebhookBtn.addEventListener("click", ativarBotWpp);
+      if (qrModal) qrModal.querySelectorAll("[data-qrclose]").forEach(function (el) { el.addEventListener("click", fecharQr); });
+
+      /* ===================== CONTROLE DO DISPOSITIVO (CELULAR) ===================== */
+      var dispTelemetryList = document.getElementById("dispTelemetryList");
+      var dispLogsList = document.getElementById("dispLogsList");
+      var simAcaoSelect = document.getElementById("simAcao");
+      var simIntentFields = document.getElementById("simIntentFields");
+      var simTextoInput = document.getElementById("simTexto");
+      var simEnviarBtn = document.getElementById("simEnviarBtn");
+      var dispRefreshBtn = document.getElementById("dispRefresh");
+      var dispositivoNav = document.getElementById("dispositivoNav");
+
+      if (simAcaoSelect) {
+        simAcaoSelect.addEventListener("change", function () {
+          var val = simAcaoSelect.value;
+          if (val === "intent") {
+            simIntentFields.style.display = "flex";
+            simTextoInput.hidden = true;
+          } else {
+            simIntentFields.style.display = "none";
+            simTextoInput.hidden = false;
+            if (val === "abrirUrl") simTextoInput.placeholder = "URL / deep-link (ex: youversion://bible?reference=MAT.6.7)";
+            else if (val === "abrirApp") simTextoInput.placeholder = "nome do app (ex: whatsapp, spotify, configuracoes)";
+            else if (val === "navegar") simTextoInput.placeholder = "destino (ex: Trabalho, Casa, endereço)";
+            else if (val === "falar") simTextoInput.placeholder = "texto a falar (TTS)";
+            else if (val === "notificar") simTextoInput.placeholder = "texto da notificação";
+          }
+        });
+      }
+
+      function loadDispositivo() {
+        if (!dispTelemetryList || !dispLogsList || !authToken) return;
+        dispTelemetryList.innerHTML = "<li>Carregando status de telemetria...</li>";
+        dispLogsList.innerHTML = "<li>Carregando logs do celular...</li>";
+        google.script.run
+          .withSuccessHandler(function (r) {
+            if (!r || !r.ok) {
+              dispTelemetryList.innerHTML = "<li>⚠️ Falha ao obter dados: " + (r ? r.erro : "erro") + "</li>";
+              dispLogsList.innerHTML = "<li>⚠️ Sem conexão com o histórico.</li>";
+              return;
+            }
+            var t = r.telemetria;
+            if (t) {
+              // HONESTIDADE: quando a macro não substitui o magic-text, o backend devolve "" — mostrar
+              // "indisponível" em vez de um default enganoso ("Não conectado"/"Não"/"Normal").
+              var ND = '<span style="opacity:.55">— indisponível <i style="font-size:11px">(macro não enviou)</i></span>';
+              var batV = String(t.bateria_nivel || t.bateria || '').trim();
+              var bat = batV ? (batV.replace(/%\s*$/, '') + '%') : ND;
+              // [power] do MacroDroid responde em PT: "Ligar"=conectado / "Desligar"=desconectado.
+              var chargV = String(t.carregando || '').trim().toLowerCase();
+              var charg = !chargV ? ND
+                : (/deslig|discharg|false|n[aã]o/.test(chargV) ? "Não"
+                : (/lig|charging|carregando|true|\bac\b|usb|plugged|full|sim/.test(chargV) ? "Sim" : chargV));
+              var wifi = String(t.wifi_nome || t.wifi || '').trim() || ND;
+              // modo_som numérico = volume do toque ([vol_ring]); texto = modo (normal/vibrar/silencioso).
+              var soundV = String(t.modo_som || '').trim();
+              var sound = !soundV ? ND : (/^\d+$/.test(soundV) ? ("Volume do toque: " + soundV + "%") : soundV);
+              // A telemetria só chega JUNTO com um comando de voz (não há ping periódico) → pode estar velha.
+              var idade = ND;
+              if (t.recebidoEm) {
+                var difMin = Math.round((Date.now() - new Date(t.recebidoEm).getTime()) / 60000);
+                var quando = new Date(t.recebidoEm).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+                var rel = difMin < 1 ? "agora" : (difMin < 60 ? ("há " + difMin + " min") : ("há " + Math.round(difMin / 60) + " h"));
+                idade = quando + ' <span style="opacity:.7">(' + rel + ')</span>' +
+                  (difMin > 15 ? ' <span style="color:#e0a000;font-weight:600">⚠️ desatualizado</span>' : '');
+              }
+              dispTelemetryList.innerHTML =
+                "<li><b>🔋 Nível da Bateria:</b> " + bat + "</li>" +
+                "<li><b>🔌 Carregando:</b> " + charg + "</li>" +
+                "<li><b>🔊 Modo de Som:</b> " + sound + "</li>" +
+                "<li><b>📶 Wi-Fi:</b> " + wifi + "</li>" +
+                "<li><b>🕒 Última atualização:</b> " + idade + "</li>";
+            } else {
+              dispTelemetryList.innerHTML = "<li>Nenhum dado de telemetria recebido ainda. Envie um comando de voz para inicializar.</li>";
+            }
+
+            if (r.logs && r.logs.length > 0) {
+              dispLogsList.innerHTML = r.logs.map(function (l) {
+                var color = l.ok ? "var(--accent)" : "#ff6b6b";
+                var icon = l.ok ? "✅" : "⚠️";
+                var ts = new Date(l.ts).toLocaleTimeString("pt-BR");
+                return "<li class='av-row' style='display:flex; flex-direction:column; padding: 10px; border-bottom:1px solid var(--glass-border);'>" +
+                  "<div style='display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px;'>" +
+                  "  <span style='color:" + color + "; font-weight:bold;'>" + icon + " " + l.tool + "</span>" +
+                  "  <span style='opacity:0.6;'>" + ts + "</span>" +
+                  "</div>" +
+                  "<div style='font-size:12.5px; opacity:0.85;'>" + l.resumo + "</div>" +
+                  "</li>";
+              }).join("");
+            } else {
+              dispLogsList.innerHTML = "<li>Nenhum comando registrado no log.</li>";
+            }
+          })
+          .withFailureHandler(function (err) {
+            dispTelemetryList.innerHTML = "<li>⚠️ Erro: " + err.message + "</li>";
+            dispLogsList.innerHTML = "<li>⚠️ Erro: " + err.message + "</li>";
+          })
+          .obterStatusDispositivo(authToken);
+      }
+
+      if (dispRefreshBtn) {
+        dispRefreshBtn.addEventListener("click", function () {
+          // Pede telemetria FRESCA ao celular (ping no webhook jarvis_telemetria) e recarrega em seguida.
+          dispRefreshBtn.disabled = true;
+          dispRefreshBtn.textContent = "Pedindo ao celular…";
+          google.script.run
+            .withSuccessHandler(function () {
+              setTimeout(function () {
+                dispRefreshBtn.disabled = false;
+                dispRefreshBtn.textContent = "Atualizar Status";
+                loadDispositivo();
+              }, 3500); // dá tempo do MacroDroid responder com o POST de telemetria
+            })
+            .withFailureHandler(function () {
+              dispRefreshBtn.disabled = false;
+              dispRefreshBtn.textContent = "Atualizar Status";
+              loadDispositivo();
+            })
+            .pingTelemetria();
+        });
+      }
+
+      if (simEnviarBtn) {
+        simEnviarBtn.addEventListener("click", function () {
+          var acao = simAcaoSelect.value;
+          var args = {};
+          if (acao === "intent") {
+            args.intent_action = document.getElementById("simIntentAction").value.trim();
+            args.intent_package = document.getElementById("simIntentPackage").value.trim();
+            args.intent_data = document.getElementById("simIntentData").value.trim();
+            if (!args.intent_action) { alert("Ação do intent é obrigatória."); return; }
+          } else {
+            var val = simTextoInput.value.trim();
+            if (!val) { alert("Preencha o campo de texto/destino."); return; }
+            if (acao === "navegar") args.destino = val;
+            else if (acao === "falar") args.texto = val;
+            else if (acao === "notificar") args.texto = val;
+            else if (acao === "abrirUrl") args.url = val;
+            else if (acao === "abrirApp") args.nome = val;
+          }
+          simEnviarBtn.disabled = true;
+          simEnviarBtn.textContent = "Disparando...";
+          google.script.run
+            .withSuccessHandler(function (r) {
+              simEnviarBtn.disabled = false;
+              simEnviarBtn.textContent = "Disparar Webhook no Celular";
+              if (r && r.ok) {
+                toast("Comando enviado com sucesso!");
+                loadDispositivo();
+              } else {
+                alert("Falha: " + (r ? r.erro : "erro desconhecido"));
+              }
+            })
+            .withFailureHandler(function (err) {
+              simEnviarBtn.disabled = false;
+              simEnviarBtn.textContent = "Disparar Webhook no Celular";
+              alert("Erro: " + err.message);
+            })
+            .dispararComandoDispositivo(authToken, acao, args);
+        });
+      }
+
+      // Ações Rápidas: um toque dispara o comando REAL no celular (os deep-links que funcionam).
+      (function () {
+        var host = document.getElementById("dispQuickActions");
+        if (!host) return;
+        var ACOES = [
+          { icon: "💬", label: "WhatsApp", acao: "abrirApp", args: { nome: "whatsapp" } },
+          { icon: "📨", label: "Telegram", acao: "abrirApp", args: { nome: "telegram" } },
+          { icon: "📖", label: "Bíblia (Mt 6:7)", acao: "abrirUrl", args: { url: "youversion://bible?reference=MAT.6.7" } },
+          { icon: "🎵", label: "Spotify: louvor", acao: "abrirUrl", args: { url: "https://open.spotify.com/search/louvor" } },
+          { icon: "▶️", label: "YouTube: louvor", acao: "abrirUrl", args: { url: "https://www.youtube.com/results?search_query=louvor" } },
+          { icon: "🛒", label: "Mercado Livre", acao: "abrirUrl", args: { url: "meli://search?query=fone%20de%20ouvido" } },
+          { icon: "🗺️", label: "Rota: Trabalho", acao: "navegar", args: { destino: "Trabalho" } },
+          { icon: "🏠", label: "Rota: Casa", acao: "navegar", args: { destino: "Casa" } },
+          { icon: "⚙️", label: "Configurações", acao: "abrirApp", args: { nome: "configuracoes" } },
+          { icon: "🔊", label: "Falar (teste)", acao: "falar", args: { texto: "Olá Bruno, aqui é o Jarvis testando a fala no seu celular." } },
+          { icon: "⏯️", label: "Pausar/Tocar", acao: "midia", args: { comando: "pausar" } },
+          { icon: "⏭️", label: "Próxima faixa", acao: "midia", args: { comando: "proxima" } },
+          { icon: "🔦", label: "Lanterna", acao: "lanterna", args: {} },
+          { icon: "🔉", label: "Volume alto", acao: "volume", args: { nivel: "alto" } },
+          { icon: "🔇", label: "Mudo", acao: "volume", args: { nivel: "mudo" } },
+          { icon: "🌙", label: "Não perturbe ON", acao: "naoperturbe", args: { estado: "on" } },
+          { icon: "🔔", label: "Não perturbe OFF", acao: "naoperturbe", args: { estado: "off" } }
+        ];
+        host.innerHTML = "";
+        ACOES.forEach(function (a) {
+          var b = document.createElement("button");
+          b.type = "button";
+          b.className = "btn-ghost";
+          b.style.cssText = "display:flex;align-items:center;gap:7px;justify-content:flex-start;font-size:12.5px;padding:9px 10px;text-align:left;cursor:pointer;";
+          b.innerHTML = '<span style="font-size:15px">' + a.icon + '</span> ' + a.label;
+          b.addEventListener("click", function () {
+            var orig = b.innerHTML;
+            b.disabled = true;
+            b.innerHTML = '<span style="font-size:15px">' + a.icon + '</span> Disparando…';
+            google.script.run
+              .withSuccessHandler(function (r) {
+                b.disabled = false; b.innerHTML = orig;
+                if (r && r.ok) { toast("📲 " + a.label + " disparado no celular!"); loadDispositivo(); }
+                else { alert("Falha: " + (r ? r.erro : "erro desconhecido")); }
+              })
+              .withFailureHandler(function (err) { b.disabled = false; b.innerHTML = orig; alert("Erro: " + err.message); })
+              .dispararComandoDispositivo(authToken, a.acao, a.args);
+          });
+          host.appendChild(b);
+        });
+      })();
+
+      if (dispositivoNav) {
+        dispositivoNav.addEventListener("click", function () {
+          setNavActive(dispositivoNav);
+          showView("dispositivo");
+          loadDispositivo();   // auto-carrega telemetria+logs ao abrir (antes só via botão "Atualizar Status")
+          if (window.innerWidth <= 860) closeMobile();
+        });
+      }
+    })();
+  </script>

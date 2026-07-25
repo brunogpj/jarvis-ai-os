@@ -1,0 +1,9 @@
+{
+  "name": "jarvis-tests-local",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Testes locais (offline, sem cota) da lógica determinística do Jarvis — MODO DIRETO, gate sem-cota, hooks. Não vai para o deploy (fora do allowlist do .claspignore).",
+  "scripts": {
+    "test": "node --test"
+  }
+}

@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title><?= titulo ?></title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Inter:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-gradient: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
+      --card-bg: rgba(30, 41, 59, 0.7);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --text-primary: #f8fafc;
+      --text-secondary: #94a3b8;
+      --accent-primary: #6366f1;
+      --accent-primary-hover: #4f46e5;
+      --accent-success: #10b981;
+      --accent-success-hover: #059669;
+      --accent-danger: #ef4444;
+      --accent-danger-hover: #dc2626;
+      --input-bg: rgba(15, 23, 42, 0.6);
+      --shadow-color: rgba(0, 0, 0, 0.3);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg-gradient);
+      color: var(--text-primary);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 20px;
+      overflow-x: hidden;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 480px;
+      animation: fadeIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+
+    .card {
+      background: var(--card-bg);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--card-border);
+      border-radius: 24px;
+      padding: 32px;
+      box-shadow: 0 20px 40px var(--shadow-color);
+      text-align: center;
+      transition: all 0.4s ease;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .icon-header {
+      width: 64px;
+      height: 64px;
+      background: rgba(99, 102, 241, 0.15);
+      border: 1px solid rgba(99, 102, 241, 0.3);
+      border-radius: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 24px;
+      color: var(--accent-primary);
+      font-size: 28px;
+      box-shadow: 0 8px 16px rgba(99, 102, 241, 0.1);
+    }
+
+    h1 {
+      font-family: 'Outfit', sans-serif;
+      font-size: 26px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      margin-bottom: 12px;
+      background: linear-gradient(to right, #f8fafc, #cbd5e1);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .description {
+      color: var(--text-secondary);
+      font-size: 16px;
+      line-height: 1.6;
+      margin-bottom: 32px;
+    }
+
+    .actions-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .btn {
+      font-family: 'Outfit', sans-serif;
+      font-size: 16px;
+      font-weight: 600;
+      padding: 16px 24px;
+      border-radius: 14px;
+      border: none;
+      cursor: pointer;
+      transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+
+    .btn:active {
+      transform: scale(0.97);
+    }
+
+    .btn-primary {
+      background: var(--accent-success);
+      color: white;
+      grid-column: span 1;
+    }
+
+    .btn-primary:hover {
+      background: var(--accent-success-hover);
+      box-shadow: 0 8px 16px rgba(16, 185, 129, 0.25);
+    }
+
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text-primary);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.15);
+    }
+
+    .btn-danger {
+      background: var(--accent-danger);
+      color: white;
+    }
+
+    .btn-danger:hover {
+      background: var(--accent-danger-hover);
+      box-shadow: 0 8px 16px rgba(239, 68, 68, 0.25);
+    }
+
+    .input-section {
+      margin-top: 24px;
+      text-align: left;
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+      padding-top: 24px;
+    }
+
+    .input-label {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      margin-bottom: 8px;
+      display: block;
+    }
+
+    .input-group {
+      display: flex;
+      gap: 12px;
+    }
+
+    input[type="text"] {
+      flex: 1;
+      background: var(--input-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 14px 16px;
+      color: var(--text-primary);
+      font-size: 15px;
+      transition: all 0.3s ease;
+    }
+
+    input[type="text"]:focus {
+      outline: none;
+      border-color: var(--accent-primary);
+      box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+    }
+
+    .btn-send {
+      background: var(--accent-primary);
+      color: white;
+      padding: 0 20px;
+    }
+
+    .btn-send:hover {
+      background: var(--accent-primary-hover);
+      box-shadow: 0 8px 16px rgba(99, 102, 241, 0.25);
+    }
+
+    /* Success state */
+    .success-container {
+      display: none;
+    }
+
+    .success-icon {
+      width: 72px;
+      height: 72px;
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 24px;
+      color: var(--accent-success);
+      font-size: 32px;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
+      70% { box-shadow: 0 0 0 10px rgba(16, 185, 129, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+    }
+
+    .loading-spinner {
+      display: inline-block;
+      width: 20px;
+      height: 20px;
+      border: 3px solid rgba(255,255,255,0.3);
+      border-radius: 50%;
+      border-top-color: white;
+      animation: spin 1s ease-in-out infinite;
+      margin-right: 8px;
+      vertical-align: middle;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="card" id="mainCard">
+      <? if (respondido) { ?>
+        <!-- Já respondido -->
+        <div class="success-icon">✓</div>
+        <h1>Ação Concluída</h1>
+        <p class="description">Esta notificação já foi respondida anteriormente.</p>
+        <button class="btn btn-secondary" style="width:100%" onclick="window.close()">Fechar</button>
+      <? } else { ?>
+        <!-- Painel Ativo -->
+        <div class="icon-header">🤖</div>
+        <h1 id="panelTitle"><?= titulo ?></h1>
+        <p class="description" id="panelText"><?= texto ?></p>
+        
+        <div class="actions-grid" id="buttonsGrid">
+          <button class="btn <?= tipo === 'conversa' ? 'btn-secondary' : 'btn-primary' ?>" onclick="responder('1', this)">
+            <?= opcao1 ?>
+          </button>
+          <button class="btn <?= tipo === 'conversa' ? 'btn-secondary' : 'btn-danger' ?>" onclick="responder('2', this)">
+            <?= opcao2 ?>
+          </button>
+        </div>
+
+        <div class="input-section" id="inputSection">
+          <span class="input-label">Ou envie uma resposta detalhada:</span>
+          <div class="input-group">
+            <input type="text" id="responseText" placeholder="Digite aqui...">
+            <button class="btn btn-send" onclick="responder('texto', this)">Enviar</button>
+          </div>
+        </div>
+      <? } ?>
+    </div>
+
+    <!-- Container de Sucesso -->
+    <div class="card success-container" id="successCard">
+      <div class="success-icon">✓</div>
+      <h1>Enviado com Sucesso</h1>
+      <p class="description">Obrigado Bruno, sua resposta foi processada e enviada para o Jarvis.</p>
+      <button class="btn btn-secondary" style="width:100%" onclick="fecharJanela()">Fechar</button>
+    </div>
+  </div>
+
+  <script>
+    const webappUrl = 'https://script.google.com/macros/s/<DEPLOYMENT_ID>/exec';
+    const callbackId = '<?= id ?>';
+
+    function responder(botao, element) {
+      let resposta = '';
+      if (botao === 'texto') {
+        resposta = document.getElementById('responseText').value.trim();
+        if (!resposta) return;
+      }
+
+      // Mostra loading no botão clicado
+      const originalText = element.innerHTML;
+      element.innerHTML = '<div class="loading-spinner"></div> Enviando...';
+      element.disabled = true;
+
+      // Desabilita tudo
+      document.querySelectorAll('button').forEach(btn => btn.disabled = true);
+      const textInput = document.getElementById('responseText');
+      if (textInput) textInput.disabled = true;
+
+      const url = `${webappUrl}?action=callback_interativa&id=${callbackId}&botao=${botao}&resposta=${encodeURIComponent(resposta)}`;
+
+      fetch(url)
+        .then(response => response.text())
+        .then(text => {
+          console.log(text);
+          // Transição suave para o card de sucesso
+          document.getElementById('mainCard').style.display = 'none';
+          document.getElementById('successCard').style.display = 'block';
+        })
+        .catch(err => {
+          alert('Erro ao enviar resposta: ' + err.message);
+          // Reabilita em caso de erro
+          element.innerHTML = originalText;
+          document.querySelectorAll('button').forEach(btn => btn.disabled = false);
+          if (textInput) textInput.disabled = false;
+        });
+    }
+
+    function fecharJanela() {
+      // Tenta fechar a janela do navegador
+      window.close();
+      // Fallback se não fechar (por segurança do navegador)
+      document.getElementById('successCard').querySelector('.description').innerText = 'Você já pode fechar esta aba.';
+    }
+  </script>
+</body>
+</html>

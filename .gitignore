@@ -1,0 +1,35 @@
+# ─── SEGREDOS — nunca versionar ──────────────────────────────────────────────
+# Segredos reais deste projeto vivem SÓ nas Script Properties do Apps Script
+# (GEMINI_API_KEY, FIRESTORE_SA, TTS_SA, VOICE_API_TOKEN, DIAG_TOKEN, MOBILE_API_TOKEN...).
+.env
+.env.*
+*.key
+*.pem
+*-service-account*.json
+*credentials*.json
+
+# Scripts de debug locais: contêm o VOICE_API_TOKEN/DIAG_TOKEN embutido na URL.
+# Ficam funcionando na sua máquina, mas fora do histórico do git.
+diagnostico.js
+diagnostico_recente.js
+
+# .clasp.json carrega o scriptId + rootDir local (há um .clasp.json.example versionado).
+.clasp.json
+
+# ─── Node / testes locais ────────────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+package-lock.json
+
+# ─── Preferências locais de ferramentas (não são do projeto) ─────────────────
+.claude/settings.local.json
+.claude/worktrees/
+.vscode/
+.idea/
+
+# ─── Lixo de SO / temporários ───────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.tmp
+*.bak
+~$*

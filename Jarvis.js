@@ -789,6 +789,24 @@ var Jarvis = (function () {
         parameters: { type: 'OBJECT', properties: { turno: { type: 'STRING', description: '"manha" ou "tarde"' } }, required: ['turno'] }
       },
       {
+        name: 'criarLembreteCondicional',
+        description: 'Cria um LEMBRETE ATRELADO À PRESENÇA do dono: em vez de um horário, o gatilho é ele CHEGAR ou SAIR de casa/do trabalho (o Jarvis detecta pelo Wi-Fi do celular). Use SEMPRE que o pedido tiver a forma "quando/assim que eu chegar em casa (ou no trabalho), me lembre de X" ou "ao sair de casa, me avise de Y". NÃO responda que vai lembrar sem chamar esta ferramenta — sem ela o lembrete não existe.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            gatilho: { type: 'STRING', description: 'chegou_casa | chegou_trabalho | saiu_casa | saiu_trabalho' },
+            texto: { type: 'STRING', description: 'O que lembrar, em poucas palavras (ex.: "pagar o boleto do condomínio").' },
+            validadeDias: { type: 'NUMBER', description: 'Opcional. Dias até expirar sozinho (padrão 7).' }
+          },
+          required: ['gatilho', 'texto']
+        }
+      },
+      {
+        name: 'listarLembretesCondicionais',
+        description: 'Lista os lembretes por presença ainda pendentes (os que aguardam o dono chegar/sair de casa ou do trabalho).',
+        parameters: { type: 'OBJECT', properties: {} }
+      },
+      {
         name: 'definirObjetivo',
         description: 'Define uma META de ALTO NÍVEL que exige MÚLTIPLAS etapas e a persegue de forma AUTÔNOMA: o Jarvis PLANEJA os passos, mostra o plano para o usuário CONFIRMAR e, após o "sim", EXECUTA todos sozinho (pesquisar, escrever no wiki, WhatsApp, etc.) e resume o desfecho. Use para pedidos COMPOSTOS (ex.: "pesquise X, resuma no meu wiki e me avise no WhatsApp"; "prepare um material sobre Y"). NÃO use para tarefas de um único passo — nesses casos, execute direto.',
         parameters: {
@@ -1010,6 +1028,16 @@ var Jarvis = (function () {
       {
         re: /(alerta|alertas|lembrete falado|turno|ponto|fala(r)? .*\b(hora|horas|\d{1,2}h|\d{1,2}:\d{2})|em voz alta.*\b(hora|\d{1,2}h)|despertar com voz|alerta de (voz|audio|áudio))/,
         nomes: ['agendarAlertaVoz', 'listarAlertasVoz', 'cancelarAlertaVoz', 'definirTurnoTrabalho']
+      },
+      {
+        // Lembretes por PRESENÇA (gatilho = chegar/sair de casa ou do trabalho, detectado pelo Wi-Fi).
+        // O parser determinístico da voz cobre o fraseado comum; esta tool cobre as VARIAÇÕES —
+        // sem ela o modelo responderia "ok, vou lembrar" sem criar nada (falso sucesso).
+        // Casa CONDICIONAL + LUGAR em qualquer ordem. Amplo de propósito: oferecer a tool à toa custa
+        // alguns tokens; NÃO oferecer custa um falso sucesso ("te aviso" sem criar nada) — já aconteceu
+        // no teste com "me avisa do boleto assim que eu PISAR em casa" (verbo fora da lista antiga).
+        re: /(quando|assim que|logo que|sempre que|ao |lembr|avis)[\s\S]{0,80}(em casa|na casa|de casa|para casa|pra casa|no trabalho|do trabalho|ao trabalho|no servi[çc]o|na firma|na empresa)|(em casa|no trabalho|no servi[çc]o)[\s\S]{0,60}(lembr|avis)|lembrete condicional|lembretes? por presen[çc]a/,
+        nomes: ['criarLembreteCondicional', 'listarLembretesCondicionais']
       },
       {
         re: /(objetivo|meta|planej)/,
@@ -1252,6 +1280,9 @@ var Jarvis = (function () {
       case 'listarAlertasVoz':     return isOwner ? (typeof AlertasVoz !== 'undefined' ? AlertasVoz.listar() : []) : _denied(name);
       case 'cancelarAlertaVoz':    return isOwner ? (typeof AlertasVoz !== 'undefined' ? AlertasVoz.cancelar(args && args.alerta) : { status: 'error' }) : _denied(name);
       case 'definirTurnoTrabalho': return isOwner ? (typeof AlertasVoz !== 'undefined' && AlertasVoz.definirTurno ? AlertasVoz.definirTurno(args && args.turno) : { status: 'error', erro: 'AlertasVoz indisponível.' }) : _denied(name);
+      // Lembretes por PRESENÇA (Wi-Fi) — implementados em Code.js, disparam nas transições de local.
+      case 'criarLembreteCondicional':   return isOwner ? (typeof criarLembreteCondicional === 'function' ? criarLembreteCondicional(args) : { status: 'error', erro: 'Lembretes condicionais indisponíveis.' }) : _denied(name);
+      case 'listarLembretesCondicionais': return isOwner ? (typeof listarLembretesCondicionais === 'function' ? listarLembretesCondicionais({}) : { status: 'error', erro: 'Lembretes condicionais indisponíveis.' }) : _denied(name);
       case 'listarTarefasAgendadas': return isOwner ? { status: 'success', tarefas: Agenda.listar() } : _denied(name);
       case 'cancelarTarefaAgendada': return isOwner ? Agenda.cancelar(args.tarefa) : _denied(name);
       case 'monitorarGmail':       return isOwner ? Monitor.configurar(args.query, args.acao) : _denied(name);

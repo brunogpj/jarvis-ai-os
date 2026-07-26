@@ -2560,10 +2560,35 @@ function doPost(e) {
           }
           return null;
         })();
-        // (0) ROTINA COMPOSTA ("modo cinema", "modo foco", "rotina boa noite") — vem PRIMEIRO por ser
-        // um comando explícito e inequívoco; um comando → várias ações no aparelho.
-        var _rot = _interpretarRotina(msgVoz);
-        if (_rot) {
+        // (00) LEMBRETE CONDICIONAL ("quando eu chegar em casa, me lembre de X") — só guarda na fila;
+        // quem dispara é a máquina de transições por Wi-Fi.
+        var _lemb = _interpretarLembretePresenca(msgVoz);
+        if (_lemb) {
+          try {
+            var _rl = criarLembretePresenca({ gatilho: _lemb.gatilho, texto: _lemb.texto });
+            var _ondeTxt = { chegou_casa: 'chegar em casa', chegou_trabalho: 'chegar no trabalho',
+                             saiu_casa: 'sair de casa', saiu_trabalho: 'sair do trabalho' }[_lemb.gatilho];
+            respVoz = _rl.ok ? ('Combinado. Quando você ' + _ondeTxt + ', eu te lembro: ' + _lemb.texto + '.')
+                             : 'Não consegui guardar esse lembrete.';
+          } catch (eLb) { respVoz = Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false }); }
+        } else
+        // (-1) LEMBRETE CONDICIONAL ("quando eu chegar em casa, me lembre de X") — o atalho MAIS
+        // específico, então vem antes de tudo. Determinístico: cria a fila de verdade, sem depender
+        // do LLM (que responderia "ok, vou lembrar" e não criaria nada — a armadilha do falso sucesso).
+        var _lembC = _interpretarLembreteCondicional(msgVoz);
+        // (0) ROTINA COMPOSTA ("modo cinema", "modo foco", "rotina boa noite") — comando explícito e
+        // inequívoco; um comando → várias ações no aparelho.
+        var _rot = _lembC ? null : _interpretarRotina(msgVoz);
+        if (_lembC) {
+          try {
+            var _rl = criarLembreteCondicional({ gatilho: _lembC.gatilho, texto: _lembC.texto });
+            var _ondeL = _lembC.gatilho.indexOf('casa') !== -1 ? 'em casa' : 'no trabalho';
+            var _quandoL = _lembC.gatilho.indexOf('chegou') === 0 ? 'chegar' : 'sair';
+            respVoz = _rl.ok
+              ? ('Combinado. Quando você ' + _quandoL + ' ' + _ondeL + ', eu te lembro de ' + _lembC.texto + '.')
+              : ('Não consegui criar o lembrete: ' + (_rl.erro || 'erro') + '.');
+          } catch (eLc) { respVoz = Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false }); }
+        } else if (_rot) {
           try {
             var _rr = executarRotina(_rot);
             respVoz = _rr.ok ? _rr.resposta : ('Não consegui executar o ' + (_rr.nome || _rot) + ' agora.');
@@ -3037,6 +3062,125 @@ function diagRotina(args) {
   return executarRotina(String(args.nome), { simular: args.simular !== false });
 }
 
+/* ===================== LEMBRETES CONDICIONAIS (por presença) =====================
+ * "Quando eu chegar em casa, me lembre de pagar o boleto." A peça difícil (saber ONDE ele está) já
+ * existe — aqui é só uma fila pendurada nas transições de presença.
+ * Regras de projeto:
+ *  · O DONO pediu → não conta no orçamento diário de interrupções (não é o Jarvis se intrometendo).
+ *  · À NOITE (janela de silêncio) entrega por NOTIFICAÇÃO em vez de voz — não acorda ninguém.
+ *  · Dispara UMA vez e se desativa; expira sozinho depois de validadeDias (default 7).
+ */
+var _LEMB_KEY = 'LEMBRETES_CONDICIONAIS';
+var _GATILHOS_LEMBRETE = ['chegou_casa', 'chegou_trabalho', 'saiu_casa', 'saiu_trabalho'];
+
+function _lembLer() { try { return JSON.parse(PropertiesService.getScriptProperties().getProperty(_LEMB_KEY) || '[]'); } catch (e) { return []; } }
+function _lembSalvar(a) { PropertiesService.getScriptProperties().setProperty(_LEMB_KEY, JSON.stringify(a || [])); }
+
+/** Estamos dentro da janela de silêncio noturno? (mesma property da governança) */
+function _dentroDoSilencio(quando) {
+  var janela = String(PropertiesService.getScriptProperties().getProperty('PROATIVO_SILENCIO') || '22:30-07:00');
+  var m = janela.match(/^(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})$/);
+  if (!m) return false;
+  var d = quando || new Date();
+  var atual = d.getHours() * 60 + d.getMinutes();
+  var ini = Number(m[1]) * 60 + Number(m[2]), fim = Number(m[3]) * 60 + Number(m[4]);
+  return (ini <= fim) ? (atual >= ini && atual < fim) : (atual >= ini || atual < fim);
+}
+
+/** Cria um lembrete condicional. args {gatilho, texto, validadeDias?}. */
+function criarLembreteCondicional(args) {
+  args = args || {};
+  var g = String(args.gatilho || '').trim();
+  if (_GATILHOS_LEMBRETE.indexOf(g) === -1) return { ok: false, erro: 'Gatilho inválido.', validos: _GATILHOS_LEMBRETE };
+  var texto = String(args.texto || '').trim();
+  if (!texto) return { ok: false, erro: 'Informe o texto do lembrete.' };
+  var arr = _lembLer();
+  var item = { id: Utilities.getUuid().slice(0, 8), gatilho: g, texto: texto,
+               validadeDias: Number(args.validadeDias || 7), criadoEm: Date.now(), ativo: true, disparadoEm: null };
+  arr.push(item); _lembSalvar(arr);
+  return { ok: true, lembrete: item, pendentes: arr.filter(function (x) { return x.ativo !== false; }).length };
+}
+
+/** Lista os lembretes (por padrão só os pendentes). args {todos:true} inclui os já disparados. */
+function listarLembretesCondicionais(args) {
+  args = args || {};
+  var arr = _lembLer();
+  var lista = args.todos === true ? arr : arr.filter(function (x) { return x.ativo !== false; });
+  return { ok: true, total: lista.length, lembretes: lista.map(function (l) {
+    return { id: l.id, gatilho: l.gatilho, texto: l.texto, ativo: l.ativo !== false,
+             criadoEm: new Date(l.criadoEm).toISOString(), validadeDias: l.validadeDias,
+             disparadoEm: l.disparadoEm ? new Date(l.disparadoEm).toISOString() : null }; }) };
+}
+
+/** Cancela/remove um lembrete. args {id} ou {limparTodos:true}. */
+function cancelarLembreteCondicional(args) {
+  args = args || {};
+  var arr = _lembLer();
+  if (args.limparTodos === true) { _lembSalvar([]); return { ok: true, removidos: arr.length }; }
+  var id = String(args.id || '');
+  var antes = arr.length;
+  arr = arr.filter(function (l) { return l.id !== id; });
+  _lembSalvar(arr);
+  return { ok: antes !== arr.length, removidos: antes - arr.length, restantes: arr.length };
+}
+
+/** Dispara os lembretes pendentes de um gatilho (chamado pela máquina de transições). */
+function _dispararLembretesDe(gatilho, opts) {
+  opts = opts || {};
+  var arr = _lembLer(), agora = Date.now(), mudou = false, entregues = [], expirados = 0;
+  var noite = _dentroDoSilencio();
+  arr.forEach(function (l) {
+    if (l.ativo === false) return;
+    if (l.validadeDias > 0 && (agora - l.criadoEm) > l.validadeDias * 86400000) {
+      if (!opts.simular) { l.ativo = false; mudou = true; }
+      expirados++; return;
+    }
+    if (l.gatilho !== gatilho) return;
+    if (opts.simular) { entregues.push({ id: l.id, texto: l.texto, canal: noite ? 'notificacao' : 'voz', ok: 'simulado' }); return; }
+    var res = null;
+    if (typeof Jarvis !== 'undefined' && Jarvis.controlarDispositivo) {
+      res = noite
+        ? Jarvis.controlarDispositivo({ acao: 'notificar', titulo: 'Lembrete do Jarvis', texto: l.texto })
+        : Jarvis.controlarDispositivo({ acao: 'falar', texto: 'Lembrete, Bruno: ' + l.texto });
+    }
+    var ok = !!(res && res.status === 'success');
+    if (ok) { l.ativo = false; l.disparadoEm = agora; mudou = true; }
+    entregues.push({ id: l.id, texto: l.texto, canal: noite ? 'notificacao' : 'voz', ok: ok });
+    try {
+      if (typeof Jarvis !== 'undefined' && Jarvis.registrarEvento) {
+        Jarvis.registrarEvento({ tool: 'lembrete:' + gatilho, ms: 0, ok: ok, resumo: String(l.texto).substring(0, 120) });
+      }
+    } catch (eL) {}
+  });
+  if (mudou) _lembSalvar(arr);
+  return { entregues: entregues, expirados: expirados };
+}
+
+/** Texto livre → lembrete condicional. Ex.: "quando eu chegar em casa, me lembre de pagar o boleto". */
+function _interpretarLembreteCondicional(msg) {
+  var s = String(msg || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+  // preposições cobertas: no/na/nos/nas, o/a/os/as, em, do/da/de ("ao sair DE casa" faltava)
+  var m = s.match(/^(?:quando|assim que|se|ao|logo que)\s+(?:eu\s+)?(chegar|sair|voltar|estiver)\s+(?:n?[oa]s?\s+|em\s+|d[eoa]\s+)?(casa|lar|trabalho|servico|firma|empresa)\b[\s,.:;-]*(.*)$/);
+  if (!m) return null;
+  var verbo = m[1], lugar = m[2], resto = m[3] || '';
+  var local = /casa|lar/.test(lugar) ? 'casa' : 'trabalho';
+  var gatilho = (verbo === 'sair') ? ('saiu_' + local) : ('chegou_' + local);
+  // remove o "me lembre de / me avise de / lembra de..." da frente do conteúdo
+  var texto = resto.replace(/^(?:me\s+)?(?:lembr\w+|avis\w+|recorde|fala\w*|diga?)\s*(?:-?me)?\s*(?:de\s+|para\s+|pra\s+|que\s+)?/, '').trim();
+  texto = texto.replace(/[\s.,;:!?]+$/, '');
+  if (!texto || texto.length < 2) return null;
+  return { gatilho: gatilho, texto: texto };
+}
+
+/** Diag dos lembretes: sem args lista; {gatilho} dispara (simulado por padrão). */
+function diagLembretes(args) {
+  args = args || {};
+  if (args.gatilho) return { ok: true, gatilho: args.gatilho, simulado: args.simular !== false,
+                             resultado: _dispararLembretesDe(String(args.gatilho), { simular: args.simular !== false }) };
+  if (args.frase) return { ok: true, frase: args.frase, interpretado: _interpretarLembreteCondicional(String(args.frase)) };
+  return listarLembretesCondicionais(args);
+}
+
 /* ===================== EVENTOS PROATIVOS (zero-LLM) =====================
  * A telemetria do celular chega a cada 15 min (pingTelemetria → macro → rota action:'telemetria').
  * Esse é o gatilho natural para o Jarvis AGIR sem ser chamado. Tudo determinístico (sem LLM = custo
@@ -3185,6 +3329,17 @@ function _avaliarEventosProativos(tel, opts) {
   // ── REGRAS de transição ──
   if (transicao) {
     var minPonto = _minutosAtePonto();
+    // LEMBRETES CONDICIONAIS pendentes desta transição ("quando eu chegar em casa, me lembre de...").
+    // Vêm ANTES das regras do sistema: o dono pediu explicitamente, tem prioridade sobre saudação.
+    var _evsLemb = [];
+    if (transicao.para === 'casa') _evsLemb.push('chegou_casa');
+    if (transicao.para === 'trabalho') _evsLemb.push('chegou_trabalho');
+    if (transicao.de === 'casa') _evsLemb.push('saiu_casa');
+    if (transicao.de === 'trabalho') _evsLemb.push('saiu_trabalho');
+    _evsLemb.forEach(function (ev) {
+      var rl = _dispararLembretesDe(ev, { simular: simular });
+      if (rl.entregues.length) disparos.push({ evento: 'lembretes:' + ev, entregues: rl.entregues });
+    });
     if (transicao.para === 'casa') {
       var naoLidos = null;
       try { naoLidos = GmailApp.getInboxUnreadCount(); } catch (eG) {}
@@ -3209,6 +3364,17 @@ function _avaliarEventosProativos(tel, opts) {
         disparos.push({ evento: 'saiu_casa', ignorado: 'ponto distante (' + minPonto + ' min)' });
       }
     }
+    // LEMBRETES CONDICIONAIS: uma transição pode valer por DOIS eventos (casa→trabalho = saiu_casa
+    // E chegou_trabalho). As regras acima usam else-if (só uma fala); os lembretes checam ambos.
+    var _evs = [];
+    if (transicao.de === 'casa') _evs.push('saiu_casa');
+    if (transicao.de === 'trabalho') _evs.push('saiu_trabalho');
+    if (transicao.para === 'casa') _evs.push('chegou_casa');
+    if (transicao.para === 'trabalho') _evs.push('chegou_trabalho');
+    _evs.forEach(function (ev) {
+      var rl = _dispararLembretes(ev, { simular: simular });
+      if (rl) disparos.push({ evento: 'lembretes', gatilho: ev, resultado: rl });
+    });
   }
 
   // ── REGRA de bateria (mantém o rearme por ciclo de carga + agora sob governança) ──
@@ -3249,6 +3415,116 @@ function diagEventoProativo(args) {
   var simular = args.simular !== false;
   var r = _avaliarEventosProativos(tel, { simular: simular });
   return { ok: true, simulado: simular, telemetriaUsada: tel, resultado: r, estado: diagProativoEstado().estado };
+}
+
+/* ===================== LEMBRETES CONDICIONAIS POR PRESENÇA =====================
+ * "Quando eu chegar em casa, me lembre de pagar o boleto." A peça difícil (saber ONDE ele está) já
+ * existe — isto aqui é só a FILA + o gancho na máquina de transições.
+ * Gatilhos: chegou_casa | chegou_trabalho | saiu_casa | saiu_trabalho.
+ * ⚠️ Estes NÃO passam pelo orçamento de interrupções: o dono PEDIU explicitamente. Ruído proativo é
+ * o que precisa de teto; lembrete pedido é serviço. Vários do mesmo gatilho viram UMA fala só.
+ */
+var _LEMBRETES_KEY = 'LEMBRETES_PRESENCA';
+function _lerLembretes() {
+  try { return JSON.parse(PropertiesService.getScriptProperties().getProperty(_LEMBRETES_KEY) || '[]'); }
+  catch (e) { return []; }
+}
+function _salvarLembretes(arr) {
+  PropertiesService.getScriptProperties().setProperty(_LEMBRETES_KEY, JSON.stringify(arr || []));
+}
+
+/** Cria um lembrete. args {gatilho, texto, validadeDias?=7, repetir?=false} */
+function criarLembretePresenca(args) {
+  args = args || {};
+  var GAT = ['chegou_casa', 'chegou_trabalho', 'saiu_casa', 'saiu_trabalho'];
+  var g = String(args.gatilho || '').trim();
+  var texto = String(args.texto || '').trim();
+  if (GAT.indexOf(g) === -1) return { ok: false, erro: 'gatilho inválido', validos: GAT };
+  if (!texto) return { ok: false, erro: 'informe o texto do lembrete' };
+  var dias = Number(args.validadeDias || 7);
+  var item = { id: Utilities.getUuid().slice(0, 8), gatilho: g, texto: texto,
+               criadoEm: Date.now(), validadeAte: Date.now() + dias * 86400000,
+               repetir: args.repetir === true, ativo: true };
+  var arr = _lerLembretes(); arr.push(item); _salvarLembretes(arr);
+  return { ok: true, lembrete: item, total: arr.length };
+}
+
+/** Lista os lembretes ativos (limpa os vencidos de passagem). */
+function listarLembretesPresenca() {
+  var agora = Date.now(), arr = _lerLembretes();
+  var vivos = arr.filter(function (l) { return l.ativo !== false && Number(l.validadeAte || 0) > agora; });
+  if (vivos.length !== arr.length) _salvarLembretes(vivos);      // faxina automática dos vencidos
+  return { ok: true, total: vivos.length, lembretes: vivos.map(function (l) {
+    return { id: l.id, gatilho: l.gatilho, texto: l.texto, repetir: !!l.repetir,
+             expiraEm: new Date(l.validadeAte).toISOString().slice(0, 10) }; }) };
+}
+
+function removerLembretePresenca(args) {
+  var id = String((args && (args.id || args)) || '');
+  var arr = _lerLembretes(), antes = arr.length;
+  var novo = arr.filter(function (l) { return l.id !== id; });
+  _salvarLembretes(novo);
+  return { ok: antes !== novo.length, removido: id, restantes: novo.length };
+}
+
+/** Dispara os lembretes de um gatilho: junta tudo numa fala só e consome os de uma vez. */
+function _dispararLembretes(gatilho, opts) {
+  opts = opts || {};
+  var agora = Date.now();
+  var arr = _lerLembretes();
+  var alvo = arr.filter(function (l) {
+    return l.ativo !== false && l.gatilho === gatilho && Number(l.validadeAte || 0) > agora;
+  });
+  if (!alvo.length) return null;
+  var txt = alvo.length === 1
+    ? ('Bruno, você pediu para lembrar: ' + alvo[0].texto)
+    : ('Bruno, você pediu para lembrar de ' + alvo.length + ' coisas: ' +
+       alvo.map(function (l, i) { return (i + 1) + ') ' + l.texto; }).join('. ') + '.');
+  if (opts.simular === true) return { gatilho: gatilho, quantos: alvo.length, texto: txt, falou: 'simulado' };
+  var res = (typeof Jarvis !== 'undefined' && Jarvis.controlarDispositivo)
+    ? Jarvis.controlarDispositivo({ acao: 'falar', texto: txt }) : null;
+  var ok = !!(res && res.status === 'success');
+  if (ok) {   // consome os de uma vez (os com repetir:true permanecem)
+    var ids = {}; alvo.forEach(function (l) { if (!l.repetir) ids[l.id] = 1; });
+    _salvarLembretes(arr.filter(function (l) { return !ids[l.id]; }));
+  }
+  try {
+    if (typeof Jarvis !== 'undefined' && Jarvis.registrarEvento) {
+      Jarvis.registrarEvento({ tool: 'lembrete:' + gatilho, ms: 0, ok: ok, resumo: txt.substring(0, 120) });
+    }
+  } catch (eL) {}
+  return { gatilho: gatilho, quantos: alvo.length, texto: txt, falou: ok };
+}
+
+/** Texto livre → {gatilho, texto}. Aceita as duas ordens ("quando... me lembre" e "me lembre... quando"). */
+function _interpretarLembretePresenca(msg) {
+  var s = String(msg || '').trim();
+  var norm = s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  var mapa = function (verbo, lugar) {
+    var chegou = /chegar|chego|voltar|volto/.test(verbo);
+    var casa = /casa|lar/.test(lugar);
+    return (chegou ? 'chegou_' : 'saiu_') + (casa ? 'casa' : 'trabalho');
+  };
+  // (a) "quando eu chegar em casa, me lembre de X"
+  var m = norm.match(/^quando\s+(?:eu\s+)?(chegar|chego|sair|saio|voltar|volto)\s*(?:em|no|na|de|do|da|para|pra)?\s*(casa|lar|trabalho|servico|firma|escritorio)\s*[,.]?\s*(?:me\s+)?(?:lembr\w+|avis\w+)\s*(?:de|pra|para|que)?\s*(.+)$/);
+  if (m) return { gatilho: mapa(m[1], m[2]), texto: s.slice(s.length - m[3].length).trim() };
+  // (b) "me lembre de X quando eu chegar em casa"
+  m = norm.match(/^(?:me\s+)?(?:lembr\w+|avis\w+)\s*(?:me\s+)?(?:de|pra|para|que)?\s*(.+?)\s+quando\s+(?:eu\s+)?(chegar|chego|sair|saio|voltar|volto)\s*(?:em|no|na|de|do|da)?\s*(casa|lar|trabalho|servico|firma|escritorio)\b/);
+  if (m) {
+    var ini = norm.indexOf(m[1]);
+    return { gatilho: mapa(m[2], m[3]), texto: s.substr(ini, m[1].length).trim() };
+  }
+  return null;
+}
+
+/** Diag dos lembretes. args {} lista · {gatilho,texto} cria · {remover:id} · {disparar:gatilho, simular}. */
+function diagLembretePresenca(args) {
+  args = args || {};
+  if (args.remover) return removerLembretePresenca({ id: args.remover });
+  if (args.disparar) return { ok: true, resultado: _dispararLembretes(String(args.disparar), { simular: args.simular !== false }) };
+  if (args.texto) return criarLembretePresenca(args);
+  if (args.frase) { var i = _interpretarLembretePresenca(args.frase); return { ok: !!i, interpretado: i }; }
+  return listarLembretesPresenca();
 }
 
 /** Reposiciona o briefing p/ X min antes do ponto de entrada do turno vigente (sem trocar o turno).
@@ -3490,6 +3766,9 @@ function _diagDispatch(body) {
     diagVoiceParse:         (typeof diagVoiceParse !== 'undefined') ? diagVoiceParse : null,
     configurarEvolutionUrl: (typeof configurarEvolutionUrl !== 'undefined') ? configurarEvolutionUrl : null,
     diagEventoProativo:     (typeof diagEventoProativo !== 'undefined') ? diagEventoProativo : null,
+    diagLembretes:          (typeof diagLembretes !== 'undefined') ? diagLembretes : null,
+    criarLembreteCondicional:(typeof criarLembreteCondicional !== 'undefined') ? criarLembreteCondicional : null,
+    cancelarLembreteCondicional:(typeof cancelarLembreteCondicional !== 'undefined') ? cancelarLembreteCondicional : null,
     diagRotina:             (typeof diagRotina !== 'undefined') ? diagRotina : null,
     configurarBriefingTurno:(typeof configurarBriefingTurno !== 'undefined') ? configurarBriefingTurno : null,
     diagProativoEstado:     (typeof diagProativoEstado !== 'undefined') ? diagProativoEstado : null,

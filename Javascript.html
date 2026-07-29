@@ -2487,7 +2487,7 @@
           } else {
             simIntentFields.style.display = "none";
             simTextoInput.hidden = false;
-            if (val === "abrirUrl") simTextoInput.placeholder = "URL / deep-link (ex: youversion://bible?reference=MAT.6.7)";
+            if (val === "abrirUrl") simTextoInput.placeholder = "URL / deep-link (ex: youversion://bible?reference=MAT.6.7&version=212)";
             else if (val === "abrirApp") simTextoInput.placeholder = "nome do app (ex: whatsapp, spotify, configuracoes)";
             else if (val === "navegar") simTextoInput.placeholder = "destino (ex: Trabalho, Casa, endereço)";
             else if (val === "falar") simTextoInput.placeholder = "texto a falar (TTS)";
@@ -2635,7 +2635,7 @@
         var ACOES = [
           { icon: "💬", label: "WhatsApp", acao: "abrirApp", args: { nome: "whatsapp" } },
           { icon: "📨", label: "Telegram", acao: "abrirApp", args: { nome: "telegram" } },
-          { icon: "📖", label: "Bíblia (Mt 6:7)", acao: "abrirUrl", args: { url: "youversion://bible?reference=MAT.6.7" } },
+          { icon: "📖", label: "Bíblia (Mt 6:7)", acao: "abrirUrl", args: { url: "youversion://bible?reference=MAT.6.7&version=212" } },
           { icon: "🎵", label: "Spotify: louvor", acao: "abrirUrl", args: { url: "https://open.spotify.com/search/louvor" } },
           { icon: "▶️", label: "YouTube: louvor", acao: "abrirUrl", args: { url: "https://www.youtube.com/results?search_query=louvor" } },
           { icon: "🛒", label: "Mercado Livre", acao: "abrirUrl", args: { url: "meli://search?query=fone%20de%20ouvido" } },

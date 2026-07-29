@@ -569,6 +569,85 @@ function _avisarContatoNoCelular(de, texto, tipoMidia, numero) {
 
 // BÍBLIA FALADA: busca o texto do versículo (tradução Almeida, domínio público) na bible-api.com.
 // apiRef no formato "MAT+6:7" (código USFM ou nome PT + cap:versículo). Retorna { ok, ref, texto }.
+/* Deep-link do YouVersion COM a versão. Sem `&version=`, o app abre na última versão usada — que
+ * no aparelho do dono era a NIV, em inglês (verificado por adb: badge "NIV", "Galatians 5").
+ * IDs confirmados no aparelho: 212 = ARC (Almeida Revista e Corrigida) · 129 = NVI. O padrão é a
+ * Almeida para bater com a Bíblia FALADA, que já lê Almeida (bible-api translation=almeida).
+ * Trocável por Script Property BIBLIA_VERSAO. */
+function _youversionUrl(usfm) {
+  var v = String(PropertiesService.getScriptProperties().getProperty('BIBLIA_VERSAO') || '212').trim();
+  return 'youversion://bible?reference=' + usfm + (v ? ('&version=' + encodeURIComponent(v)) : '');
+}
+
+
+/**
+ * Texto livre → referência bíblica. Fonte ÚNICA: a cadeia de voz e o diagVoiceParse chamam
+ * esta função. Antes havia duas cópias da regex e elas divergiram — o diag dizia "não
+ * interpretado" para frases que a cadeia real entendia.
+ * Devolve { usfm, code, cap, ver, ref, falar } ou null.
+ */
+function _interpretarBiblia(msgVoz) {
+  var LIV = { 'genesis':'GEN','exodo':'EXO','levitico':'LEV','numeros':'NUM','deuteronomio':'DEU','josue':'JOS','juizes':'JDG','rute':'RUT','1 samuel':'1SA','2 samuel':'2SA','1 reis':'1KI','2 reis':'2KI','1 cronicas':'1CH','2 cronicas':'2CH','esdras':'EZR','neemias':'NEH','ester':'EST','jo':'JOB','job':'JOB','salmo':'PSA','salmos':'PSA','proverbios':'PRO','eclesiastes':'ECC','canticos':'SNG','cantares':'SNG','isaias':'ISA','jeremias':'JER','lamentacoes':'LAM','ezequiel':'EZK','daniel':'DAN','oseias':'HOS','joel':'JOL','amos':'AMO','obadias':'OBA','jonas':'JON','miqueias':'MIC','naum':'NAM','habacuque':'HAB','sofonias':'ZEP','ageu':'HAG','zacarias':'ZEC','malaquias':'MAL','mateus':'MAT','marcos':'MRK','lucas':'LUK','joao':'JHN','atos':'ACT','romanos':'ROM','1 corintios':'1CO','2 corintios':'2CO','galatas':'GAL','efesios':'EPH','filipenses':'PHP','colossenses':'COL','1 tessalonicenses':'1TH','2 tessalonicenses':'2TH','1 timoteo':'1TI','2 timoteo':'2TI','tito':'TIT','filemom':'PHM','hebreus':'HEB','tiago':'JAS','1 pedro':'1PE','2 pedro':'2PE','1 joao':'1JN','2 joao':'2JN','3 joao':'3JN','judas':'JUD','apocalipse':'REV' };
+  // A referência pode vir em TRÊS granularidades. Antes só a primeira era aceita, então
+  // "abra a bíblia em Gálatas" não casava e caía no LLM, que respondia sem abrir nada.
+  //   (a) livro cap:vers → GAL.5.22   (b) livro cap → GAL.5   (c) só o livro → GAL.1
+  var temPalavra = /b[íi]blia|vers[íi]culo/i.test(msgVoz);
+  if (!temPalavra && !/\b\d{1,3}\s*[:]\s*\d{1,3}\b/.test(msgVoz)) return null;
+  var s = msgVoz.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  // Intenção de OUVIR o versículo (Jarvis LÊ em voz alta) vs. só ABRIR no YouVersion.
+  // Testa sobre o texto SEM acento (s) com padrões ASCII — robusto a encoding do 'í'/'ã'.
+  var querFalar = /(biblia\s+falada|versiculo\s+falad|\b(?:leia|ler|recite|recita|declare|narre|declama|declame)\b|\bfal[ae]\b[^.]*\b(?:versiculo|biblia)\b)/.test(s);
+  var ORD = { primeiro: '1', segundo: '2', terceiro: '3' };
+  function achar(pre, nome) {
+    var p = pre ? ((ORD[pre] || pre) + ' ') : '';
+    return { code: LIV[(p + nome).trim()] || LIV[nome], nome: (p + nome).trim() };
+  }
+  function titulo(n) { return n.replace(/\b\w/g, function (c) { return c.toUpperCase(); }); }
+
+  // Varre TODOS os matches até um que resolva um livro de verdade. Pegar só o primeiro
+  // quebrava "bíblia em 1 Coríntios 13": o match mais à esquerda é "em 1", que não é livro,
+  // e a busca parava ali — devolvendo o capítulo 1 em vez do 13.
+  function primeiroValido(re, comVerso) {
+    var mm;
+    while ((mm = re.exec(s)) !== null) {
+      var r = achar(mm[1], mm[2]);
+      // "bíblia em 1 Coríntios 13": o "1" foi engolido como CAPÍTULO pelo match anterior
+      // ("em 1"), então aqui sobra só "corintios", que não é chave. Recupera o ordinal
+      // olhando o texto imediatamente antes do nome do livro.
+      if (!r.code) {
+        var antes = s.slice(0, mm.index + mm[0].indexOf(mm[2]));
+        var ord = antes.match(/([123])\s+$/);
+        if (ord) r = achar(ord[1], mm[2]);
+      }
+      if (!r.code) continue;
+      return comVerso
+        ? { usfm: r.code + '.' + mm[3] + '.' + mm[4], code: r.code, cap: mm[3], ver: mm[4],
+            ref: titulo(r.nome) + ' ' + mm[3] + ':' + mm[4], falar: querFalar }
+        : { usfm: r.code + '.' + mm[3], code: r.code, cap: mm[3], ver: null,
+            ref: titulo(r.nome) + ' ' + mm[3], falar: querFalar };
+    }
+    return null;
+  }
+  // (a) livro + capítulo + versículo
+  var achou = primeiroValido(/(?:(1|2|3|primeiro|segundo|terceiro)\s+)?([a-z]{2,})\s+(?:capitulo\s+)?(\d{1,3})\s*(?::|,|\s+versiculo\s+|\s+)\s*(\d{1,3})/g, true);
+  if (achou) return achou;
+  // (b) livro + capítulo ("abra a bíblia em Gálatas 5")
+  achou = primeiroValido(/(?:(1|2|3|primeiro|segundo|terceiro)\s+)?([a-z]{2,})\s+(?:capitulo\s+)?(\d{1,3})\b/g, false);
+  if (achou) return achou;
+  // (c) só o livro ("abra a bíblia em Gálatas") → capítulo 1. Exige a palavra bíblia/versículo
+  // na frase, senão qualquer texto com a palavra 'atos' ou 'tito' viraria referência.
+  if (temPalavra) {
+    var chaves = Object.keys(LIV).sort(function (x, y) { return y.length - x.length; });
+    for (var i = 0; i < chaves.length; i++) {
+      if (new RegExp('(^|[^a-z])' + chaves[i].replace(/\s+/g, '\\s+') + '([^a-z]|$)').test(s)) {
+        return { usfm: LIV[chaves[i]] + '.1', code: LIV[chaves[i]], cap: '1', ver: null,
+                 ref: titulo(chaves[i]) + ' 1', falar: querFalar, semCapitulo: true };
+      }
+    }
+  }
+  return null;
+}
+
 function _lerVersiculoBiblia(apiRef) {
   try {
     var url = 'https://bible-api.com/' + encodeURIComponent(String(apiRef)) + '?translation=almeida';
@@ -2268,6 +2347,22 @@ function doPost(e) {
       } catch (eTel) { return json({ ok: false, erro: eTel.message }); }
     }
 
+    // NOTIFICAÇÕES DO CELULAR: a macro "Jarvis Notificações Premium" manda o que chegou.
+    // Aceita GET ou POST (os parâmetros da query já foram mesclados no body acima).
+    if (body && body.action === "notificacao") {
+      var tokNt = body.token || '';
+      if (!tokNt || tokNt !== PropertiesService.getScriptProperties().getProperty('VOICE_API_TOKEN')) {
+        return json({ ok: false, erro: 'não autorizado' });
+      }
+      try {
+        // texto ou ticker: nem todo app preenche os dois. A macro manda ambos e aqui fica o que veio
+        // de fato — _notifTxt já descarta magic text não substituído ("{not_text}" literal).
+        var _txtNt = _notifTxt(body.texto) || _notifTxt(body.ticker);
+        return json(registrarNotificacao({ app: body.app, pacote: body.pacote, titulo: body.titulo,
+                                           texto: _txtNt, falar: body.falar }));
+      } catch (eNt) { return json({ ok: false, erro: eNt.message }); }
+    }
+
     // Devolve texto puro (text/plain) para simplificar a leitura direta no celular.
     if (body && body.action === "voice_command") {
       var token = body.token || (e && e.parameter && e.parameter.token);
@@ -2472,21 +2567,7 @@ function doPost(e) {
         // caem no LLM normalmente.
         var respVoz;
         // (i) VERSÍCULO DA BÍBLIA → YouVersion (determinístico; o modelo de voz às vezes não chama a tool).
-        var _bib = (function () {
-          var LIV = { 'genesis':'GEN','exodo':'EXO','levitico':'LEV','numeros':'NUM','deuteronomio':'DEU','josue':'JOS','juizes':'JDG','rute':'RUT','1 samuel':'1SA','2 samuel':'2SA','1 reis':'1KI','2 reis':'2KI','1 cronicas':'1CH','2 cronicas':'2CH','esdras':'EZR','neemias':'NEH','ester':'EST','jo':'JOB','job':'JOB','salmo':'PSA','salmos':'PSA','proverbios':'PRO','eclesiastes':'ECC','canticos':'SNG','cantares':'SNG','isaias':'ISA','jeremias':'JER','lamentacoes':'LAM','ezequiel':'EZK','daniel':'DAN','oseias':'HOS','joel':'JOL','amos':'AMO','obadias':'OBA','jonas':'JON','miqueias':'MIC','naum':'NAM','habacuque':'HAB','sofonias':'ZEP','ageu':'HAG','zacarias':'ZEC','malaquias':'MAL','mateus':'MAT','marcos':'MRK','lucas':'LUK','joao':'JHN','atos':'ACT','romanos':'ROM','1 corintios':'1CO','2 corintios':'2CO','galatas':'GAL','efesios':'EPH','filipenses':'PHP','colossenses':'COL','1 tessalonicenses':'1TH','2 tessalonicenses':'2TH','1 timoteo':'1TI','2 timoteo':'2TI','tito':'TIT','filemom':'PHM','hebreus':'HEB','tiago':'JAS','1 pedro':'1PE','2 pedro':'2PE','1 joao':'1JN','2 joao':'2JN','3 joao':'3JN','judas':'JUD','apocalipse':'REV' };
-          if (!/b[íi]blia|vers[íi]culo/i.test(msgVoz) && !/\b\d{1,3}\s*[:]\s*\d{1,3}\b/.test(msgVoz)) return null;
-          var s = msgVoz.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-          var m = s.match(/(?:(1|2|3|primeiro|segundo|terceiro)\s+)?([a-z]{2,})\s+(?:capitulo\s+)?(\d{1,3})\s*(?::|,|\s+versiculo\s+|\s+)\s*(\d{1,3})/);
-          if (!m) return null;
-          var pre = m[1] ? (String(m[1]).replace('primeiro','1').replace('segundo','2').replace('terceiro','3') + ' ') : '';
-          var usfmL = LIV[(pre + m[2]).trim()] || LIV[m[2]];
-          if (!usfmL) return null;
-          var nomeRef = (pre + m[2]).trim().replace(/\b\w/g, function (c) { return c.toUpperCase(); });
-          // Intenção de OUVIR o versículo (Jarvis LÊ em voz alta) vs. só ABRIR no YouVersion.
-          // Testa sobre o texto SEM acento (s) com padrões ASCII — robusto a encoding do 'í'/'ã'.
-          var querFalar = /(biblia\s+falada|versiculo\s+falad|\b(?:leia|ler|recite|recita|declare|narre|declama|declame)\b|\bfal[ae]\b[^.]*\b(?:versiculo|biblia)\b)/.test(s);
-          return { usfm: usfmL + '.' + m[3] + '.' + m[4], code: usfmL, cap: m[3], ver: m[4], ref: nomeRef + ' ' + m[3] + ':' + m[4], falar: querFalar };
-        })();
+        var _bib = _interpretarBiblia(msgVoz);
         // (ii) TOCAR MÚSICA → Spotify (determinístico; via abrirUrl/OpenWebPage, o caminho que funciona).
         var _spot = (function () {
           if (/youtube|no google|pesquis|liga(?:r)? para|vers[íi]culo|b[íi]blia/i.test(msgVoz)) return null;
@@ -2587,10 +2668,22 @@ function doPost(e) {
         // (0) ROTINA COMPOSTA ("modo cinema", "modo foco") — um comando → várias ações no aparelho.
         // As declarações vêm ANTES da cadeia: antes havia um `else` solto governando só um `var`,
         // então o `if (_lembC)` rodava sempre e o fim da cadeia sobrescrevia a resposta já montada.
-        var _livre = (_voto === null && _ofr === null);
+        // (-2) "O QUE EU PERDI?" — resumo determinístico das notificações. Zero LLM: a resposta é
+        // um fato, não uma opinião, e mandar isso pro modelo só adicionaria custo e risco de invenção.
+        var _perdi = null;
+        if (_voto === null && _ofr === null) {
+          var _sP = msgVoz.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+          if (/\b(o que (eu )?perdi|perdi algo|perdi alguma coisa|que chegou|chegou algo|alguma notificacao|tem notificacao|novidades? no celular|me atualiza)\b/.test(_sP)) _perdi = true;
+        }
+        var _livre = (_voto === null && _ofr === null && _perdi === null);
         var _lembC = _livre ? _interpretarLembreteCondicional(msgVoz) : null;
         var _rot   = (_livre && !_lembC) ? _interpretarRotina(msgVoz) : null;
-        if (_voto !== null) {
+        if (_perdi !== null) {
+          try {
+            var _rp = resumirNotificacoes({ horas: 12, marcarLidas: true });
+            respVoz = _rp.resumo;
+          } catch (eP2) { respVoz = 'Não consegui checar as notificações agora.'; }
+        } else if (_voto !== null) {
           try {
             var _rv = registrarFeedbackInsight({ voto: _voto });
             respVoz = _rv.ok
@@ -2623,18 +2716,23 @@ function doPost(e) {
           } catch (eCt) { respVoz = Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false }); }
         } else if (_bib && typeof Jarvis !== 'undefined' && Jarvis.controlarDispositivo) {
           try {
-            if (_bib.falar) {
+            if (_bib.falar && !_bib.ver) {
+              // "leia Gálatas 5" = um capítulo inteiro; ler isso em voz alta seriam minutos de fala.
+              // Abre no app e diz o que fez, em vez de despejar o capítulo.
+              Jarvis.controlarDispositivo({ acao: 'abrirUrl', url: _youversionUrl(_bib.usfm) });
+              respVoz = 'Abri ' + _bib.ref + ' no YouVersion. Me diga o versículo se quiser que eu leia.';
+            } else if (_bib.falar) {
               // BÍBLIA FALADA: o Jarvis LÊ o versículo em voz alta (respVoz é falada no celular) — vai
               // além de só abrir o app. Busca o texto (Almeida) na bible-api; fallback abre o YouVersion.
               var _bv = _lerVersiculoBiblia(_bib.code + '+' + _bib.cap + ':' + _bib.ver);
               if (_bv.ok) {
                 respVoz = (_bv.ref || _bib.ref) + '. ' + _bv.texto;
               } else {
-                Jarvis.controlarDispositivo({ acao: 'abrirUrl', url: 'youversion://bible?reference=' + _bib.usfm });
+                Jarvis.controlarDispositivo({ acao: 'abrirUrl', url: _youversionUrl(_bib.usfm) });
                 respVoz = 'Não achei o texto de ' + _bib.ref + ' para ler, então abri no YouVersion.';
               }
             } else {
-              Jarvis.controlarDispositivo({ acao: 'abrirUrl', url: 'youversion://bible?reference=' + _bib.usfm });
+              Jarvis.controlarDispositivo({ acao: 'abrirUrl', url: _youversionUrl(_bib.usfm) });
               respVoz = 'Abrindo a Bíblia em ' + _bib.ref + '.';
             }
           } catch (eBi) {
@@ -3650,6 +3748,487 @@ function diagInsight(args) {
            gatilhoAtivo: trigs.length > 0, atual: _insightAtual() };
 }
 
+
+/* ===================== NOTIFICAÇÕES DO CELULAR (percepção) =====================
+ * A macro "Jarvis Notificações Premium" JÁ escuta as notificações do aparelho — o gatilho
+ * NotificationTrigger funciona e está filtrado por app. O que faltava não era capacidade, era
+ * DESTINO: ela chamava action=falar, então o Jarvis falava e esquecia. Aqui ele passa a LEMBRAR,
+ * e com isso responde "o que eu perdi?" e ganha um gatilho proativo com conteúdo de verdade.
+ *
+ * Princípios (notificação é volume alto e conteúdo sensível):
+ *   · a macro filtra por app NO APARELHO; NOTIF_APPS é uma 2ª barreira no servidor (opcional)
+ *   · retenção curta e teto diário — isto não é um arquivo permanente da vida dele
+ *   · PERCEBER ≠ FALAR: por padrão só guarda; falar exige falar=1 (ou app em NOTIF_FALAR_APPS)
+ */
+var _NOTIF_COL = 'notificacoes';
+var _NOTIF_RETENCAO_DIAS = 7;
+var _NOTIF_MAX_DIA = 200;
+
+function _notifTxt(v) {
+  var t = String(v === undefined || v === null ? '' : v).trim();
+  // Magic text não substituído chega literalmente como "{not_ticker}" — já nos mordeu na telemetria.
+  if (/^\{[a-z_]+\}$/i.test(t)) return '';
+  return t.replace(/\s+/g, ' ').substring(0, 400);
+}
+
+function _notifListaProp(chave) {
+  var v = String(PropertiesService.getScriptProperties().getProperty(chave) || '').trim();
+  if (!v) return [];
+  return v.split(',').map(function (x) { return x.trim().toLowerCase(); }).filter(Boolean);
+}
+
+/** O app está numa lista? Casa por nome OU pacote, por substring (o nome varia de aparelho). */
+function _notifNaLista(lista, app, pacote) {
+  if (!lista.length) return null;                       // lista vazia = "não opinar"
+  var a = String(app || '').toLowerCase(), p = String(pacote || '').toLowerCase();
+  for (var i = 0; i < lista.length; i++) {
+    if ((a && a.indexOf(lista[i]) !== -1) || (p && p.indexOf(lista[i]) !== -1)) return true;
+  }
+  return false;
+}
+
+/** Grava uma notificação recebida do aparelho. Devolve o que foi feito e por quê. */
+function registrarNotificacao(d) {
+  d = d || {};
+  var app = _notifTxt(d.app), pacote = _notifTxt(d.pacote);
+  var titulo = _notifTxt(d.titulo), texto = _notifTxt(d.texto);
+  if (!app && !titulo && !texto) return { ok: false, erro: 'notificação vazia' };
+
+  var p = PropertiesService.getScriptProperties();
+  // 2ª barreira: se NOTIF_APPS estiver configurado, só passa quem está nela.
+  var permitido = _notifNaLista(_notifListaProp('NOTIF_APPS'), app, pacote);
+  if (permitido === false) return { ok: true, ignorado: 'app fora do NOTIF_APPS', app: app };
+
+  // REGRA `ignorar` é BARREIRA DE ENTRADA, não de ação: precisa rodar ANTES da gravação. Antes eu
+  // avaliava as regras só depois do setDoc — então bloquear mensageiros impedia o Jarvis de AGIR,
+  // mas o conteúdo (nome de grupo, remetente) continuava indo parar no banco. Para dado de
+  // terceiro, isso não serve: o certo é nem entrar.
+  var regrasEntrada = _notifRegras();
+  for (var ri = 0; ri < regrasEntrada.length; ri++) {
+    if (!_notifRegraCasa(regrasEntrada[ri], app, pacote, titulo, texto)) continue;
+    if (String(regrasEntrada[ri].acao || '').toLowerCase() === 'ignorar') {
+      return { ok: true, ignorado: 'regra ' + regrasEntrada[ri].id, guardado: false, app: app };
+    }
+    break;                                  // primeira regra que casa decide; não é ignorar → segue
+  }
+
+  // Teto diário — um app em loop não pode encher a coleção.
+  var hoje = Utilities.formatDate(new Date(), 'America/Sao_Paulo', 'yyyy-MM-dd');
+  var cont = (p.getProperty('NOTIF_DIA') === hoje) ? Number(p.getProperty('NOTIF_CONT') || 0) : 0;
+  if (cont >= _NOTIF_MAX_DIA) return { ok: true, ignorado: 'teto diário (' + _NOTIF_MAX_DIA + ')' };
+
+  // Dedup curto: mesma app+título em 5 min é repique, não fato novo.
+  var chaveDup = 'ntf_' + _notifHash(app + '|' + titulo);
+  try {
+    var ck = CacheService.getScriptCache();
+    if (ck.get(chaveDup)) return { ok: true, ignorado: 'duplicada (5 min)', app: app };
+    ck.put(chaveDup, '1', 300);
+  } catch (eC) {}
+
+  var agora = Date.now();
+  var doc = { app: app, pacote: pacote, titulo: titulo, texto: texto,
+              em: agora, dia: hoje, lida: false };
+  try {
+    Firestore.setDoc(_NOTIF_COL, String(1e13 - agora) + '_' + Math.floor(Math.random() * 1000), doc);
+  } catch (eF) { return { ok: false, erro: 'Firestore: ' + eF.message }; }
+  try { p.setProperty('NOTIF_DIA', hoje); p.setProperty('NOTIF_CONT', String(cont + 1)); } catch (eP) {}
+
+  // FALAR é opt-in: falar=1 na macro, ou app listado em NOTIF_FALAR_APPS.
+  var querFalar = (String(d.falar || '') === '1' || d.falar === true) ||
+                  (_notifNaLista(_notifListaProp('NOTIF_FALAR_APPS'), app, pacote) === true);
+  var falou = null;
+  if (querFalar && _notifPodeFalar()) {
+    var fala = 'Notificação do ' + (app || 'celular') + '. ' + (titulo || '') + (texto ? '. ' + texto : '');
+    try {
+      var r = (typeof Jarvis !== 'undefined' && Jarvis.controlarDispositivo)
+        ? Jarvis.controlarDispositivo({ acao: 'falar', texto: fala }) : null;
+      falou = !!(r && r.status === 'success');
+    } catch (eV) { falou = false; }
+  }
+  // Arma a cobrança de ponto na primeira notificação que vier do app de ponto.
+  try {
+    var _ap = String(p.getProperty('PONTO_APP') || 'sisponto').toLowerCase();
+    if ((app + ' ' + pacote).toLowerCase().indexOf(_ap) !== -1) p.setProperty('PONTO_APP_VISTO', String(Date.now()));
+  } catch (eA) {}
+
+  // REGRAS: guardar não é agir. A primeira regra que casar decide o que fazer com isto.
+  var acaoRegra = null;
+  try { acaoRegra = _notifAplicarRegras(doc); } catch (eR) { acaoRegra = { erro: eR.message }; }
+  return { ok: true, guardado: true, app: app, titulo: titulo, falou: falou, noDia: cont + 1, regra: acaoRegra };
+}
+
+/* A janela de fala saiu da MACRO para cá. Na macro, a restrição 06:00–20:00 ficava no nível do
+ * macro inteiro: fora dela o aparelho nem CAPTURAVA a notificação. Com a rota nova isso está errado
+ * — perceber deve ser 24h (senão "o que eu perdi?" perde justamente a madrugada), e só a FALA tem
+ * hora. Property NOTIF_FALAR_JANELA, padrão idêntico ao que ele já usava. */
+function _notifPodeFalar() {
+  var j = String(PropertiesService.getScriptProperties().getProperty('NOTIF_FALAR_JANELA') || '06:00-20:00');
+  var m = j.match(/^(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})$/);
+  if (!m) return !_dentroDoSilencio();
+  var d = new Date(), atual = d.getHours() * 60 + d.getMinutes();
+  var ini = Number(m[1]) * 60 + Number(m[2]), fim = Number(m[3]) * 60 + Number(m[4]);
+  return (ini <= fim) ? (atual >= ini && atual < fim) : (atual >= ini || atual < fim);
+}
+
+function _notifHash(s) {
+  var h = 0; s = String(s);
+  for (var i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+
+/** Lê as notificações guardadas, mais recentes primeiro, já podando as vencidas. */
+function _notifLer(limite) {
+  var docs = [];
+  try { docs = Firestore.listDocs(_NOTIF_COL, 500) || []; } catch (e) { return []; }
+  var corte = Date.now() - _NOTIF_RETENCAO_DIAS * 86400000;
+  var vivas = [], mortas = [];
+  docs.forEach(function (x) {
+    var d = x.dados || {};
+    if (Number(d.em || 0) < corte) mortas.push(x.id); else vivas.push({ id: x.id, d: d });
+  });
+  // poda preguiçosa: retenção curta é requisito, não enfeite
+  mortas.slice(0, 30).forEach(function (id) { try { Firestore.deleteDoc(_NOTIF_COL, id); } catch (e2) {} });
+  vivas.sort(function (a, b) { return Number(b.d.em || 0) - Number(a.d.em || 0); });
+  return vivas.slice(0, limite || 50);
+}
+
+/** "O que eu perdi?" — resumo determinístico (zero LLM, custo zero). args {horas, marcarLidas}. */
+function resumirNotificacoes(args) {
+  args = args || {};
+  var horas = Number(args.horas || 12);
+  var desde = Date.now() - horas * 3600000;
+  var lista = _notifLer(200).filter(function (n) {
+    return Number(n.d.em || 0) >= desde && (args.todas === true || n.d.lida !== true);
+  });
+  if (!lista.length) {
+    return { ok: true, total: 0, horas: horas, resumo: 'Nada de novo nas últimas ' + horas + ' horas.' };
+  }
+  var porApp = {};
+  lista.forEach(function (n) {
+    var a = n.d.app || 'desconhecido';
+    if (!porApp[a]) porApp[a] = [];
+    porApp[a].push(n.d);
+  });
+  var partes = Object.keys(porApp).map(function (a) {
+    var itens = porApp[a];
+    var amostra = itens.slice(0, 2).map(function (i) { return i.titulo || i.texto; })
+                       .filter(Boolean).join('; ');
+    return itens.length === 1 ? (a + ': ' + amostra)
+                              : (a + ' (' + itens.length + '): ' + amostra);
+  });
+  if (args.marcarLidas === true) {
+    lista.forEach(function (n) { try { Firestore.updateDoc(_NOTIF_COL, n.id, { lida: true }); } catch (e) {} });
+  }
+  return { ok: true, total: lista.length, horas: horas, apps: Object.keys(porApp).length,
+           resumo: 'Nas últimas ' + horas + ' horas: ' + partes.join('. ') + '.',
+           itens: lista.map(function (n) {
+             return { app: n.d.app, titulo: n.d.titulo, texto: n.d.texto,
+                      em: new Date(Number(n.d.em)).toISOString() }; }) };
+}
+
+/** Diag: {} resumo · {registrar:{...}} simula chegada · {limpar:true} · {horas} */
+function diagNotificacoes(args) {
+  args = args || {};
+  if (args.limpar === true) {
+    var n = 0;
+    try { (Firestore.listDocs(_NOTIF_COL, 500) || []).forEach(function (x) { Firestore.deleteDoc(_NOTIF_COL, x.id); n++; }); } catch (e) {}
+    PropertiesService.getScriptProperties().deleteProperty('NOTIF_CONT');
+    return { ok: true, removidas: n };
+  }
+  if (args.registrar) return registrarNotificacao(args.registrar);
+  var p = PropertiesService.getScriptProperties();
+  var r = resumirNotificacoes({ horas: Number(args.horas || 24), todas: true });
+  r.config = { NOTIF_APPS: p.getProperty('NOTIF_APPS') || '(vazio = aceita o que a macro mandar)',
+               NOTIF_FALAR_APPS: p.getProperty('NOTIF_FALAR_APPS') || '(vazio = só fala com falar=1)',
+               retencaoDias: _NOTIF_RETENCAO_DIAS, tetoDia: _NOTIF_MAX_DIA,
+               noDiaDeHoje: Number(p.getProperty('NOTIF_CONT') || 0) };
+  return r;
+}
+
+/** Configura o filtro. args {apps:'nubank,gmail', falarApps:'agenda edu', limparApps:true} */
+function configurarNotificacoes(args) {
+  args = args || {};
+  var p = PropertiesService.getScriptProperties();
+  if (args.limparApps === true) p.deleteProperty('NOTIF_APPS');
+  else if (args.apps !== undefined) p.setProperty('NOTIF_APPS', String(args.apps));
+  if (args.falarApps !== undefined) p.setProperty('NOTIF_FALAR_APPS', String(args.falarApps));
+  if (args.falarJanela !== undefined) p.setProperty('NOTIF_FALAR_JANELA', String(args.falarJanela));
+  return { ok: true, NOTIF_APPS: p.getProperty('NOTIF_APPS') || '', NOTIF_FALAR_APPS: p.getProperty('NOTIF_FALAR_APPS') || '',
+           NOTIF_FALAR_JANELA: p.getProperty('NOTIF_FALAR_JANELA') || '06:00-20:00 (padrão)' };
+}
+
+
+
+/* ===================== FINANCEIRO — FASE 1: captura BRUTA =====================
+ * Fase 1 não interpreta NADA. O objetivo é só não perder a notificação da recarga (o app prevê
+ * 30/07) — notificação perdida não volta, não fica guardada em lugar nenhum para consultar depois.
+ * O parser vem na fase 2, escrito em cima de texto REAL em vez de formato imaginado.
+ *
+ * Coleção SEPARADA de propósito: "notificacoes" tem retenção de 7 dias, lançamento financeiro
+ * precisa durar anos. E o texto BRUTO fica gravado para sempre, ao lado do que vier a ser
+ * interpretado: se o parser errar ou o Swile mudar o formato, dá para reprocessar. Guardar só o
+ * resultado interpretado transforma erro de parser em perda permanente.
+ */
+var _FIN_COL = 'financeiro';
+
+/** Guarda a notificação financeira CRUA. Nada de parsing aqui. */
+function _finGuardarBruto(d) {
+  var agora = Date.now();
+  var doc = {
+    app: d.app || '', pacote: d.pacote || '',
+    titulo: d.titulo || '', texto: d.texto || '',
+    bruto: ((d.titulo || '') + ' | ' + (d.texto || '')).trim(),
+    em: agora, dia: Utilities.formatDate(new Date(agora), 'America/Sao_Paulo', 'yyyy-MM-dd'),
+    parseado: false, versaoParser: 0            // a fase 2 preenche isto sem perder o bruto
+  };
+  try {
+    Firestore.setDoc(_FIN_COL, String(1e13 - agora) + '_' + Math.floor(Math.random() * 1000), doc);
+    return { ok: true, dia: doc.dia };
+  } catch (e) { return { ok: false, erro: e.message }; }
+}
+
+/** Lê os lançamentos brutos, mais recentes primeiro. SEM poda: aqui nada expira. */
+function _finLer(limite) {
+  var docs = [];
+  try { docs = Firestore.listDocs(_FIN_COL, 500) || []; } catch (e) { return []; }
+  var itens = docs.map(function (x) { return { id: x.id, d: x.dados || {} }; });
+  itens.sort(function (a, b) { return Number(b.d.em || 0) - Number(a.d.em || 0); });
+  return itens.slice(0, limite || 100);
+}
+
+/** Diag da fase 1. args {} lista · {limpar:true} · {simular:{app,titulo,texto}} */
+function diagFinanceiro(args) {
+  args = args || {};
+  if (args.limpar === true) {
+    var n = 0;
+    try { (Firestore.listDocs(_FIN_COL, 500) || []).forEach(function (x) { Firestore.deleteDoc(_FIN_COL, x.id); n++; }); } catch (e) {}
+    return { ok: true, removidos: n };
+  }
+  if (args.simular) return _finGuardarBruto(args.simular);
+  var itens = _finLer(Number(args.limite || 50));
+  return { ok: true, total: itens.length, fase: 1,
+           nota: 'Fase 1: só captura bruta. O parser entra na fase 2, com amostras reais.',
+           lancamentos: itens.map(function (i) {
+             return { em: new Date(Number(i.d.em)).toISOString(), app: i.d.app,
+                      titulo: i.d.titulo, texto: i.d.texto, parseado: i.d.parseado === true }; }) };
+}
+
+/* ===================== REGRAS DE NOTIFICAÇÃO (guardar → AGIR) =====================
+ * Guardar não é agir. Uma regra é: app + padrão no texto → o que fazer.
+ * Ações:
+ *   · ignorar      — ruído conhecido (promoção, "confira as ofertas"). Nem guarda.
+ *   · avisar       — ROTEIA PELO CONTEXTO: em casa e fora do expediente, fala; caso contrário,
+ *                    guarda para o briefing. É o padrão certo para quase tudo.
+ *   · falar        — fala AGORA (ainda sob a janela e a governança). Só para o que não pode esperar.
+ *   · lembrete_casa / lembrete_trabalho — vira lembrete condicional e chega quando ele CHEGAR lá.
+ *                    Reaproveita a fila de presença que já existe.
+ * A PRIMEIRA regra que casar vence. Sem regra nenhuma: só guarda (comportamento de hoje).
+ */
+var _NOTIF_REGRAS = 'NOTIF_REGRAS';
+
+function _notifRegras() {
+  try { return JSON.parse(PropertiesService.getScriptProperties().getProperty(_NOTIF_REGRAS) || '[]') || []; }
+  catch (e) { return []; }
+}
+
+/** Casa uma regra contra a notificação. padrao vazio = qualquer texto daquele app. */
+function _notifRegraCasa(r, app, pacote, titulo, texto) {
+  if (r.ativa === false) return false;
+  if (r.app) {
+    // `app` é REGEX, igual a `padrao` — as sementes usam alternância ("bradesco|itaú|swile").
+    // Comparar por substring, como eu fazia, fazia a alternância nunca casar.
+    var a = String(app || '').toLowerCase(), p = String(pacote || '').toLowerCase();
+    var casou;
+    try { var re = new RegExp(String(r.app), 'i'); casou = re.test(a) || re.test(p); }
+    catch (e) { var alvo = String(r.app).toLowerCase(); casou = (a.indexOf(alvo) !== -1 || p.indexOf(alvo) !== -1); }
+    if (!casou) return false;
+  }
+  if (!r.padrao) return true;
+  try { return new RegExp(r.padrao, 'i').test((titulo || '') + ' ' + (texto || '')); }
+  catch (e) { return false; }
+}
+
+/** Em casa E fora do expediente = momento de falar. Caso contrário, guarda para o briefing. */
+function _notifRoteia() {
+  var local = (typeof _insLocalAtual === 'function') ? _insLocalAtual() : 'desconhecido';
+  var fora  = (typeof _insForaDoTurno === 'function') ? _insForaDoTurno() : true;
+  return (local === 'casa' && fora && _notifPodeFalar()) ? 'falar' : 'briefing';
+}
+
+/** Aplica a primeira regra que casar. Devolve o que foi decidido (e por quê). */
+function _notifAplicarRegras(d) {
+  var regras = _notifRegras();
+  for (var i = 0; i < regras.length; i++) {
+    var r = regras[i];
+    if (!_notifRegraCasa(r, d.app, d.pacote, d.titulo, d.texto)) continue;
+    var acao = String(r.acao || 'avisar').toLowerCase();
+    var frase = r.texto ? String(r.texto) : ((d.titulo || '') + (d.texto ? '. ' + d.texto : ''));
+
+    if (acao === 'ignorar') return { regra: r.id, acao: 'ignorar' };
+
+    // guardar = fica no cofre e pronto. Sem fala, sem lembrete. Útil para o que se consulta depois.
+    if (acao === 'guardar') return { regra: r.id, acao: 'guardar' };
+
+    // financeiro = também vai para a coleção de retenção longa, com o texto BRUTO preservado.
+    // NÃO fala: extrato não é interrupção.
+    if (acao === 'financeiro') {
+      var rf = _finGuardarBruto(d);
+      return { regra: r.id, acao: 'financeiro', arquivado: rf.ok, erro: rf.erro || null };
+    }
+
+    if (acao === 'lembrete_casa' || acao === 'lembrete_trabalho') {
+      var gat = (acao === 'lembrete_casa') ? 'chegou_casa' : 'chegou_trabalho';
+      try {
+        var rl = criarLembreteCondicional({ gatilho: gat, texto: frase.substring(0, 160), validadeDias: 3 });
+        return { regra: r.id, acao: acao, lembrete: rl.ok ? rl.lembrete.id : null, erro: rl.ok ? null : rl.erro };
+      } catch (e1) { return { regra: r.id, acao: acao, erro: e1.message }; }
+    }
+
+    var modo = (acao === 'falar') ? 'falar' : (acao === 'briefing' ? 'briefing' : _notifRoteia());
+    if (modo === 'falar') {
+      var falou = false;
+      try {
+        var res = (typeof Jarvis !== 'undefined' && Jarvis.controlarDispositivo)
+          ? Jarvis.controlarDispositivo({ acao: 'falar', texto: (d.app || 'Celular') + '. ' + frase }) : null;
+        falou = !!(res && res.status === 'success');
+      } catch (e2) {}
+      return { regra: r.id, acao: acao, modo: 'falar', falou: falou };
+    }
+    return { regra: r.id, acao: acao, modo: 'briefing' };    // fica guardada, entra no resumo
+  }
+  return { regra: null, acao: 'guardar' };
+}
+
+/** CRUD de regras. args {adicionar:{...}} · {remover:id} · {listar:true} · {semear:true} */
+function configurarRegraNotificacao(args) {
+  args = args || {};
+  var p = PropertiesService.getScriptProperties();
+  var regras = _notifRegras();
+
+  if (args.semear === true) {
+    // Sementes tiradas dos apps REAIS dele. Editáveis: são um ponto de partida, não dogma.
+    regras = [
+      { id: 'promo',    app: '',          padrao: 'oferta|promo[cç][aã]o|desconto|imperd[ií]vel|black|cupom|aproveite', acao: 'ignorar' },
+      { id: 'ponto',    app: 'sisponto',  padrao: '',                                  acao: 'briefing' },
+      { id: 'boleto',   app: 'bradesco|ita[uú]|mercado pago|swile', padrao: 'boleto|vencimento|vence|fatura|pagamento', acao: 'lembrete_casa' },
+      { id: 'banco',    app: 'bradesco|ita[uú]|mercado pago|swile', padrao: '',        acao: 'avisar' },
+      { id: 'vaga',     app: 'catho|linkedin',       padrao: 'vaga|oportunidade|candidat|entrevista', acao: 'avisar' },
+      { id: 'entrega',  app: 'mercado livre|amazon|olx|sam',        padrao: 'entrega|entregue|saiu para|a caminho|chegou', acao: 'avisar' },
+      { id: 'escola',   app: 'agenda edu', padrao: '',                                 acao: 'avisar' },
+      { id: 'gov',      app: 'gov.br|inss|carteira de trabalho',    padrao: '',        acao: 'avisar' }
+    ];
+    p.setProperty(_NOTIF_REGRAS, JSON.stringify(regras));
+    return { ok: true, semeadas: regras.length, regras: regras };
+  }
+  if (args.remover) {
+    var antes = regras.length;
+    regras = regras.filter(function (r) { return r.id !== String(args.remover); });
+    p.setProperty(_NOTIF_REGRAS, JSON.stringify(regras));
+    return { ok: antes !== regras.length, restantes: regras.length };
+  }
+  if (args.adicionar) {
+    var nova = args.adicionar;
+    if (!nova.id) nova.id = 'r' + Date.now().toString(36);
+    regras = regras.filter(function (r) { return r.id !== nova.id; });
+    if (args.noTopo === true) regras.unshift(nova); else regras.push(nova);
+    p.setProperty(_NOTIF_REGRAS, JSON.stringify(regras));
+    return { ok: true, regra: nova, total: regras.length };
+  }
+  return { ok: true, total: regras.length, regras: regras };
+}
+
+/** Diag: {} lista · {simular:{app,titulo,texto}} testa qual regra casaria, SEM efeito colateral. */
+function diagRegrasNotificacao(args) {
+  args = args || {};
+  if (args.simular) {
+    var d = args.simular, regras = _notifRegras(), casou = null;
+    for (var i = 0; i < regras.length; i++) {
+      if (_notifRegraCasa(regras[i], d.app, d.pacote, d.titulo, d.texto)) { casou = regras[i]; break; }
+    }
+    return { ok: true, entrada: d, regra: casou,
+             acaoQueSeria: casou ? (casou.acao === 'avisar' ? ('avisar → ' + _notifRoteia()) : casou.acao) : 'guardar (sem regra)',
+             contextoAgora: { local: _insLocalAtual(), foraDoTurno: _insForaDoTurno(), podeFalar: _notifPodeFalar() } };
+  }
+  return configurarRegraNotificacao({});
+}
+
+/* ── DETECÇÃO DE AUSÊNCIA DO PONTO ────────────────────────────────────────────────────────
+ * O inverso da proatividade comum, e o mais valioso: NÃO receber é informação. Se o horário do
+ * ponto passou e nenhuma notificação do app de ponto chegou, provavelmente ele esqueceu.
+ * Os horários vêm dos alertas tag:'ponto' — a mesma fonte do briefing, então segue troca de turno.
+ */
+function verificarPontoBatido(opts) {
+  opts = opts || {};
+  var p = PropertiesService.getScriptProperties();
+  var appPonto = String(p.getProperty('PONTO_APP') || 'sisponto');
+  var tolerancia = Number(p.getProperty('PONTO_TOLERANCIA_MIN') || 15);
+  var agora = new Date(), dow = agora.getDay();
+  var minAgora = agora.getHours() * 60 + agora.getMinutes();
+  var hoje = Utilities.formatDate(agora, 'America/Sao_Paulo', 'yyyy-MM-dd');
+
+  // TRAVA DE ARMAÇÃO: só cobra se o app de ponto JÁ enviou alguma notificação alguma vez. Sem isso,
+  // enquanto o Sisponto não estiver no filtro da macro, o Jarvis cobraria o ponto todo santo dia —
+  // ausência de notificação por falta de integração não é ausência de registro.
+  if (!p.getProperty('PONTO_APP_VISTO')) {
+    return { ok: true, desarmado: true, motivo: 'nunca chegou notificação do ' + appPonto +
+             ' — adicione-o ao filtro da macro para armar a cobrança' };
+  }
+
+  var pontos = [];
+  try {
+    pontos = AlertasVoz.listar().filter(function (a) {
+      if (a.tag !== 'ponto') return false;
+      var dias = Array.isArray(a.dias) ? a.dias : String(a.dias || '').split(',').map(Number);
+      return dias.indexOf(dow) !== -1;
+    }).map(function (a) { return { min: Number(a.hora) * 60 + Number(a.minuto || 0), texto: a.texto || '' }; });
+  } catch (e) { return { ok: false, erro: 'sem alertas de ponto' }; }
+  if (!pontos.length) return { ok: true, semPontoHoje: true };
+
+  // O ponto "em cobrança" é o mais recente que já passou da tolerância (e não passou de 90 min).
+  var alvo = null;
+  pontos.forEach(function (pt) {
+    var atraso = minAgora - pt.min;
+    if (atraso >= tolerancia && atraso <= 90 && (!alvo || pt.min > alvo.min)) alvo = pt;
+  });
+  if (!alvo) return { ok: true, nenhumPontoVencido: true };
+
+  var chave = 'PONTO_COBRADO_' + hoje + '_' + alvo.min;
+  if (p.getProperty(chave)) return { ok: true, jaCobrado: true, ponto: alvo.min };
+
+  // Chegou notificação do app de ponto perto do horário?
+  var janelaIni = Date.now() - (minAgora - alvo.min + tolerancia) * 60000;
+  var bateu = _notifLer(100).some(function (n) {
+    return Number(n.d.em || 0) >= janelaIni &&
+           String(n.d.app || '').toLowerCase().indexOf(appPonto.toLowerCase()) !== -1;
+  });
+  var hh = ('0' + Math.floor(alvo.min / 60)).slice(-2) + ':' + ('0' + (alvo.min % 60)).slice(-2);
+  if (bateu) {
+    if (!opts.simular) p.setProperty(chave, 'ok');
+    return { ok: true, ponto: hh, confirmado: true };
+  }
+  var txt = 'Bruno, o ponto das ' + hh + ' já passou e eu não vi o registro. Você bateu?';
+  var r = _falarProativo('ponto_ausente', txt, { cooldownMin: 60, simular: opts.simular });
+  if (!opts.simular && r.falou === true) p.setProperty(chave, 'cobrado');
+  return { ok: true, ponto: hh, confirmado: false, cobrou: r.falou, bloqueado: r.bloqueado || null, texto: txt };
+}
+
+/** Diag da cobrança de ponto. args {simular:false} cobra de verdade · {limpar:true}. */
+function diagPonto(args) {
+  args = args || {};
+  var p = PropertiesService.getScriptProperties();
+  if (args.limpar === true) {
+    var n = 0;
+    p.getKeys().forEach(function (k) { if (k.indexOf('PONTO_COBRADO_') === 0) { p.deleteProperty(k); n++; } });
+    return { ok: true, marcasRemovidas: n };
+  }
+  if (args.app !== undefined) p.setProperty('PONTO_APP', String(args.app));
+  if (args.toleranciaMin !== undefined) p.setProperty('PONTO_TOLERANCIA_MIN', String(Number(args.toleranciaMin)));
+  var r = verificarPontoBatido({ simular: args.simular !== false });
+  r.config = { PONTO_APP: p.getProperty('PONTO_APP') || 'sisponto (padrão)',
+               toleranciaMin: Number(p.getProperty('PONTO_TOLERANCIA_MIN') || 15) };
+  return r;
+}
+
 /* ===================== LEMBRETES CONDICIONAIS (por presença) =====================
  * "Quando eu chegar em casa, me lembre de pagar o boleto." A peça difícil (saber ONDE ele está) já
  * existe — aqui é só uma fila pendurada nas transições de presença.
@@ -4007,6 +4586,12 @@ function _avaliarEventosProativos(tel, opts) {
   var rIns = _avaliarEntregaInsight(localNovo, { simular: simular });
   if (rIns.ofereceu) disparos.push({ evento: 'insight_oferta', texto: rIns.texto, insightId: rIns.insightId });
 
+  // PONTO: cobra se o horário passou e nenhuma notificação do app de ponto chegou.
+  try {
+    var rPonto = verificarPontoBatido({ simular: simular });
+    if (rPonto && rPonto.cobrou) disparos.push({ evento: 'ponto_ausente', ponto: rPonto.ponto, texto: rPonto.texto });
+  } catch (ePt) {}
+
   // ── grava o snapshot novo ──
   if (!simular) {
     p.setProperty('PROATIVO_SNAPSHOT', JSON.stringify({ local: localNovo, candidato: null, candN: 0,
@@ -4182,13 +4767,12 @@ function diagTelemetria() {
 /** DEBUG: replica a lógica do atalho de voz da Bíblia p/ ver s/querFalar/parse (verdade de terra). */
 function diagVoiceParse(args) {
   var msgVoz = String((args && (args.msg || args.message)) || '');
-  var s = msgVoz.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  var trigger = /b[íi]blia|vers[íi]culo/i.test(msgVoz) || /\b\d{1,3}\s*[:]\s*\d{1,3}\b/.test(msgVoz);
-  var m = s.match(/(?:(1|2|3|primeiro|segundo|terceiro)\s+)?([a-z]{2,})\s+(?:capitulo\s+)?(\d{1,3})\s*(?::|,|\s+versiculo\s+|\s+)\s*(\d{1,3})/);
-  var querFalar = /(biblia\s+falada|versiculo\s+falad|\b(?:leia|ler|recite|recita|declare|narre)\b|\bfal[ae]\b[^.]*\b(?:versiculo|biblia)\b)/.test(s);
-  return { ok: true, msgVoz: msgVoz, s: s, trigger: trigger, parsed: m ? { book: m[2], cap: m[3], ver: m[4] } : null,
-    querFalar: querFalar, sCodes: s.split('').map(function (ch) { return ch.charCodeAt(0); }).slice(0, 28) };
+  var r = _interpretarBiblia(msgVoz);
+  return { ok: true, msgVoz: msgVoz, interpretado: !!r, referencia: r ? r.ref : null,
+           usfm: r ? r.usfm : null, url: r ? _youversionUrl(r.usfm) : null,
+           querFalar: r ? !!r.falar : false, semCapitulo: r ? !!r.semCapitulo : false };
 }
+
 
 /** Info não-sensível do banco (p/ montar o link do console real). project_id aparece em toda URL da API. */
 function diagFsInfo() {
@@ -4335,6 +4919,13 @@ function _diagDispatch(body) {
     diagLembretePresenca:   (typeof diagLembretePresenca !== 'undefined') ? diagLembretePresenca : null,
     diagCentralizacao:      (typeof diagCentralizacao !== 'undefined') ? diagCentralizacao : null,
     diagFeedbackCuradoria:  (typeof diagFeedbackCuradoria !== 'undefined') ? diagFeedbackCuradoria : null,
+    diagNotificacoes:       (typeof diagNotificacoes !== 'undefined') ? diagNotificacoes : null,
+    diagRegrasNotificacao:  (typeof diagRegrasNotificacao !== 'undefined') ? diagRegrasNotificacao : null,
+    configurarRegraNotificacao:(typeof configurarRegraNotificacao !== 'undefined') ? configurarRegraNotificacao : null,
+    diagPonto:              (typeof diagPonto !== 'undefined') ? diagPonto : null,
+    diagFinanceiro:         (typeof diagFinanceiro !== 'undefined') ? diagFinanceiro : null,
+    configurarNotificacoes: (typeof configurarNotificacoes !== 'undefined') ? configurarNotificacoes : null,
+    resumirNotificacoes:    (typeof resumirNotificacoes !== 'undefined') ? resumirNotificacoes : null,
     registrarFeedbackInsight:(typeof registrarFeedbackInsight !== 'undefined') ? registrarFeedbackInsight : null,
     configurarCentralizacao:(typeof configurarCentralizacao !== 'undefined') ? configurarCentralizacao : null,
     configurarInsightDiario:(typeof configurarInsightDiario !== 'undefined') ? configurarInsightDiario : null,

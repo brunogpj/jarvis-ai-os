@@ -160,7 +160,7 @@ var Jarvis = (function () {
         'Quando o dono pedir algo NO CELULAR (abrir/agir num app, rota, ligar, tocar música, ajustar wifi/brilho, etc.), CHAME controlarDispositivo IMEDIATAMENTE. NUNCA diga que fez sem antes chamar a ferramenta.',
         'REGRA DE OURO: para ABRIR e AGIR num app, use SEMPRE a ação "abrirUrl" com url=<o deep-link abaixo> (o sistema abre via VIEW limpo — é o que funciona de verdade no aparelho; NÃO use "intent" com componente/pacote p/ isto). Troque <termo> pelo pedido (texto legível).',
         '🎛️ CONTROLES NATIVOS do aparelho (ações diretas, use SEM deep-link): "pausa/continua a música"→midia(comando:"pausar") · "próxima/anterior faixa"→midia(comando:"proxima"/"anterior") · "volume alto/médio/baixo/mudo ou N%"→volume(nivel) · "lanterna"→lanterna() (alterna) · "não perturbe on/off"→naoperturbe(estado).',
-        '📖 BÍBLIA (YouVersion): versículo → url="youversion://bible?reference=<USFM>" (Mateus 6:7=MAT.6.7; João 3:16=JHN.3.16; Salmos 23=PSA.23; Gênesis 1:1=GEN.1.1). SEMPRE inclua a referência completa. (Já há atalho automático p/ "livro cap:vers".)',
+        '📖 BÍBLIA (YouVersion): versículo → url="youversion://bible?reference=<USFM>&version=212" (Mateus 6:7=MAT.6.7; João 3:16=JHN.3.16; Salmos 23=PSA.23; Gênesis 1:1=GEN.1.1). SEMPRE inclua a referência completa E o &version=212 (Almeida, em português) — sem ele o app abre em INGLÊS. Livro sem capítulo vale: Gálatas=GAL.1. (Já há atalho automático p/ "livro cap:vers".)',
         '🎵 SPOTIFY: tocar/buscar → url="https://open.spotify.com/search/<termo>" (App Link abre o app; ex.: "toque louvor"). NÃO use "spotify:" puro (o navegador pode sequestrar).',
         '▶️ YOUTUBE: pesquisar → url="https://www.youtube.com/results?search_query=<termo>".',
         '🗺️ MAPS: ROTA → ação "navegar" com destino=<endereço/Casa/Trabalho>. Buscar local → url="geo:0,0?q=<lugar>".',
@@ -789,6 +789,18 @@ var Jarvis = (function () {
         parameters: { type: 'OBJECT', properties: { turno: { type: 'STRING', description: '"manha" ou "tarde"' } }, required: ['turno'] }
       },
       {
+        name: 'resumirNotificacoes',
+        description: 'Resume as NOTIFICAÇÕES que chegaram no celular do dono (o Jarvis as captura via a macro de notificações). Use quando ele perguntar "o que eu perdi?", "chegou alguma coisa?", "tem notificação?", "me atualiza" ou algo do gênero. Devolve um resumo agrupado por aplicativo. NÃO invente notificações: se o resumo vier vazio, diga que não chegou nada.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            horas: { type: 'NUMBER', description: 'Janela em horas para trás (padrão 12).' },
+            todas: { type: 'BOOLEAN', description: 'true inclui as já marcadas como lidas (padrão false).' }
+          },
+          required: []
+        }
+      },
+      {
         name: 'criarLembreteCondicional',
         description: 'Cria um LEMBRETE ATRELADO À PRESENÇA do dono: em vez de um horário, o gatilho é ele CHEGAR ou SAIR de casa/do trabalho (o Jarvis detecta pelo Wi-Fi do celular). Use SEMPRE que o pedido tiver a forma "quando/assim que eu chegar em casa (ou no trabalho), me lembre de X" ou "ao sair de casa, me avise de Y". NÃO responda que vai lembrar sem chamar esta ferramenta — sem ela o lembrete não existe.',
         parameters: {
@@ -1040,6 +1052,10 @@ var Jarvis = (function () {
         nomes: ['criarLembreteCondicional', 'listarLembretesCondicionais']
       },
       {
+        re: /(o que (eu )?perdi|perdi alg|que chegou|chegou alg|notifica|me atualiza|novidades?\s+no\s+celular)/,
+        nomes: ['resumirNotificacoes']
+      },
+      {
         re: /(objetivo|meta|planej)/,
         nomes: ['definirObjetivo', 'listarObjetivos', 'cancelarObjetivo']
       },
@@ -1281,6 +1297,7 @@ var Jarvis = (function () {
       case 'cancelarAlertaVoz':    return isOwner ? (typeof AlertasVoz !== 'undefined' ? AlertasVoz.cancelar(args && args.alerta) : { status: 'error' }) : _denied(name);
       case 'definirTurnoTrabalho': return isOwner ? (typeof AlertasVoz !== 'undefined' && AlertasVoz.definirTurno ? AlertasVoz.definirTurno(args && args.turno) : { status: 'error', erro: 'AlertasVoz indisponível.' }) : _denied(name);
       // Lembretes por PRESENÇA (Wi-Fi) — implementados em Code.js, disparam nas transições de local.
+      case 'resumirNotificacoes':        return isOwner ? (typeof resumirNotificacoes === 'function' ? resumirNotificacoes(args) : { status: 'error', erro: 'Notificações indisponíveis.' }) : _denied(name);
       case 'criarLembreteCondicional':   return isOwner ? (typeof criarLembreteCondicional === 'function' ? criarLembreteCondicional(args) : { status: 'error', erro: 'Lembretes condicionais indisponíveis.' }) : _denied(name);
       case 'listarLembretesCondicionais': return isOwner ? (typeof listarLembretesCondicionais === 'function' ? listarLembretesCondicionais({}) : { status: 'error', erro: 'Lembretes condicionais indisponíveis.' }) : _denied(name);
       case 'listarTarefasAgendadas': return isOwner ? { status: 'success', tarefas: Agenda.listar() } : _denied(name);

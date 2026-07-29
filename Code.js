@@ -2560,26 +2560,49 @@ function doPost(e) {
           }
           return null;
         })();
-        // (00) LEMBRETE CONDICIONAL ("quando eu chegar em casa, me lembre de X") — só guarda na fila;
-        // quem dispara é a máquina de transições por Wi-Fi.
-        var _lemb = _interpretarLembretePresenca(msgVoz);
-        if (_lemb) {
+        // (-3) RESPOSTA À OFERTA DE INSIGHT ("quer ouvir?" → "sim"). O atalho MAIS específico de
+        // todos: só existe nos 20 min após a oferta. Sem isso, o "sim" cairia no LLM, que não faz
+        // ideia do que ele está aceitando.
+        // (-4) VOTO no insight ("gostei" / "não gostei"). Dentro de 30 min da entrega, o voto seco
+        // basta — o contexto é óbvio. Depois disso exige citar "ideia/insight/sugestão", senão um
+        // "gostei" sobre qualquer outra coisa viraria voto sem ele saber.
+        var _voto = null;
+        if (_insFeedbackAberto()) {
+          var _sV = msgVoz.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+          var _citou = /\b(ideia|insight|sugest|dica)/.test(_sV);
+          if (_insDentroDaJanelaFeedback() || _citou) {
+            if (/\b(gostei|boa|bom|otim|util|excelente|massa|top|curti|serviu)\b/.test(_sV) && !/\bnao\s+(gostei|serviu|curti)\b/.test(_sV)) _voto = 'up';
+            else if (/\b(nao gostei|nao serviu|nao curti|ruim|inutil|pessim|fraco|obvio|irrelevante|besteira)\b/.test(_sV)) _voto = 'down';
+          }
+        }
+        var _ofr = null;
+        if (_voto === null && _insOfertaAberta()) {
+          var _sOf = msgVoz.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+          if (/^(sim|claro|quero|manda|pode|pode mandar|bora|vai|conta|fala)\b/.test(_sOf)) _ofr = true;
+          else if (/^(nao|agora nao|depois|deixa|passa|nem)\b/.test(_sOf)) _ofr = false;
+        }
+        // (-1) LEMBRETE CONDICIONAL ("quando eu chegar em casa, me lembre de X") — determinístico:
+        // cria a fila de verdade, sem depender do LLM (que responderia "ok, vou lembrar" e não
+        // criaria nada — a armadilha do falso sucesso). Quem dispara é a máquina de transições.
+        // (0) ROTINA COMPOSTA ("modo cinema", "modo foco") — um comando → várias ações no aparelho.
+        // As declarações vêm ANTES da cadeia: antes havia um `else` solto governando só um `var`,
+        // então o `if (_lembC)` rodava sempre e o fim da cadeia sobrescrevia a resposta já montada.
+        var _livre = (_voto === null && _ofr === null);
+        var _lembC = _livre ? _interpretarLembreteCondicional(msgVoz) : null;
+        var _rot   = (_livre && !_lembC) ? _interpretarRotina(msgVoz) : null;
+        if (_voto !== null) {
           try {
-            var _rl = criarLembretePresenca({ gatilho: _lemb.gatilho, texto: _lemb.texto });
-            var _ondeTxt = { chegou_casa: 'chegar em casa', chegou_trabalho: 'chegar no trabalho',
-                             saiu_casa: 'sair de casa', saiu_trabalho: 'sair do trabalho' }[_lemb.gatilho];
-            respVoz = _rl.ok ? ('Combinado. Quando você ' + _ondeTxt + ', eu te lembro: ' + _lemb.texto + '.')
-                             : 'Não consegui guardar esse lembrete.';
-          } catch (eLb) { respVoz = Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false }); }
-        } else
-        // (-1) LEMBRETE CONDICIONAL ("quando eu chegar em casa, me lembre de X") — o atalho MAIS
-        // específico, então vem antes de tudo. Determinístico: cria a fila de verdade, sem depender
-        // do LLM (que responderia "ok, vou lembrar" e não criaria nada — a armadilha do falso sucesso).
-        var _lembC = _interpretarLembreteCondicional(msgVoz);
-        // (0) ROTINA COMPOSTA ("modo cinema", "modo foco", "rotina boa noite") — comando explícito e
-        // inequívoco; um comando → várias ações no aparelho.
-        var _rot = _lembC ? null : _interpretarRotina(msgVoz);
-        if (_lembC) {
+            var _rv = registrarFeedbackInsight({ voto: _voto });
+            respVoz = _rv.ok
+              ? (_voto === 'up' ? 'Anotado, vou trazer mais sobre ' + _rv.categoria + '.'
+                                : 'Anotado. Vou evitar esse assunto.')
+              : 'Certo.';
+          } catch (eV) { respVoz = 'Certo.'; }
+        } else if (_ofr !== null) {
+          try {
+            respVoz = _responderOfertaInsight(_ofr) || 'Certo.';
+          } catch (eOf) { respVoz = 'Certo.'; }
+        } else if (_lembC) {
           try {
             var _rl = criarLembreteCondicional({ gatilho: _lembC.gatilho, texto: _lembC.texto });
             var _ondeL = _lembC.gatilho.indexOf('casa') !== -1 ? 'em casa' : 'no trabalho';
@@ -3062,6 +3085,571 @@ function diagRotina(args) {
   return executarRotina(String(args.nome), { simular: args.simular !== false });
 }
 
+/* ===================== CURADORIA · COLETOR DE TEMAS (zero-LLM) =====================
+ * Descobre SOBRE O QUE o dono se importa — sem lista hardcoded. A fonte é o segundo cérebro dele:
+ * o que ele escreveu/ingeriu É o mapa dos interesses. Peça 1 de 4 da curadoria (temas → geração →
+ * entrega contextual → feedback).
+ *
+ * ATALHO DE CUSTO: em vez de varrer o Drive, lê `wiki_vetores` (o índice semântico já existente),
+ * que guarda `caminho` + `ord` por trecho. Uma consulta dá a LISTA de páginas E o PESO (quantos
+ * trechos = quanto ele escreveu sobre aquilo) + a recência.
+ *
+ * Sinais e pesos:
+ *  · categoria da pasta — concepts/use-cases valem mais que sources (escrita deliberada > material ingerido)
+ *  · volume — nº de trechos daquela página
+ *  · recência — mexido nos últimos 30 dias pesa mais
+ *  · objetivos ATIVOS — o que ele está perseguindo agora entra no topo
+ */
+var _CUR_PESO_CATEGORIA = { 'concepts': 1.0, 'use-cases': 0.95, 'best-practices': 0.85, 'prompts': 0.7,
+                            'entities': 0.7, 'skills': 0.5, 'sources': 0.4, 'raw': 0.2, '(raiz)': 0.6 };
+
+// EXTRAS do coletor: arquivos de config de agente/repositório que o `ehMetaArquivoWiki` canônico
+// (Semantica.js) ainda não cobre. A lista compartilhada mora LÁ — aqui só o que é específico da
+// curadoria, para as duas não divergirem.
+var _CUR_META_EXTRA = /^(gemini|claude|agents?|indice|sumario|sumário|todo|licen[cç]a|license|_.*)$/i;
+
+function _curEhMeta(arquivo) {
+  var base = String(arquivo || '').replace(/\.md$/i, '').trim();
+  if (typeof ehMetaArquivoWiki === 'function' && ehMetaArquivoWiki(base + '.md')) return true;
+  return _CUR_META_EXTRA.test(base);
+}
+
+/** "concepts/rag-memoria-cumulativa.md" → {categoria:'concepts', tema:'rag memoria cumulativa'} */
+function _curCaminhoParaTema(caminho) {
+  var partes = String(caminho || '').split('/');
+  var arquivo = partes.pop() || '';
+  var categoria = partes.length ? partes[partes.length - 1] : '(raiz)';
+  var base = arquivo.replace(/\.md$/i, '')
+    .replace(/^\d{4}-\d{2}-\d{2}[_-]?/, '')       // tira prefixo de data das páginas de fonte
+    .replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return { categoria: categoria, tema: base, meta: _curEhMeta(arquivo) };
+}
+
+/** Coleta e RANQUEIA os temas do segundo cérebro + objetivos ativos. args {limite, semCache}. */
+function coletarTemas(args) {
+  args = args || {};
+  var limite = Math.min(Number(args.limite) || 20, 60);
+  var p = PropertiesService.getScriptProperties();
+
+  // cache de 12h (o mapa de interesses não muda de hora em hora)
+  if (args.semCache !== true) {
+    try {
+      var ts = Number(p.getProperty('CURADORIA_TEMAS_TS') || 0);
+      if (ts && (Date.now() - ts) < 12 * 3600000) {
+        var cache = JSON.parse(p.getProperty('CURADORIA_TEMAS') || '[]');
+        if (cache.length) return { ok: true, deCache: true, geradoEm: new Date(ts).toISOString(),
+                                   total: cache.length, temas: cache.slice(0, limite) };
+      }
+    } catch (e) {}
+  }
+
+  var agora = Date.now(), porCaminho = {};
+  try {
+    var docs = Firestore.listDocs('wiki_vetores', 1000);
+    (docs || []).forEach(function (d) {
+      var dd = d.dados || {};
+      var c = String(dd.caminho || '');
+      if (!c) return;
+      if (!porCaminho[c]) porCaminho[c] = { trechos: 0, atualizadoEm: 0 };
+      porCaminho[c].trechos++;
+      var at = Number(dd.atualizadoEm || 0);
+      if (at > porCaminho[c].atualizadoEm) porCaminho[c].atualizadoEm = at;
+    });
+  } catch (eV) { return { ok: false, erro: 'Falha ao ler wiki_vetores: ' + eV.message }; }
+
+  var descartados = 0;
+  var pesosFb = _curPesosLer();          // multiplicadores aprendidos pelo 👍/👎 (lidos 1x)
+  var temas = Object.keys(porCaminho).map(function (c) {
+    var info = porCaminho[c], meta = _curCaminhoParaTema(c);
+    if (meta.meta || !meta.tema) { descartados++; return null; }
+    var pesoCat = _CUR_PESO_CATEGORIA[meta.categoria] !== undefined ? _CUR_PESO_CATEGORIA[meta.categoria] : 0.5;
+    var vol = Math.min(info.trechos / 5, 1);                                  // satura em 5 trechos
+    var dias = info.atualizadoEm ? (agora - info.atualizadoEm) / 86400000 : 999;
+    var rec = dias <= 30 ? (1 - dias / 60) : 0;                               // até +0,5 p/ recém-mexido
+    var fb = _curFatorFeedback(pesosFb, meta.categoria, c);
+    return { tema: meta.tema, categoria: meta.categoria, caminho: c, trechos: info.trechos,
+             diasSemMexer: Math.round(dias), fonte: 'segundo-cerebro', feedback: Number(fb.toFixed(2)),
+             peso: Number((pesoCat * (0.5 + 0.5 * vol) * (1 + rec) * fb).toFixed(3)) };
+  }).filter(function (t) { return t; });
+
+  // Objetivos ATIVOS entram no topo — é o que ele está perseguindo AGORA.
+  try {
+    var objs = Firestore.listDocs('objetivos', 50) || [];
+    objs.forEach(function (o) {
+      var d = o.dados || {};
+      if (String(d.status || '') === 'concluido') return;
+      var txt = String(d.objetivo || '').trim();
+      if (!txt) return;
+      var fbO = _curFatorFeedback(pesosFb, 'objetivo', 'objetivos/' + o.id);
+      temas.push({ tema: txt.substring(0, 90), categoria: 'objetivo', caminho: 'objetivos/' + o.id,
+                   trechos: 0, diasSemMexer: d.atualizadoEm ? Math.round((agora - Number(d.atualizadoEm)) / 86400000) : null,
+                   fonte: 'objetivo-ativo', feedback: Number(fbO.toFixed(2)),
+                   peso: Number((1.6 * fbO).toFixed(3)) });
+    });
+  } catch (eO) {}
+
+  temas.sort(function (a, b) { return b.peso - a.peso; });
+  try {
+    p.setProperty('CURADORIA_TEMAS', JSON.stringify(temas.slice(0, 60)));
+    p.setProperty('CURADORIA_TEMAS_TS', String(agora));
+  } catch (eP) {}
+  return { ok: true, deCache: false, total: temas.length, descartadosMeta: descartados, temas: temas.slice(0, limite),
+           resumoPorCategoria: temas.reduce(function (acc, t) { acc[t.categoria] = (acc[t.categoria] || 0) + 1; return acc; }, {}) };
+}
+
+/** Sorteia O TEMA DO DIA. args {semRegistrar}.
+ * Pegar sempre "o topo" faria o Jarvis repetir a mesma categoria pra sempre (o ranking empata muito:
+ * o segundo cérebro foi indexado de uma vez, então recência não separa nada). Sorteio PONDERADO pelo
+ * peso mantém a preferência pelo que importa e ainda gira o assunto; o histórico dos 15 últimos
+ * bloqueia repetição, e a categoria do último bloqueia dois dias seguidos no mesmo balde. */
+function sortearTema(args) {
+  args = args || {};
+  var col = coletarTemas({ limite: 60 });
+  if (!col.ok) return col;
+  var p = PropertiesService.getScriptProperties();
+  var hist = [];
+  try { hist = JSON.parse(p.getProperty('CURADORIA_HISTORICO') || '[]'); } catch (e) {}
+  var recentes = hist.slice(0, 15).map(function (h) { return h.caminho; });
+  var ultimaCat = hist.length ? hist[0].categoria : null;
+
+  var pool = col.temas.filter(function (t) { return recentes.indexOf(t.caminho) === -1; });
+  if (!pool.length) pool = col.temas;                                    // esgotou: recomeça o ciclo
+  var variado = pool.filter(function (t) { return t.categoria !== ultimaCat; });
+  if (variado.length >= 3) pool = variado;                               // só varia se sobrar escolha
+
+  var soma = pool.reduce(function (s, t) { return s + t.peso; }, 0);
+  var r = Math.random() * soma, escolhido = pool[pool.length - 1];
+  for (var i = 0; i < pool.length; i++) { r -= pool[i].peso; if (r <= 0) { escolhido = pool[i]; break; } }
+
+  if (args.semRegistrar !== true) {
+    hist.unshift({ caminho: escolhido.caminho, categoria: escolhido.categoria, em: Date.now() });
+    try { p.setProperty('CURADORIA_HISTORICO', JSON.stringify(hist.slice(0, 30))); } catch (e2) {}
+  }
+  return { ok: true, tema: escolhido, candidatos: pool.length, totalTemas: col.total,
+           evitadosPorRepeticao: col.temas.length - pool.length };
+}
+
+/** Diag do coletor: {limite, semCache} | {sortear:true} | {historico:true} | {limparHistorico:true}. */
+function diagTemas(args) {
+  args = args || {};
+  var p = PropertiesService.getScriptProperties();
+  if (args.limparHistorico) { p.deleteProperty('CURADORIA_HISTORICO'); return { ok: true, limpo: true }; }
+  if (args.historico) { var h = []; try { h = JSON.parse(p.getProperty('CURADORIA_HISTORICO') || '[]'); } catch (e) {} return { ok: true, historico: h }; }
+  if (args.sortear) return sortearTema(args);
+  return coletarTemas(args);
+}
+
+/* ===================== INSIGHT DIÁRIO (curadoria) =====================
+ * UMA chamada de LLM por dia. O tema sai do `sortearTema()` (o mundo dele, não a internet); o
+ * contexto sai do que ELE JÁ ESCREVEU sobre aquilo (busca semântica na wiki). Sem esse contexto o
+ * modelo devolveria um artigo genérico de blog — com ele, devolve algo em cima das notas dele.
+ *
+ * O insight NÃO é falado aqui. Ele fica PENDENTE; a entrega (próxima fatia) decide quando vale
+ * interromper. Separar geração de entrega é o que permite gerar de madrugada e entregar quando ele
+ * chegar em casa — e o que impede o job de virar mais uma notificação no meio do turno.
+ */
+var _INS_KEY = 'CURADORIA_INSIGHT';        // insight pendente/último (objeto)
+var _INS_DIA = 'CURADORIA_INSIGHT_DIA';    // 'YYYY-MM-DD' do último gerado (teto de 1/dia)
+
+function _insHoje() {
+  return Utilities.formatDate(new Date(), Session.getScriptTimeZone() || 'America/Sao_Paulo', 'yyyy-MM-dd');
+}
+
+function _insSlug(s) {
+  return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')   // escape explicito (range literal fica invisivel no fonte)
+    .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').substring(0, 60) || 'insight';
+}
+
+// HOMÓGLIFOS: o modelo às vezes solta letra CIRÍLICA/GREGA no lugar da latina idêntica ("Versiоnamento"
+// com о U+043E). Passa despercebido na tela, mas quebra busca, dedup e slug (vira hífen no nome do
+// arquivo). Troca pelo latino equivalente e remove os invisíveis. NÃO toca em acento português.
+var _INS_HOMO_DE = 'аеорсухіѕј' +
+                   'АВЕКМНОРСТУХЅІЈ' +
+                   'ονρ' +
+                   'ΑΒΕΖΗΙΚΜΝΟΡΤΥΧ';
+var _INS_HOMO_PARA = 'aeopcyxisj' +
+                     'ABEKMHOPCTYXSIJ' +
+                     'ovp' +
+                     'ABEZHIKMNOPTYX';
+
+function _insLimpar(s) {
+  var t = String(s || '')
+    .replace(/[\u200b-\u200d\ufeff]/g, '')     // zero-width
+    .replace(/\u00a0/g, ' ');                  // NBSP
+  var saida = '';
+  for (var i = 0; i < t.length; i++) {
+    var idx = _INS_HOMO_DE.indexOf(t.charAt(i));
+    saida += (idx === -1) ? t.charAt(i) : _INS_HOMO_PARA.charAt(idx);
+  }
+  return saida.trim();
+}
+
+/** Trechos que o dono já escreveu sobre o tema — o insight tem que nascer daqui. */
+function _insContexto(tema) {
+  var trechos = [];
+  try {
+    var res = (typeof Semantica !== 'undefined' && Semantica.buscar) ? (Semantica.buscar(tema, 5) || []) : [];
+    res.forEach(function (r) {
+      var t = String(r.texto || r.trecho || '').trim();
+      if (t) trechos.push({ de: String(r.caminho || r.pagina || '?'), texto: t.substring(0, 900) });
+    });
+  } catch (e) { Logger.log('[Insight] contexto: ' + e.message); }
+  return trechos;
+}
+
+var _INS_SYS =
+  'Você é o Jarvis, assistente pessoal do Bruno — desenvolvedor solo que construiu dois sistemas em ' +
+  'Google Apps Script: o JARVIS (este assistente: voz, automação do Android, RAG, agentes) e o SGT — ' +
+  'Sistema de Gerenciamento de Transportes (ERP de transportadora: CT-e, motoristas, programação, chat com IA).\n' +
+  'Tarefa: a partir do TEMA e dos TRECHOS DAS NOTAS DELE, devolva UMA ideia que valha o tempo dele.\n' +
+  'Regras:\n' +
+  '· Parta do que ele JÁ escreveu. Não repita nem resuma as notas — avance a partir delas.\n' +
+  '· UMA ideia só, concreta e aplicável ao Jarvis ou ao SGT. Nada de lista de possibilidades.\n' +
+  '· Se a ideia não puder virar algo que ele faça nesta semana, escolha outro ângulo do mesmo tema.\n' +
+  '· Sem elogio, sem introdução, sem "que tal". Vá direto.\n' +
+  '· `insight` será FALADO em voz alta: no máximo 45 palavras, português coloquial, sem markdown.\n' +
+  'Responda SÓ com JSON: {"titulo","insight","porque","acao"} — `porque` = por que isso importa pra ' +
+  'ele agora (1 frase); `acao` = o primeiro passo concreto (1 frase, começando com verbo).';
+
+/** Gera o insight do dia. args {forcar, tema, semSalvar}. */
+function gerarInsightDiario(args) {
+  args = args || {};
+  var p = PropertiesService.getScriptProperties();
+  var hoje = _insHoje();
+
+  if (!args.forcar && p.getProperty(_INS_DIA) === hoje) {
+    return { ok: true, pulado: 'ja-gerado-hoje', dia: hoje, insight: _insightAtual() };
+  }
+
+  var lock = LockService.getScriptLock();
+  try { if (!lock.tryLock(10000)) return { ok: false, erro: 'outro job de insight em execução' }; }
+  catch (eL) {}
+
+  try {
+    var tema;
+    if (args.tema) {
+      tema = { tema: String(args.tema), categoria: 'manual', caminho: 'manual/' + _insSlug(args.tema), peso: 1 };
+    } else {
+      var s = sortearTema({});
+      if (!s.ok) return s;
+      tema = s.tema;
+    }
+
+    var ctx = _insContexto(tema.tema);
+    if (!ctx.length && tema.caminho && /\.md$/i.test(tema.caminho)) {
+      // A busca semântica pode falhar (quota de embeddings). Cai para a página inteira.
+      try {
+        var pag = WikiMemoryService.lerWiki(tema.caminho);
+        var corpo = String((pag && (pag.conteudo || pag.texto)) || pag || '');
+        if (corpo && corpo.length > 40) ctx.push({ de: tema.caminho, texto: corpo.substring(0, 3000) });
+      } catch (eR) {}
+    }
+    if (!ctx.length) return { ok: false, erro: 'sem contexto para o tema "' + tema.tema + '" (wiki vazia ou busca indisponível)' };
+
+    var prompt = 'TEMA: ' + tema.tema + '  (pasta: ' + tema.categoria + ')\n\n' +
+      'TRECHOS DAS NOTAS DELE:\n' +
+      ctx.map(function (c, i) { return (i + 1) + ') [' + c.de + ']\n' + c.texto; }).join('\n\n');
+
+    var r = Gemini.gerar({
+      systemInstruction: { parts: [{ text: _INS_SYS }] },
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0.85, responseMimeType: 'application/json' },
+      _thinking: 'low'
+    });
+
+    var bruto = '';
+    try { bruto = r.json.candidates[0].content.parts.map(function (x) { return x.text || ''; }).join(''); } catch (eT) {}
+    var obj = null;
+    try { obj = JSON.parse(bruto); } catch (eJ) {
+      var m = bruto.match(/\{[\s\S]*\}/);
+      if (m) { try { obj = JSON.parse(m[0]); } catch (eJ2) {} }
+    }
+    if (!obj || !obj.insight) return { ok: false, erro: 'resposta não-JSON do modelo', bruto: String(bruto).substring(0, 300) };
+
+    var insight = {
+      id: Utilities.getUuid().split('-')[0],
+      dia: hoje, criadoEm: Date.now(),
+      tema: tema.tema, categoria: tema.categoria, caminhoTema: tema.caminho,
+      titulo: _insLimpar(obj.titulo || tema.tema),
+      insight: _insLimpar(obj.insight),
+      porque: _insLimpar(obj.porque),
+      acao: _insLimpar(obj.acao),
+      fontes: ctx.map(function (c) { return c.de; }).filter(function (v, i, a) { return a.indexOf(v) === i; }),
+      modelo: r.model, tier: r.tier,
+      status: 'pendente', feedback: null, entregueEm: null
+    };
+
+    if (args.semSalvar !== true) {
+      insight.wiki = _insArquivar(insight);
+      try { p.setProperty(_INS_KEY, JSON.stringify(insight)); p.setProperty(_INS_DIA, hoje); } catch (eP) {}
+    }
+    return { ok: true, insight: insight };
+  } catch (e) {
+    return { ok: false, erro: e.message };
+  } finally {
+    try { lock.releaseLock(); } catch (eU) {}
+  }
+}
+
+/** Arquiva no segundo cérebro. O valor da curadoria é cumulativo: em um ano são ~365 páginas
+ *  ligadas às notas de origem — e o próprio índice semântico passa a indexá-las. */
+function _insArquivar(ins) {
+  try {
+    var caminho = 'insights/' + ins.dia + '-' + _insSlug(ins.titulo) + '.md';
+    var md = '# ' + ins.titulo + '\n\n' +
+      '> Insight gerado pelo Jarvis em ' + ins.dia + ' · tema: **' + ins.tema + '** (' + ins.categoria + ')\n\n' +
+      ins.insight + '\n\n' +
+      (ins.porque ? '**Por que agora:** ' + ins.porque + '\n\n' : '') +
+      (ins.acao ? '**Primeiro passo:** ' + ins.acao + '\n\n' : '') +
+      '---\n\nBaseado em:\n' + ins.fontes.map(function (f) { return '- ' + f; }).join('\n') + '\n';
+    WikiMemoryService.escreverWiki(caminho, md);
+    return caminho;
+  } catch (e) { Logger.log('[Insight] arquivar: ' + e.message); return null; }
+}
+
+function _insightAtual() {
+  try { return JSON.parse(PropertiesService.getScriptProperties().getProperty(_INS_KEY) || 'null'); }
+  catch (e) { return null; }
+}
+
+/** O insight ainda NÃO entregue (usado pela camada de entrega). */
+function insightPendente() {
+  var i = _insightAtual();
+  return (i && i.status === 'pendente') ? i : null;
+}
+
+/** Marca como entregue (chamado pela camada de entrega). */
+function marcarInsightEntregue(canal) {
+  var i = _insightAtual(); if (!i) return null;
+  i.status = 'entregue'; i.entregueEm = Date.now(); i.canal = canal || '?';
+  try { PropertiesService.getScriptProperties().setProperty(_INS_KEY, JSON.stringify(i)); } catch (e) {}
+  try { CacheService.getScriptCache().put('INS_FEEDBACK_ABERTO', i.id, 1800); } catch (e2) {}  // 30 min
+  return i;
+}
+
+/* ===================== FEEDBACK 👍/👎 DA CURADORIA =====================
+ * O coletor sabe SOBRE O QUE ele escreveu — não sabe o que ele quer OUVIR. O voto é o único
+ * sinal que separa as duas coisas. Ajusta DOIS níveis:
+ *   · CATEGORIA — aprende rápido (poucos baldes, muito sinal por voto): "prompts nunca rende".
+ *   · TEMA      — impede insistir num assunto específico que já deu errado.
+ * Multiplicativo e LIMITADO a [0,25 … 3]: um dia ruim não mata uma categoria para sempre, e um
+ * elogio não faz o Jarvis falar do mesmo assunto pelo resto do ano. Um 👎 também joga o tema no
+ * histórico de sorteio, tirando-o do páreo pelas próximas 15 rodadas.
+ */
+var _CUR_PESOS = 'CURADORIA_PESOS';
+var _FB_MIN = 0.25, _FB_MAX = 3.0;
+// O voto é sobre UM insight. Atribuí-lo inteiro à categoria generaliza demais a partir de n=1:
+// no teste, um 👎 sozinho varreu as 65 páginas de `concepts` do topo. Então o TEMA leva o golpe
+// cheio (é o que ele rejeitou) e a CATEGORIA se move devagar, precisando de votos repetidos e
+// consistentes para mudar de patamar (~5 votos no mesmo sentido para chegar a 0,5×).
+var _FB_UP = 1.35, _FB_DOWN = 0.6;            // tema
+var _FB_UP_CAT = 1.12, _FB_DOWN_CAT = 0.88;   // categoria
+
+function _curPesosLer() {
+  try { return JSON.parse(PropertiesService.getScriptProperties().getProperty(_CUR_PESOS) || '{}') || {}; }
+  catch (e) { return {}; }
+}
+function _curLimitar(v) { return Math.max(_FB_MIN, Math.min(_FB_MAX, Number(v) || 1)); }
+
+/** Multiplicador aprendido de um tema (categoria × tema). `pesos` vem pronto p/ não reler a property. */
+function _curFatorFeedback(pesos, categoria, caminho) {
+  var pc = Number(pesos['cat:' + categoria]);   if (!isFinite(pc) || pc <= 0) pc = 1;
+  var pt = Number(pesos['tema:' + caminho]);    if (!isFinite(pt) || pt <= 0) pt = 1;
+  return pc * pt;
+}
+
+/** Registra o voto no ÚLTIMO insight entregue. args {voto:'up'|'down'}. */
+function registrarFeedbackInsight(args) {
+  args = args || {};
+  var v = String(args.voto || '').toLowerCase().trim();
+  var up   = /^(up|\+|1|s|sim|gostei|bom|boa|otim|util|excelente|massa|top)/.test(v);
+  var down = /^(down|-|0|n|nao|ruim|inutil|pessim|fraco|obvio|irrelevante)/.test(v);
+  if (!up && !down) return { ok: false, erro: 'voto inválido — use up ou down' };
+
+  var ins = _insightAtual();
+  if (!ins) return { ok: false, erro: 'nenhum insight para avaliar' };
+  if (ins.status !== 'entregue') return { ok: false, erro: 'o insight ainda não foi entregue' };
+  if (ins.feedback) return { ok: false, erro: 'esse insight já foi avaliado', feedback: ins.feedback };
+
+  var p = PropertiesService.getScriptProperties();
+  var pesos = _curPesosLer();
+  var kCat = 'cat:' + ins.categoria, kTema = 'tema:' + ins.caminhoTema;
+  pesos[kCat]  = _curLimitar((Number(pesos[kCat])  || 1) * (up ? _FB_UP_CAT : _FB_DOWN_CAT));
+  pesos[kTema] = _curLimitar((Number(pesos[kTema]) || 1) * (up ? _FB_UP     : _FB_DOWN));
+  try { p.setProperty(_CUR_PESOS, JSON.stringify(pesos)); } catch (e) {}
+
+  ins.feedback = up ? 'up' : 'down';
+  ins.feedbackEm = Date.now();
+  try { p.setProperty(_INS_KEY, JSON.stringify(ins)); } catch (e2) {}
+  try { p.deleteProperty('CURADORIA_TEMAS_TS'); } catch (e3) {}   // pesos mudaram → ranking obsoleto
+  try { CacheService.getScriptCache().remove('INS_FEEDBACK_ABERTO'); } catch (e4) {}
+
+  // 👎: além do peso, tira este tema do sorteio pelas próximas rodadas.
+  if (!up) {
+    try {
+      var hist = JSON.parse(p.getProperty('CURADORIA_HISTORICO') || '[]');
+      hist.unshift({ caminho: ins.caminhoTema, categoria: ins.categoria, em: Date.now(), via: 'feedback' });
+      p.setProperty('CURADORIA_HISTORICO', JSON.stringify(hist.slice(0, 30)));
+    } catch (e5) {}
+  }
+  return { ok: true, voto: ins.feedback, tema: ins.tema, categoria: ins.categoria,
+           pesoCategoria: pesos[kCat], pesoTema: pesos[kTema] };
+}
+
+/** Há um insight entregue esperando voto? (janela de 30 min p/ aceitar "gostei" sozinho) */
+function _insFeedbackAberto() {
+  var ins = _insightAtual();
+  if (!ins || ins.status !== 'entregue' || ins.feedback) return null;
+  return ins;
+}
+function _insDentroDaJanelaFeedback() {
+  try { return CacheService.getScriptCache().get('INS_FEEDBACK_ABERTO') === (_insightAtual() || {}).id; }
+  catch (e) { return false; }
+}
+
+/** Diag: {} estado · {voto} vota · {limparPesos:true}. */
+function diagFeedbackCuradoria(args) {
+  args = args || {};
+  var p = PropertiesService.getScriptProperties();
+  if (args.limparPesos) { p.deleteProperty(_CUR_PESOS); p.deleteProperty('CURADORIA_TEMAS_TS'); return { ok: true, limpo: true }; }
+  if (args.voto) return registrarFeedbackInsight(args);
+  var ins = _insightAtual() || {};
+  return { ok: true, pesos: _curPesosLer(), aguardandoVoto: !!_insFeedbackAberto(),
+           janelaAberta: _insDentroDaJanelaFeedback(),
+           ultimoInsight: { id: ins.id, tema: ins.tema, categoria: ins.categoria,
+                            status: ins.status, feedback: ins.feedback || null } };
+}
+
+/* ── ENTREGA CONTEXTUAL ────────────────────────────────────────────────────────────────
+ * Gerar é barato; INTERROMPER é caro. A entrega não segue a transição "chegou em casa": no turno
+ * da tarde (14:00–23:00) ele chega em casa ~23:40, dentro do silêncio noturno — a oferta nunca
+ * sairia. O que vale é o ESTADO: em casa + fora do turno. No turno da tarde isso é a manhã dele;
+ * no da manhã, a noite. Avaliado a cada telemetria (15 min), não só na transição.
+ *
+ * E é OFERTA, não despejo: "tenho uma ideia sobre X, quer ouvir?". Se ele ignorar, custou 7
+ * palavras; o insight continua pendente para o próximo dia. O "não" é sinal de feedback.
+ */
+var _INS_OFERTA = 'insight_oferta';   // chave de cache da oferta aguardando resposta
+
+/** Fora do expediente? Deriva dos alertas de ponto (mesma fonte do briefing) — não hardcoda turno. */
+function _insForaDoTurno() {
+  try {
+    if (typeof AlertasVoz === 'undefined' || !AlertasVoz.listar) return true;
+    var agora = new Date(), dow = agora.getDay(), min = agora.getHours() * 60 + agora.getMinutes();
+    var pts = AlertasVoz.listar().filter(function (a) {
+      if (a.tag !== 'ponto') return false;
+      var dias = Array.isArray(a.dias) ? a.dias : String(a.dias || '').split(',').map(Number);
+      return dias.indexOf(dow) !== -1;
+    }).map(function (a) { return Number(a.hora) * 60 + Number(a.minuto || 0); })
+      .sort(function (x, y) { return x - y; });
+    if (!pts.length) return true;                       // sem ponto hoje (fim de semana) = livre
+    return min < pts[0] || min > pts[pts.length - 1];
+  } catch (e) { return true; }
+}
+
+/** Presença atual, lida do snapshot da máquina de transições (fonte única). */
+function _insLocalAtual() {
+  try {
+    var s = JSON.parse(PropertiesService.getScriptProperties().getProperty('PROATIVO_SNAPSHOT') || '{}');
+    return s.local || 'desconhecido';
+  } catch (e) { return 'desconhecido'; }
+}
+
+/** Decide se OFERECE o insight agora. args {local, simular}. */
+function _avaliarEntregaInsight(local, opts) {
+  opts = opts || {};
+  var ins = insightPendente();
+  if (!ins) return { ofereceu: false, motivo: 'sem insight pendente' };
+  if (local !== 'casa') return { ofereceu: false, motivo: 'não está em casa (' + local + ')' };
+  if (!_insForaDoTurno()) return { ofereceu: false, motivo: 'dentro do expediente' };
+
+  var texto = 'Bruno, tenho uma ideia sobre ' + ins.tema + '. Quer ouvir?';
+  // cooldown longo: no máximo 1 oferta a cada 8h, e o orçamento diário de interrupções ainda manda.
+  var r = _falarProativo(_INS_OFERTA, texto, { cooldownMin: 480, simular: opts.simular });
+  if (r.falou !== true && r.falou !== 'simulado') {
+    return { ofereceu: false, motivo: r.bloqueado || 'falha ao falar' };
+  }
+  if (!opts.simular) {
+    try { CacheService.getScriptCache().put('INS_OFERTA_ID', ins.id, 1200); } catch (e) {}  // 20 min
+  }
+  return { ofereceu: true, texto: texto, insightId: ins.id };
+}
+
+/** Há uma oferta aguardando "sim"? */
+function _insOfertaAberta() {
+  try {
+    var id = CacheService.getScriptCache().get('INS_OFERTA_ID');
+    if (!id) return null;
+    var ins = _insightAtual();
+    return (ins && ins.id === id && ins.status === 'pendente') ? ins : null;
+  } catch (e) { return null; }
+}
+
+/** Responde ao "sim"/"não" da oferta. Devolve a fala, ou null se não havia oferta aberta. */
+function _responderOfertaInsight(aceitou) {
+  var ins = _insOfertaAberta();
+  if (!ins) return null;
+  try { CacheService.getScriptCache().remove('INS_OFERTA_ID'); } catch (e) {}
+  if (!aceitou) {
+    // "não" agora ≠ ideia ruim. Continua pendente; só não insiste hoje.
+    return 'Sem problema. Guardei para depois.';
+  }
+  marcarInsightEntregue('voz');
+  return ins.insight + (ins.acao ? ' Primeiro passo: ' + ins.acao : '');
+}
+
+/** Diag da entrega: {} decisão agora | {simular:false} entrega de verdade | {responder:'sim'|'nao'}. */
+function diagEntregaInsight(args) {
+  args = args || {};
+  if (args.responder) {
+    var fala = _responderOfertaInsight(/^(s|sim|quero|manda|pode)/i.test(String(args.responder)));
+    return { ok: true, tinhaOferta: fala !== null, fala: fala };
+  }
+  var local = args.local || _insLocalAtual();
+  return { ok: true, local: local, foraDoTurno: _insForaDoTurno(),
+           pendente: !!insightPendente(), ofertaAberta: !!_insOfertaAberta(),
+           decisao: _avaliarEntregaInsight(local, { simular: args.simular !== false }) };
+}
+
+/** Handler do gatilho diário. */
+function jobInsightDiario() {
+  try { if (typeof Heartbeat !== 'undefined' && Heartbeat.bater) Heartbeat.bater('insight'); } catch (e) {}
+  var r = gerarInsightDiario({});
+  Logger.log('[Insight] ' + JSON.stringify(r).substring(0, 400));
+  return r;
+}
+
+/** Liga/desliga o gatilho diário. args {hora (0-23, padrão 5), desligar}. */
+function configurarInsightDiario(args) {
+  args = args || {};
+  var removidos = 0;
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'jobInsightDiario') { try { ScriptApp.deleteTrigger(t); removidos++; } catch (e) {} }
+  });
+  if (args.desligar) return { ok: true, ligado: false, removidos: removidos };
+  var hora = Math.min(Math.max(Number(args.hora !== undefined ? args.hora : 5), 0), 23);
+  ScriptApp.newTrigger('jobInsightDiario').timeBased().everyDays(1).atHour(hora).create();
+  try { PropertiesService.getScriptProperties().setProperty('CURADORIA_HORA', String(hora)); } catch (e) {}
+  return { ok: true, ligado: true, hora: hora, removidos: removidos };
+}
+
+/** Diag: {} status | {gerar:true[,forcar,tema]} | {limpar:true}. */
+function diagInsight(args) {
+  args = args || {};
+  var p = PropertiesService.getScriptProperties();
+  if (args.limpar) { p.deleteProperty(_INS_KEY); p.deleteProperty(_INS_DIA); return { ok: true, limpo: true }; }
+  if (args.gerar) return gerarInsightDiario(args);
+  var trigs = [];
+  try {
+    trigs = ScriptApp.getProjectTriggers()
+      .filter(function (t) { return t.getHandlerFunction() === 'jobInsightDiario'; })
+      .map(function (t) { return t.getHandlerFunction(); });
+  } catch (e) {}
+  return { ok: true, dia: p.getProperty(_INS_DIA) || null, hoje: _insHoje(),
+           horaConfigurada: p.getProperty('CURADORIA_HORA') || null,
+           gatilhoAtivo: trigs.length > 0, atual: _insightAtual() };
+}
+
 /* ===================== LEMBRETES CONDICIONAIS (por presença) =====================
  * "Quando eu chegar em casa, me lembre de pagar o boleto." A peça difícil (saber ONDE ele está) já
  * existe — aqui é só uma fila pendurada nas transições de presença.
@@ -3087,7 +3675,7 @@ function _dentroDoSilencio(quando) {
   return (ini <= fim) ? (atual >= ini && atual < fim) : (atual >= ini || atual < fim);
 }
 
-/** Cria um lembrete condicional. args {gatilho, texto, validadeDias?}. */
+/** Cria um lembrete condicional. args {gatilho, texto, validadeDias?, repetir?}. */
 function criarLembreteCondicional(args) {
   args = args || {};
   var g = String(args.gatilho || '').trim();
@@ -3095,8 +3683,10 @@ function criarLembreteCondicional(args) {
   var texto = String(args.texto || '').trim();
   if (!texto) return { ok: false, erro: 'Informe o texto do lembrete.' };
   var arr = _lembLer();
+  // repetir:true = não se consome ao disparar (vale até vencer a validade). Veio do store antigo.
   var item = { id: Utilities.getUuid().slice(0, 8), gatilho: g, texto: texto,
-               validadeDias: Number(args.validadeDias || 7), criadoEm: Date.now(), ativo: true, disparadoEm: null };
+               validadeDias: Number(args.validadeDias || 7), repetir: args.repetir === true,
+               criadoEm: Date.now(), ativo: true, disparadoEm: null };
   arr.push(item); _lembSalvar(arr);
   return { ok: true, lembrete: item, pendentes: arr.filter(function (x) { return x.ativo !== false; }).length };
 }
@@ -3144,8 +3734,8 @@ function _dispararLembretesDe(gatilho, opts) {
         : Jarvis.controlarDispositivo({ acao: 'falar', texto: 'Lembrete, Bruno: ' + l.texto });
     }
     var ok = !!(res && res.status === 'success');
-    if (ok) { l.ativo = false; l.disparadoEm = agora; mudou = true; }
-    entregues.push({ id: l.id, texto: l.texto, canal: noite ? 'notificacao' : 'voz', ok: ok });
+    if (ok) { if (l.repetir !== true) l.ativo = false; l.disparadoEm = agora; mudou = true; }
+    entregues.push({ id: l.id, texto: l.texto, canal: noite ? 'notificacao' : 'voz', ok: ok, repetir: l.repetir === true });
     try {
       if (typeof Jarvis !== 'undefined' && Jarvis.registrarEvento) {
         Jarvis.registrarEvento({ tool: 'lembrete:' + gatilho, ms: 0, ok: ok, resumo: String(l.texto).substring(0, 120) });
@@ -3156,20 +3746,48 @@ function _dispararLembretesDe(gatilho, opts) {
   return { entregues: entregues, expirados: expirados };
 }
 
-/** Texto livre → lembrete condicional. Ex.: "quando eu chegar em casa, me lembre de pagar o boleto". */
+/** Texto livre → lembrete condicional. Cobre as DUAS ordens:
+ *   (a) "quando eu chegar em casa, me lembre de pagar o boleto"
+ *   (b) "me lembre de pagar o boleto quando eu chegar em casa"
+ * A forma (b) e os verbos no presente ("chego"/"saio") vinham do parser do store antigo
+ * LEMBRETES_PRESENCA, removido na consolidação — sem portá-los, consolidar seria regressão.
+ * O texto é recortado de uma cópia SEM ACENTO mas COM A CAIXA ORIGINAL (toLowerCase não muda o
+ * comprimento), então "ligar pro Emerson" não volta mais como "ligar pro emerson".
+ */
 function _interpretarLembreteCondicional(msg) {
-  var s = String(msg || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
-  // preposições cobertas: no/na/nos/nas, o/a/os/as, em, do/da/de ("ao sair DE casa" faltava)
-  var m = s.match(/^(?:quando|assim que|se|ao|logo que)\s+(?:eu\s+)?(chegar|sair|voltar|estiver)\s+(?:n?[oa]s?\s+|em\s+|d[eoa]\s+)?(casa|lar|trabalho|servico|firma|empresa)\b[\s,.:;-]*(.*)$/);
-  if (!m) return null;
-  var verbo = m[1], lugar = m[2], resto = m[3] || '';
-  var local = /casa|lar/.test(lugar) ? 'casa' : 'trabalho';
-  var gatilho = (verbo === 'sair') ? ('saiu_' + local) : ('chegou_' + local);
-  // remove o "me lembre de / me avise de / lembra de..." da frente do conteúdo
-  var texto = resto.replace(/^(?:me\s+)?(?:lembr\w+|avis\w+|recorde|fala\w*|diga?)\s*(?:-?me)?\s*(?:de\s+|para\s+|pra\s+|que\s+)?/, '').trim();
-  texto = texto.replace(/[\s.,;:!?]+$/, '');
-  if (!texto || texto.length < 2) return null;
-  return { gatilho: gatilho, texto: texto };
+  var base = String(msg || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+  var s = base.toLowerCase();
+  var VERBO = '(chegar|chego|sair|saio|voltar|volto|estiver)';
+  var LUGAR = '(casa|lar|trabalho|servico|firma|empresa|escritorio)';
+  var PREP  = '(?:n?[oa]s?\\s+|em\\s+|d[eoa]\\s+|para\\s+|pra\\s+)?';
+  var COND  = '(?:quando|assim que|se|ao|logo que)';
+
+  function alvo(verbo, lugar) {
+    var local = /casa|lar/.test(lugar) ? 'casa' : 'trabalho';
+    return (/^(sair|saio)$/.test(verbo) ? 'saiu_' : 'chegou_') + local;
+  }
+  // tira o "me lembre de / me avise de / lembra de..." da frente do conteúdo
+  function limpar(t) {
+    return String(t || '')
+      .replace(/^(?:me\s+)?(?:lembr\w+|avis\w+|recorde|fala\w*|diga?)\s*(?:-?me)?\s*(?:de\s+|para\s+|pra\s+|que\s+)?/i, '')
+      .replace(/[\s.,;:!?]+$/, '').trim();
+  }
+
+  // (a) condição na frente
+  var m = s.match(new RegExp('^' + COND + '\\s+(?:eu\\s+)?' + VERBO + '\\s+' + PREP + LUGAR + '\\b[\\s,.:;-]*(.*)$'));
+  if (m) {
+    var t1 = limpar(base.slice(base.length - m[3].length));
+    return t1.length >= 2 ? { gatilho: alvo(m[1], m[2]), texto: t1 } : null;
+  }
+  // (b) condição no fim
+  m = s.match(new RegExp('^(?:me\\s+)?(?:lembr\\w+|avis\\w+)\\s*(?:-?me)?\\s*(?:de|pra|para|que)?\\s*(.+?)\\s+' +
+                         COND + '\\s+(?:eu\\s+)?' + VERBO + '\\s+' + PREP + LUGAR + '\\b'));
+  if (m) {
+    var i = s.indexOf(m[1]);
+    var t2 = limpar(base.substr(i, m[1].length));
+    return t2.length >= 2 ? { gatilho: alvo(m[2], m[3]), texto: t2 } : null;
+  }
+  return null;
 }
 
 /** Diag dos lembretes: sem args lista; {gatilho} dispara (simulado por padrão). */
@@ -3364,17 +3982,6 @@ function _avaliarEventosProativos(tel, opts) {
         disparos.push({ evento: 'saiu_casa', ignorado: 'ponto distante (' + minPonto + ' min)' });
       }
     }
-    // LEMBRETES CONDICIONAIS: uma transição pode valer por DOIS eventos (casa→trabalho = saiu_casa
-    // E chegou_trabalho). As regras acima usam else-if (só uma fala); os lembretes checam ambos.
-    var _evs = [];
-    if (transicao.de === 'casa') _evs.push('saiu_casa');
-    if (transicao.de === 'trabalho') _evs.push('saiu_trabalho');
-    if (transicao.para === 'casa') _evs.push('chegou_casa');
-    if (transicao.para === 'trabalho') _evs.push('chegou_trabalho');
-    _evs.forEach(function (ev) {
-      var rl = _dispararLembretes(ev, { simular: simular });
-      if (rl) disparos.push({ evento: 'lembretes', gatilho: ev, resultado: rl });
-    });
   }
 
   // ── REGRA de bateria (mantém o rearme por ciclo de carga + agora sob governança) ──
@@ -3393,6 +4000,12 @@ function _avaliarEventosProativos(tel, opts) {
       disparos.push({ evento: 'bateria_baixa', nivel: nivel, limite: limite, critica: critica, resultado: rBat });
     }
   }
+
+  // ── CURADORIA: oferece o insight do dia se o momento for bom (em casa + fora do expediente).
+  // Fica por ÚLTIMO de propósito: bateria, ponto e lembretes pedidos por ele valem mais que uma
+  // ideia. Se algum deles já falou, o orçamento diário provavelmente barra esta — e tudo bem.
+  var rIns = _avaliarEntregaInsight(localNovo, { simular: simular });
+  if (rIns.ofereceu) disparos.push({ evento: 'insight_oferta', texto: rIns.texto, insightId: rIns.insightId });
 
   // ── grava o snapshot novo ──
   if (!simular) {
@@ -3417,105 +4030,47 @@ function diagEventoProativo(args) {
   return { ok: true, simulado: simular, telemetriaUsada: tel, resultado: r, estado: diagProativoEstado().estado };
 }
 
-/* ===================== LEMBRETES CONDICIONAIS POR PRESENÇA =====================
- * "Quando eu chegar em casa, me lembre de pagar o boleto." A peça difícil (saber ONDE ele está) já
- * existe — isto aqui é só a FILA + o gancho na máquina de transições.
- * Gatilhos: chegou_casa | chegou_trabalho | saiu_casa | saiu_trabalho.
- * ⚠️ Estes NÃO passam pelo orçamento de interrupções: o dono PEDIU explicitamente. Ruído proativo é
- * o que precisa de teto; lembrete pedido é serviço. Vários do mesmo gatilho viram UMA fala só.
+/* ===================== LEMBRETES POR PRESENÇA — CONSOLIDADO =====================
+ * Havia DOIS stores paralelos para o mesmo recurso: LEMBRETES_PRESENCA (este) e
+ * LEMBRETES_CONDICIONAIS. Os dois dispatchers rodavam na MESMA transição, lendo filas diferentes,
+ * e na cadeia de voz o parser antigo vinha primeiro — então a frase falada caía num store e a
+ * ferramenta do Jarvis escrevia no outro. Consolidado em LEMBRETES_CONDICIONAIS, que tem validade
+ * em dias e cai para NOTIFICAÇÃO dentro do silêncio noturno.
+ * O que sobrou aqui são DELEGAÇÕES: os nomes antigos continuam válidos e escrevem na fila única.
  */
-var _LEMBRETES_KEY = 'LEMBRETES_PRESENCA';
-function _lerLembretes() {
-  try { return JSON.parse(PropertiesService.getScriptProperties().getProperty(_LEMBRETES_KEY) || '[]'); }
-  catch (e) { return []; }
-}
-function _salvarLembretes(arr) {
-  PropertiesService.getScriptProperties().setProperty(_LEMBRETES_KEY, JSON.stringify(arr || []));
-}
+var _LEMBRETES_KEY = 'LEMBRETES_PRESENCA';   // mantido só para a migração ler o resíduo
 
-/** Cria um lembrete. args {gatilho, texto, validadeDias?=7, repetir?=false} */
-function criarLembretePresenca(args) {
+/** Move o que restou do store antigo para a fila única. Idempotente: esvazia a origem. */
+function migrarLembretesPresenca(args) {
   args = args || {};
-  var GAT = ['chegou_casa', 'chegou_trabalho', 'saiu_casa', 'saiu_trabalho'];
-  var g = String(args.gatilho || '').trim();
-  var texto = String(args.texto || '').trim();
-  if (GAT.indexOf(g) === -1) return { ok: false, erro: 'gatilho inválido', validos: GAT };
-  if (!texto) return { ok: false, erro: 'informe o texto do lembrete' };
-  var dias = Number(args.validadeDias || 7);
-  var item = { id: Utilities.getUuid().slice(0, 8), gatilho: g, texto: texto,
-               criadoEm: Date.now(), validadeAte: Date.now() + dias * 86400000,
-               repetir: args.repetir === true, ativo: true };
-  var arr = _lerLembretes(); arr.push(item); _salvarLembretes(arr);
-  return { ok: true, lembrete: item, total: arr.length };
-}
-
-/** Lista os lembretes ativos (limpa os vencidos de passagem). */
-function listarLembretesPresenca() {
-  var agora = Date.now(), arr = _lerLembretes();
-  var vivos = arr.filter(function (l) { return l.ativo !== false && Number(l.validadeAte || 0) > agora; });
-  if (vivos.length !== arr.length) _salvarLembretes(vivos);      // faxina automática dos vencidos
-  return { ok: true, total: vivos.length, lembretes: vivos.map(function (l) {
-    return { id: l.id, gatilho: l.gatilho, texto: l.texto, repetir: !!l.repetir,
-             expiraEm: new Date(l.validadeAte).toISOString().slice(0, 10) }; }) };
-}
-
-function removerLembretePresenca(args) {
-  var id = String((args && (args.id || args)) || '');
-  var arr = _lerLembretes(), antes = arr.length;
-  var novo = arr.filter(function (l) { return l.id !== id; });
-  _salvarLembretes(novo);
-  return { ok: antes !== novo.length, removido: id, restantes: novo.length };
-}
-
-/** Dispara os lembretes de um gatilho: junta tudo numa fala só e consome os de uma vez. */
-function _dispararLembretes(gatilho, opts) {
-  opts = opts || {};
-  var agora = Date.now();
-  var arr = _lerLembretes();
-  var alvo = arr.filter(function (l) {
-    return l.ativo !== false && l.gatilho === gatilho && Number(l.validadeAte || 0) > agora;
+  var p = PropertiesService.getScriptProperties();
+  var antigos = [];
+  try { antigos = JSON.parse(p.getProperty(_LEMBRETES_KEY) || '[]'); } catch (e) { antigos = []; }
+  var agora = Date.now(), migrados = [], ignorados = [];
+  antigos.forEach(function (l) {
+    var vivo = l.ativo !== false && Number(l.validadeAte || 0) > agora;
+    if (!vivo) { ignorados.push({ texto: l.texto, motivo: 'vencido ou inativo' }); return; }
+    // validadeAte (timestamp) -> validadeDias (int), o formato da fila única
+    var dias = Math.max(1, Math.ceil((Number(l.validadeAte) - agora) / 86400000));
+    var r = args.simular === true
+      ? { ok: true, lembrete: { id: '(simulado)' } }
+      : criarLembreteCondicional({ gatilho: l.gatilho, texto: l.texto, validadeDias: dias, repetir: l.repetir === true });
+    if (r.ok) migrados.push({ de: l.id, para: r.lembrete.id, gatilho: l.gatilho, texto: l.texto, dias: dias, repetir: l.repetir === true });
+    else ignorados.push({ texto: l.texto, motivo: r.erro || 'falha' });
   });
-  if (!alvo.length) return null;
-  var txt = alvo.length === 1
-    ? ('Bruno, você pediu para lembrar: ' + alvo[0].texto)
-    : ('Bruno, você pediu para lembrar de ' + alvo.length + ' coisas: ' +
-       alvo.map(function (l, i) { return (i + 1) + ') ' + l.texto; }).join('. ') + '.');
-  if (opts.simular === true) return { gatilho: gatilho, quantos: alvo.length, texto: txt, falou: 'simulado' };
-  var res = (typeof Jarvis !== 'undefined' && Jarvis.controlarDispositivo)
-    ? Jarvis.controlarDispositivo({ acao: 'falar', texto: txt }) : null;
-  var ok = !!(res && res.status === 'success');
-  if (ok) {   // consome os de uma vez (os com repetir:true permanecem)
-    var ids = {}; alvo.forEach(function (l) { if (!l.repetir) ids[l.id] = 1; });
-    _salvarLembretes(arr.filter(function (l) { return !ids[l.id]; }));
-  }
-  try {
-    if (typeof Jarvis !== 'undefined' && Jarvis.registrarEvento) {
-      Jarvis.registrarEvento({ tool: 'lembrete:' + gatilho, ms: 0, ok: ok, resumo: txt.substring(0, 120) });
-    }
-  } catch (eL) {}
-  return { gatilho: gatilho, quantos: alvo.length, texto: txt, falou: ok };
+  if (args.simular !== true) p.deleteProperty(_LEMBRETES_KEY);
+  return { ok: true, simulado: args.simular === true, encontrados: antigos.length,
+           migrados: migrados, ignorados: ignorados };
 }
 
-/** Texto livre → {gatilho, texto}. Aceita as duas ordens ("quando... me lembre" e "me lembre... quando"). */
-function _interpretarLembretePresenca(msg) {
-  var s = String(msg || '').trim();
-  var norm = s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  var mapa = function (verbo, lugar) {
-    var chegou = /chegar|chego|voltar|volto/.test(verbo);
-    var casa = /casa|lar/.test(lugar);
-    return (chegou ? 'chegou_' : 'saiu_') + (casa ? 'casa' : 'trabalho');
-  };
-  // (a) "quando eu chegar em casa, me lembre de X"
-  var m = norm.match(/^quando\s+(?:eu\s+)?(chegar|chego|sair|saio|voltar|volto)\s*(?:em|no|na|de|do|da|para|pra)?\s*(casa|lar|trabalho|servico|firma|escritorio)\s*[,.]?\s*(?:me\s+)?(?:lembr\w+|avis\w+)\s*(?:de|pra|para|que)?\s*(.+)$/);
-  if (m) return { gatilho: mapa(m[1], m[2]), texto: s.slice(s.length - m[3].length).trim() };
-  // (b) "me lembre de X quando eu chegar em casa"
-  m = norm.match(/^(?:me\s+)?(?:lembr\w+|avis\w+)\s*(?:me\s+)?(?:de|pra|para|que)?\s*(.+?)\s+quando\s+(?:eu\s+)?(chegar|chego|sair|saio|voltar|volto)\s*(?:em|no|na|de|do|da)?\s*(casa|lar|trabalho|servico|firma|escritorio)\b/);
-  if (m) {
-    var ini = norm.indexOf(m[1]);
-    return { gatilho: mapa(m[2], m[3]), texto: s.substr(ini, m[1].length).trim() };
-  }
-  return null;
+// ── Nomes antigos, agora delegando para a fila única ──
+function criarLembretePresenca(args) { return criarLembreteCondicional(args); }
+function listarLembretesPresenca() { return listarLembretesCondicionais(); }
+function removerLembretePresenca(args) {
+  return cancelarLembreteCondicional({ id: String((args && (args.id || args)) || '') });
 }
+function _dispararLembretes(gatilho, opts) { return _dispararLembretesDe(gatilho, opts); }
+function _interpretarLembretePresenca(msg) { return _interpretarLembreteCondicional(msg); }
 
 /** Diag dos lembretes. args {} lista · {gatilho,texto} cria · {remover:id} · {disparar:gatilho, simular}. */
 function diagLembretePresenca(args) {
@@ -3572,6 +4127,13 @@ function configurarProativo(args) {
   if (args.rearmar === true) p.deleteProperty('PROATIVO_BAT_AVISADO');
   if (args.resetarSnapshot === true) p.deleteProperty('PROATIVO_SNAPSHOT');
   if (args.zerarOrcamento === true) { p.deleteProperty('PROATIVO_DIA'); p.deleteProperty('PROATIVO_CONT'); }
+  // limparCooldown: true = todos · 'insight_oferta' = só esse. Serve para testar sem esperar horas.
+  if (args.limparCooldown) {
+    var chs = (args.limparCooldown === true)
+      ? ['chegou_casa', 'chegou_trabalho', 'saiu_casa', 'bateria_baixa', _INS_OFERTA]
+      : [String(args.limparCooldown)];
+    chs.forEach(function (c) { p.deleteProperty('PROATIVO_CD_' + c); });
+  }
   return diagProativoEstado();
 }
 
@@ -3766,6 +4328,16 @@ function _diagDispatch(body) {
     diagVoiceParse:         (typeof diagVoiceParse !== 'undefined') ? diagVoiceParse : null,
     configurarEvolutionUrl: (typeof configurarEvolutionUrl !== 'undefined') ? configurarEvolutionUrl : null,
     diagEventoProativo:     (typeof diagEventoProativo !== 'undefined') ? diagEventoProativo : null,
+    diagTemas:              (typeof diagTemas !== 'undefined') ? diagTemas : null,
+    diagInsight:            (typeof diagInsight !== 'undefined') ? diagInsight : null,
+    diagEntregaInsight:     (typeof diagEntregaInsight !== 'undefined') ? diagEntregaInsight : null,
+    migrarLembretesPresenca:(typeof migrarLembretesPresenca !== 'undefined') ? migrarLembretesPresenca : null,
+    diagLembretePresenca:   (typeof diagLembretePresenca !== 'undefined') ? diagLembretePresenca : null,
+    diagCentralizacao:      (typeof diagCentralizacao !== 'undefined') ? diagCentralizacao : null,
+    diagFeedbackCuradoria:  (typeof diagFeedbackCuradoria !== 'undefined') ? diagFeedbackCuradoria : null,
+    registrarFeedbackInsight:(typeof registrarFeedbackInsight !== 'undefined') ? registrarFeedbackInsight : null,
+    configurarCentralizacao:(typeof configurarCentralizacao !== 'undefined') ? configurarCentralizacao : null,
+    configurarInsightDiario:(typeof configurarInsightDiario !== 'undefined') ? configurarInsightDiario : null,
     diagLembretes:          (typeof diagLembretes !== 'undefined') ? diagLembretes : null,
     criarLembreteCondicional:(typeof criarLembreteCondicional !== 'undefined') ? criarLembreteCondicional : null,
     cancelarLembreteCondicional:(typeof cancelarLembreteCondicional !== 'undefined') ? cancelarLembreteCondicional : null,

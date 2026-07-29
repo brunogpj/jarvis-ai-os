@@ -19,11 +19,18 @@ var Heartbeat = (function () {
   // condicional = só cobra batida se o job DEVERIA estar rodando agora (ex.: alertasVoz some quando vazio).
   var JOBS = {
     agenda:     { handler: 'executarTarefasAgendadas', cadencia: 15, limite: 40 },
-    alertasVoz: { handler: 'tickAlertasVoz',           cadencia: 1,  limite: 6, condicional: _temAlertasAtivos }
+    alertasVoz: { handler: 'tickAlertasVoz',           cadencia: 1,  limite: 6, condicional: _temAlertasAtivos },
+    // diario: re-armado com everyDays/atHour (everyMinutes não aceita 1440). Só é cobrado se o dono
+    // tiver ligado a curadoria — senão o painel acusaria "atrasado" por um job que ele não quis.
+    insight:    { handler: 'jobInsightDiario', diario: true, cadencia: 1440, limite: 2100, condicional: _curadoriaLigada }
   };
 
   function _temAlertasAtivos() {
     try { return (typeof AlertasVoz !== 'undefined') && AlertasVoz.listar().length > 0; } catch (e) { return false; }
+  }
+
+  function _curadoriaLigada() {
+    try { return !!P.getProperty('CURADORIA_HORA'); } catch (e) { return false; }
   }
 
   /** Registra uma batida do job (chamar no INÍCIO de cada handler de tick). */
@@ -52,7 +59,15 @@ var Heartbeat = (function () {
     var j = JOBS[nome]; if (!j) return false;
     try {
       var tem = ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === j.handler; });
-      if (!tem) { ScriptApp.newTrigger(j.handler).timeBased().everyMinutes(j.cadencia).create(); return true; }
+      if (!tem) {
+        if (j.diario) {
+          var h = Number(P.getProperty('CURADORIA_HORA') || 5);
+          ScriptApp.newTrigger(j.handler).timeBased().everyDays(1).atHour(isFinite(h) ? h : 5).create();
+        } else {
+          ScriptApp.newTrigger(j.handler).timeBased().everyMinutes(j.cadencia).create();
+        }
+        return true;
+      }
     } catch (e) { Logger.log('[Heartbeat] rearmar ' + nome + ': ' + e.message); }
     return false;
   }

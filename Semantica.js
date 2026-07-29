@@ -40,6 +40,51 @@ var Semantica = (function () {
     return (na && nb) ? dot / (Math.sqrt(na) * Math.sqrt(nb)) : 0;
   }
 
+  /* ── CENTRALIZAÇÃO (anisotropia) ──────────────────────────────────────────────────────────
+   * Embeddings de modelos generativos não são isotrópicos: uma direção dominante é compartilhada
+   * por quase todos os vetores. Com ela dentro, o cosseno entre dois documentos QUAISQUER já
+   * começa alto antes de qualquer semântica — e o sinal que separa relevante de irrelevante fica
+   * espremido no resíduo. Subtrair o vetor médio do corpus (μ) devolve resolução ao ranking.
+   * É a correção barata do mesmo diagnóstico que o paper SHIFT ataca com uma ponte treinada.
+   * Custo: ZERO chamada de IA — só aritmética sobre vetores que o buscar() já carregou.
+   */
+  var _CENTROIDE_CK = 'sem_centroide_v1';
+
+  /** μ do corpus, a partir dos docs JÁ carregados (sem leitura extra do Firestore). */
+  function _centroide(docs) {
+    var cache = null; try { cache = CacheService.getScriptCache(); } catch (e) {}
+    var ck = _CENTROIDE_CK + '_' + docs.length;    // muda o nº de trechos → recalcula
+    if (cache) { try { var hit = cache.get(ck); if (hit) return JSON.parse(hit); } catch (e1) {} }
+    var soma = null, n = 0;
+    for (var i = 0; i < docs.length; i++) {
+      var v = _vetorDe(docs[i].dados.vetor);
+      if (!v.length) continue;
+      if (!soma) { soma = []; for (var z = 0; z < v.length; z++) soma[z] = 0; }
+      for (var j = 0; j < v.length && j < soma.length; j++) soma[j] += v[j];
+      n++;
+    }
+    if (!soma || !n) return null;
+    for (var m = 0; m < soma.length; m++) soma[m] = soma[m] / n;
+    soma = _arred(soma);      // mesmo valor no 1º cálculo e nas leituras do cache (A/B reprodutível)
+    if (cache) { try { cache.put(ck, JSON.stringify(soma), 21600); } catch (e2) {} }
+    return soma;
+  }
+
+  /** Cosseno com μ removido dos dois lados. Sem μ, cai no cosseno normal. */
+  function _cossenoCentrado(a, b, mu) {
+    if (!mu) return _cosseno(a, b);
+    a = a || []; b = b || [];
+    var n = Math.min(a.length, b.length, mu.length), dot = 0, na = 0, nb = 0;
+    for (var i = 0; i < n; i++) {
+      var x = a[i] - mu[i], y = b[i] - mu[i];
+      dot += x * y; na += x * x; nb += y * y;
+    }
+    return (na && nb) ? dot / (Math.sqrt(na) * Math.sqrt(nb)) : 0;
+  }
+
+  /** Ligada por padrão; SEMANTICA_CENTRALIZAR='off' desliga (serve para medir A/B). */
+  function _centralizando() { return _p('SEMANTICA_CENTRALIZAR') !== 'off'; }
+
   // Lista recursivamente os arquivos .md do wiki (pula a pasta raw/ E os meta-arquivos).
   // Meta-arquivos (manual/índice/registro) NÃO são conhecimento — indexá-los polui a busca.
   // @return [{id, caminho}].
@@ -109,48 +154,52 @@ var Semantica = (function () {
   }
 
   /** Busca semântica: embeda a consulta e retorna os top-k trechos por cosseno. Resultado cacheado. */
-  function buscar(consulta, k) {
+  function buscar(consulta, k, opts) {
     k = k || 5;
     var cache = CacheService.getScriptCache();
-    var ck = 'sem_res_' + _hash(String(consulta) + '|' + k);
+    // o modo de similaridade entra na chave: sem isso, um A/B leria o resultado do outro modo.
+    var modo = ((opts && opts.centralizar !== undefined) ? !!opts.centralizar : _centralizando()) ? 'c' : 'r';
+    var ck = 'sem_res_' + modo + '_' + _hash(String(consulta) + '|' + k);
     try { var hit = cache.get(ck); if (hit) return JSON.parse(hit); } catch (eC) {}
     var docs = Firestore.listDocs(COL, 1000);
     if (!docs.length) return [];
     var qv = Gemini.embeddar(consulta, { tipo: 'RETRIEVAL_QUERY' });
+    var mu = (modo === 'c') ? _centroide(docs) : null;
     // VAR-1: cache semântico por SIMILARIDADE — se já respondemos uma consulta parecida (cosseno
     // alto entre os embeddings da query), reusa o resultado e pula o escaneamento de TODOS os docs.
-    var sim = _simCacheGet(qv, k);
+    var sim = _simCacheGet(qv, k, modo);
     if (sim) { try { cache.put(ck, JSON.stringify(sim), 1800); } catch (e1) {} return sim; }
     var scored = docs.map(function (d) {
-      return { caminho: d.dados.caminho, trecho: d.dados.trecho, score: _cosseno(qv, _vetorDe(d.dados.vetor)) };
+      return { caminho: d.dados.caminho, trecho: d.dados.trecho, score: _cossenoCentrado(qv, _vetorDe(d.dados.vetor), mu) };
     });
     scored.sort(function (a, b) { return b.score - a.score; });
     var top = scored.slice(0, k);
     try { cache.put(ck, JSON.stringify(top), 1800); } catch (eP) {}
-    _simCachePut(qv, k, top);
+    _simCachePut(qv, k, top, modo);
     return top;
   }
 
   // VAR-1 · cache semântico por similaridade (lista curta de {emb arredondado, k, top} no CacheService).
   var _SIM_KEY = 'sem_simcache', _SIM_THRESHOLD = 0.93, _SIM_MAX = 8;
   function _arred(v) { return (v || []).map(function (x) { return Math.round(x * 1e4) / 1e4; }); } // 4 casas → cabe no cache
-  function _simCacheGet(qv, k) {
+  function _simCacheGet(qv, k, modo) {
     try {
       var raw = CacheService.getScriptCache().get(_SIM_KEY); if (!raw) return null;
       var list = JSON.parse(raw), bestTop = null, bestS = 0;
       for (var i = 0; i < list.length; i++) {
         if (list[i].k !== k) continue;
+        if ((list[i].modo || 'r') !== (modo || 'r')) continue;   // não misturar centrado com cru
         var s = _cosseno(qv, list[i].emb);
         if (s > bestS) { bestS = s; bestTop = list[i].top; }
       }
       return (bestTop && bestS >= _SIM_THRESHOLD) ? bestTop : null;
     } catch (e) { return null; }
   }
-  function _simCachePut(qv, k, top) {
+  function _simCachePut(qv, k, top, modo) {
     try {
       var c = CacheService.getScriptCache(), raw = c.get(_SIM_KEY);
       var list = raw ? JSON.parse(raw) : [];
-      list.unshift({ emb: _arred(qv), k: k, top: top });
+      list.unshift({ emb: _arred(qv), k: k, top: top, modo: modo || 'r' });
       if (list.length > _SIM_MAX) list = list.slice(0, _SIM_MAX);
       c.put(_SIM_KEY, JSON.stringify(list), 1800);
     } catch (e) {}
@@ -427,4 +476,91 @@ function reindexarWikiSemantico() {
   var n = Semantica.limpar();
   Logger.log('🗑️ ' + n + ' vetores removidos. Agora rode brokerReindexRAG() (roda sozinho até terminar) ou indexarWikiSemantico() (quantas vezes precisar).');
   return n;
+}
+
+/**
+ * A/B da CENTRALIZAÇÃO (anisotropia): roda o mesmo conjunto de consultas com e sem μ e informa
+ * em que POSIÇÃO a página correta apareceu em cada modo. Sem isso, ligar a centralização é fé.
+ * args {casos:[{consulta, esperado}], k}. Sem casos, usa o conjunto padrão da wiki do Bruno.
+ * Custo: 1 embedding por consulta (cacheado), zero geração.
+ */
+function diagCentralizacao(args) {
+  args = args || {};
+  var k = Number(args.k || 10);
+  var casos = args.casos || [
+    { consulta: 'como funciona a malha de IA agentica',        esperado: 'malha-ia-agentica' },
+    { consulta: 'o que e zero trust para agentes',             esperado: 'zero-trust-agentes' },
+    { consulta: 'padrao de LockService no Apps Script',        esperado: 'lock-service-pattern' },
+    { consulta: 'como funciona a fila de emissao de CT-e',     esperado: 'fila-emissao-cte' },
+    { consulta: 'o que e vibe coding',                         esperado: 'vibe-coding' },
+    { consulta: 'OCR no cadastro de motoristas',               esperado: 'ocr-cadastro-motoristas' },
+    { consulta: 'padrao de log de atividade',                  esperado: 'activity-log-pattern' },
+    { consulta: 'controle de acesso RBAC no GAS',              esperado: 'rbac-gas' },
+    { consulta: 'workflow em DAG',                             esperado: 'dag-workflow' },
+    { consulta: 'agente de whatsapp com IA',                   esperado: 'whatsapp-ai-agent' }
+  ];
+
+  function posicao(consulta, esperado, centralizar) {
+    var res = [];
+    try { res = Semantica.buscar(consulta, k, { centralizar: centralizar }) || []; } catch (e) { return { erro: e.message }; }
+    var alvo = String(esperado).toLowerCase();
+    for (var i = 0; i < res.length; i++) {
+      if (String(res[i].caminho || '').toLowerCase().indexOf(alvo) !== -1) {
+        return { pos: i + 1, score: Number(res[i].score.toFixed(4)) };
+      }
+    }
+    return { pos: null, score: null };            // não apareceu no top-k
+  }
+
+  // SEPARAÇÃO: quanto o 1º se destaca do 2º. É o que a anisotropia rouba — o ranking pode estar
+  // certo e mesmo assim frágil, com todo mundo empatado tecnicamente. Aqui a melhora aparece
+  // mesmo quando a posição não muda.
+  function margem(consulta, centralizar) {
+    try {
+      var r = Semantica.buscar(consulta, 5, { centralizar: centralizar }) || [];
+      if (r.length < 2) return null;
+      return Number((r[0].score - r[1].score).toFixed(4));
+    } catch (e) { return null; }
+  }
+
+  var linhas = [], somaCru = 0, somaCen = 0, achouCru = 0, achouCen = 0, melhorou = 0, piorou = 0;
+  var somaMcru = 0, somaMcen = 0, nM = 0;
+  casos.forEach(function (c) {
+    var cru = posicao(c.consulta, c.esperado, false);
+    var cen = posicao(c.consulta, c.esperado, true);
+    // não achou no top-k conta como k+1 (penalidade), senão a média mente
+    var pC = cru.pos || (k + 1), pN = cen.pos || (k + 1);
+    somaCru += pC; somaCen += pN;
+    if (cru.pos) achouCru++;
+    if (cen.pos) achouCen++;
+    if (pN < pC) melhorou++; else if (pN > pC) piorou++;
+    var mCru = margem(c.consulta, false), mCen = margem(c.consulta, true);
+    if (mCru !== null && mCen !== null) { somaMcru += mCru; somaMcen += mCen; nM++; }
+    linhas.push({ consulta: c.consulta, esperado: c.esperado,
+                  posCru: cru.pos, posCentrado: cen.pos,
+                  scoreCru: cru.score, scoreCentrado: cen.score,
+                  margemCru: mCru, margemCentrado: mCen,
+                  delta: pC - pN });
+  });
+
+  var n = casos.length;
+  return { ok: true, k: k, casos: n,
+           mediaPosicaoCru: Number((somaCru / n).toFixed(2)),
+           mediaPosicaoCentrado: Number((somaCen / n).toFixed(2)),
+           achouNoTopK: { cru: achouCru, centrado: achouCen },
+           melhorou: melhorou, piorou: piorou, empatou: n - melhorou - piorou,
+           margemMedia: nM ? { cru: Number((somaMcru / nM).toFixed(4)), centrado: Number((somaMcen / nM).toFixed(4)) } : null,
+           veredito: (somaCen < somaCru) ? 'centralizacao MELHOROU'
+                   : (somaCen > somaCru) ? 'centralizacao PIOROU — deixar SEMANTICA_CENTRALIZAR=off'
+                   : 'empate',
+           detalhe: linhas };
+}
+
+/** Liga/desliga a centralização. args {ligar:true|false}. */
+function configurarCentralizacao(args) {
+  args = args || {};
+  var p = PropertiesService.getScriptProperties();
+  if (args.ligar === false) p.setProperty('SEMANTICA_CENTRALIZAR', 'off');
+  else p.deleteProperty('SEMANTICA_CENTRALIZAR');
+  return { ok: true, centralizando: p.getProperty('SEMANTICA_CENTRALIZAR') !== 'off' };
 }

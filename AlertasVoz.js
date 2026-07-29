@@ -241,8 +241,7 @@ var AlertasVoz = (function () {
 
   return { criar: criar, listar: listar, editar: editar, testar: testar, cancelar: cancelar, tick: tick,
            reposicionarBriefing: reposicionarBriefing,
-           definirTurno: definirTurno, interpretarTurno: interpretarTurno, turnoAtual: turnoAtual,
-           reposicionarBriefing: reposicionarBriefing };
+           definirTurno: definirTurno, interpretarTurno: interpretarTurno, turnoAtual: turnoAtual };
 })();
 
 /** Handler do gatilho temporal de 1 min (alertas de voz no celular). NÃO renomear. */

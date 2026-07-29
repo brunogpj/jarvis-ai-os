@@ -2355,6 +2355,21 @@ function doPost(e) {
         return json({ ok: false, erro: 'não autorizado' });
       }
       try {
+        // ECO DE DIAGNÓSTICO: guarda os valores CRUS, antes de qualquer filtro. Sem isto não há como
+        // distinguir "a variável não existe e chegou literal {not_text}" de "existe e veio vazia" —
+        // e o conserto é diferente em cada caso.
+        try {
+          PropertiesService.getScriptProperties().setProperty('NOTIF_ULTIMO_BRUTO', JSON.stringify({
+            em: new Date().toISOString(),
+            app: String(body.app === undefined ? '(ausente)' : body.app),
+            titulo: String(body.titulo === undefined ? '(ausente)' : body.titulo),
+            texto: String(body.texto === undefined ? '(ausente)' : body.texto),
+            ticker: String(body.ticker === undefined ? '(ausente)' : body.ticker),
+            pacote: String(body.pacote === undefined ? '(ausente)' : body.pacote),
+            chaves: Object.keys(body).join(',')
+          }));
+        } catch (eEco) {}
+
         // texto ou ticker: nem todo app preenche os dois. A macro manda ambos e aqui fica o que veio
         // de fato — _notifTxt já descarta magic text não substituído ("{not_text}" literal).
         var _txtNt = _notifTxt(body.texto) || _notifTxt(body.ticker);
@@ -3934,6 +3949,39 @@ function diagNotificacoes(args) {
     try { (Firestore.listDocs(_NOTIF_COL, 500) || []).forEach(function (x) { Firestore.deleteDoc(_NOTIF_COL, x.id); n++; }); } catch (e) {}
     PropertiesService.getScriptProperties().deleteProperty('NOTIF_CONT');
     return { ok: true, removidas: n };
+  }
+  // O eco guarda valores CRUS de UMA notificação — inclusive corpo de mensagem. Depois de
+  // diagnosticar, apagar é higiene, não capricho: ele fica numa Script Property em texto puro.
+  if (args.limparEco === true) {
+    PropertiesService.getScriptProperties().deleteProperty('NOTIF_ULTIMO_BRUTO');
+    return { ok: true, ecoApagado: true };
+  }
+  if (args.eco === true) {
+    var bruto = null;
+    try { bruto = JSON.parse(PropertiesService.getScriptProperties().getProperty('NOTIF_ULTIMO_BRUTO') || 'null'); } catch (e) {}
+    if (!bruto) return { ok: true, eco: null, nota: 'nenhuma notificação chegou pela ROTA ainda (o eco só grava no caminho HTTP real)' };
+    // diagnóstico do que fazer: literal {xxx} = nome de variável errado na macro; vazio = variável
+    // existe mas o MacroDroid não preencheu; texto = está tudo certo.
+    // CUIDADO ao ler "LITERAL": duas causas MUITO diferentes produzem o mesmo sintoma —
+    // (a) o nome da variável não existe, ou (b) a ação rodou SEM contexto de notificação
+    // ("Testar ações" em vez de testar o gatilho). Se TODAS vierem literais, é (b) — inclusive as
+    // que comprovadamente funcionam em notificação real. Só vale concluir (a) quando algumas
+    // substituem e outras não.
+    var literais = 0, campos = ['app', 'titulo', 'texto', 'ticker', 'pacote'];
+    campos.forEach(function (k) { if (/^\{[a-z_]+\}$/i.test(String(bruto[k] || ''))) literais++; });
+    var todasLiterais = (literais === campos.length);
+    function veredito(v) {
+      if (v === '(ausente)') return 'PARÂMETRO NÃO ENVIADO pela macro';
+      if (/^\{[a-z_]+\}$/i.test(v)) {
+        return todasLiterais ? 'LITERAL (todas) — rodou SEM contexto de notificação; teste o GATILHO, não as ações'
+                             : 'LITERAL — este nome de variável não existe no MacroDroid';
+      }
+      if (!v.trim()) return 'VAZIO — variável existe mas veio sem conteúdo';
+      return 'OK (' + v.length + ' caracteres)';
+    }
+    return { ok: true, eco: bruto, diagnostico: {
+      app: veredito(bruto.app), titulo: veredito(bruto.titulo),
+      texto: veredito(bruto.texto), ticker: veredito(bruto.ticker), pacote: veredito(bruto.pacote) } };
   }
   if (args.registrar) return registrarNotificacao(args.registrar);
   var p = PropertiesService.getScriptProperties();

@@ -2732,10 +2732,16 @@ function doPost(e) {
           var _sP = msgVoz.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
           if (/\b(o que (eu )?perdi|perdi algo|perdi alguma coisa|que chegou|chegou algo|alguma notificacao|tem notificacao|novidades? no celular|me atualiza)\b/.test(_sP)) _perdi = true;
         }
-        var _livre = (_voto === null && _ofr === null && _perdi === null);
+        // (-1.5) SALDO/EXTRATO DO SWILE — determinístico. Número não passa pelo modelo.
+        var _fin = (_voto === null && _ofr === null && _perdi === null) ? _interpretarFinanceiro(msgVoz) : null;
+        var _livre = (_voto === null && _ofr === null && _perdi === null && _fin === null);
         var _lembC = _livre ? _interpretarLembreteCondicional(msgVoz) : null;
         var _rot   = (_livre && !_lembC) ? _interpretarRotina(msgVoz) : null;
-        if (_perdi !== null) {
+        if (_fin !== null) {
+          try {
+            respVoz = (_fin.tipo === 'gastos') ? _finFalarGastos(_fin.dias) : _finFalarSaldo(_fin.carteira);
+          } catch (eFin) { respVoz = 'Não consegui consultar o saldo agora.'; }
+        } else if (_perdi !== null) {
           try {
             var _rp = resumirNotificacoes({ horas: 12, marcarLidas: true });
             respVoz = _rp.resumo;
@@ -4080,6 +4086,17 @@ function _finGuardarBruto(d) {
     em: agora, dia: Utilities.formatDate(new Date(agora), 'America/Sao_Paulo', 'yyyy-MM-dd'),
     parseado: false, versaoParser: 0            // a fase 2 preenche isto sem perder o bruto
   };
+  // FASE 2: interpreta na chegada, mas NUNCA por cima do bruto — os dois convivem no mesmo doc.
+  try {
+    var _p2 = _finParse(doc.titulo, doc.texto);
+    if (_p2) {
+      doc.tipo = _p2.tipo; doc.valor = _p2.valor; doc.carteira = _p2.carteira;
+      doc.estabelecimento = _p2.estabelecimento; doc.parseado = true; doc.versaoParser = 1;
+      var _ap = _finAplicarSaldo(_p2);
+      doc.aplicado = _ap.aplicado === true;
+      doc.saldoDepois = _ap.para !== undefined ? _ap.para : null;
+    }
+  } catch (e2) {}
   try {
     Firestore.setDoc(_FIN_COL, String(1e13 - agora) + '_' + Math.floor(Math.random() * 1000), doc);
     return { ok: true, dia: doc.dia };
@@ -4095,6 +4112,180 @@ function _finLer(limite) {
   return itens.slice(0, limite || 100);
 }
 
+
+/* ── FASE 2: PARSER DAS NOTIFICAÇÕES DO SWILE ──────────────────────────────────────────────
+ * Escrito sobre UMA amostra real de compra:
+ *   "Compra aprovada de R$ 1,19 na carteira Refeição e Alimentação, no estabelecimento PADARIA MIRAGO."
+ * A recarga NÃO traz número, então ela não move saldo — quem move é a compra (e o estorno).
+ * O bruto continua gravado ao lado do interpretado: se o formato variar (compra negada,
+ * transferência, outro idioma), dá para reprocessar tudo com reprocessarFinanceiro().
+ */
+var _FIN_CARTEIRAS = {
+  voucher:    /refei[çc][ãa]o|alimenta[çc][ãa]o|voucher/i,
+  mobilidade: /mobilidade|combust[íi]vel|transporte|posto/i
+};
+
+/** Interpreta título+texto. Devolve null se não reconhecer o tipo — nunca chuta. */
+function _finParse(titulo, texto) {
+  var t = String((titulo || '') + '. ' + (texto || '')).replace(/\s+/g, ' ').trim();
+  var b = t.toLowerCase();
+
+  var tipo = null;
+  if (/estorn|devolv|cancelad|reembols/.test(b)) tipo = 'estorno';
+  else if (/carga nova|recarga|recarregad|cr[eé]dito dispon/.test(b)) tipo = 'recarga';
+  else if (/compra|pagamento|debitad|transa[çc][ãa]o/.test(b)) tipo = 'compra';
+  if (!tipo) return null;
+
+  // Valor em formato BR. "R$ 1,19" · "R$ 1.234,56" · "R$ 89"
+  var mv = t.match(/R\$\s*([\d.]*\d(?:,\d{2})?)/i);
+  var valor = mv ? _finNum(mv[1]) : null;
+
+  var carteira = null;
+  ['voucher', 'mobilidade'].forEach(function (k) {
+    if (!carteira && _FIN_CARTEIRAS[k].test(t)) carteira = k;
+  });
+
+  // "no estabelecimento X" é o formato do Swile; o resto é rede de segurança.
+  var me = t.match(/no estabelecimento\s+([^.,;]{2,60})/i) ||
+           t.match(/estabelecimento[:\s]+([^.,;]{2,60})/i);
+  var estab = me ? me[1].trim().replace(/[.\s]+$/, '') : null;
+
+  return { tipo: tipo, valor: valor, carteira: carteira, estabelecimento: estab,
+           completo: !!(valor !== null && carteira) };
+}
+
+/** Move o saldo. Compra debita, estorno credita, recarga não mexe (não traz valor). */
+function _finAplicarSaldo(p) {
+  if (!p || !p.completo) return { aplicado: false, motivo: 'lançamento incompleto' };
+  if (p.tipo === 'recarga') return { aplicado: false, motivo: 'recarga não traz valor' };
+  var sd = obterSaldoFinanceiro();
+  var atual = sd[p.carteira];
+  if (atual === null || atual === undefined) return { aplicado: false, motivo: 'saldo da carteira ainda não informado' };
+  var delta = (p.tipo === 'estorno') ? p.valor : -p.valor;
+  var novo = Math.round((Number(atual) + delta) * 100) / 100;
+  var args = { origem: 'lancamento' };
+  args[p.carteira] = novo;
+  var r = definirSaldoFinanceiro(args);
+  return { aplicado: r.ok, carteira: p.carteira, de: atual, para: novo, delta: delta };
+}
+
+/** Reinterpreta TUDO que está guardado como bruto. Idempotente: só aplica saldo uma vez. */
+function reprocessarFinanceiro(args) {
+  args = args || {};
+  var itens = _finLer(500), lidos = 0, aplicados = 0, semParse = [];
+  itens.forEach(function (it) {
+    var d = it.d;
+    var p = _finParse(d.titulo, d.texto);
+    if (!p) { semParse.push((d.titulo || '') + ' | ' + (d.texto || '')); return; }
+    lidos++;
+    var patch = { tipo: p.tipo, valor: p.valor, carteira: p.carteira,
+                  estabelecimento: p.estabelecimento, parseado: true, versaoParser: 1 };
+    // só move saldo se ainda não moveu para este lançamento
+    if (args.aplicarSaldo === true && d.aplicado !== true && p.completo && p.tipo !== 'recarga') {
+      var ap = _finAplicarSaldo(p);
+      if (ap.aplicado) { patch.aplicado = true; aplicados++; }
+    }
+    try { Firestore.updateDoc(_FIN_COL, it.id, patch); } catch (e) {}
+  });
+  return { ok: true, total: itens.length, interpretados: lidos, saldoAplicado: aplicados,
+           naoReconhecidos: semParse.slice(0, 10) };
+}
+
+/** Extrato determinístico (zero LLM). args {dias, carteira}. */
+function consultarGastos(args) {
+  args = args || {};
+  var dias = Number(args.dias || 30);
+  var desde = Date.now() - dias * 86400000;
+  var itens = _finLer(500).filter(function (i) {
+    return Number(i.d.em || 0) >= desde && i.d.tipo === 'compra' && i.d.valor;
+  });
+  if (args.carteira) itens = itens.filter(function (i) { return i.d.carteira === args.carteira; });
+
+  var totalV = 0, totalM = 0, porEstab = {}, porDia = {};
+  itens.forEach(function (i) {
+    var d = i.d, v = Number(d.valor) || 0;
+    if (d.carteira === 'mobilidade') totalM += v; else totalV += v;
+    var e = d.estabelecimento || '(sem nome)';
+    porEstab[e] = Math.round(((porEstab[e] || 0) + v) * 100) / 100;
+    porDia[d.dia] = Math.round(((porDia[d.dia] || 0) + v) * 100) / 100;
+  });
+  var top = Object.keys(porEstab).sort(function (a, b) { return porEstab[b] - porEstab[a]; })
+                  .slice(0, 5).map(function (e) { return { estabelecimento: e, total: porEstab[e] }; });
+  var sd = obterSaldoFinanceiro();
+  return { ok: true, dias: dias, compras: itens.length,
+           gastoVoucher: Math.round(totalV * 100) / 100,
+           gastoMobilidade: Math.round(totalM * 100) / 100,
+           saldoAtual: { voucher: sd.voucher, mobilidade: sd.mobilidade },
+           maioresEstabelecimentos: top, porDia: porDia,
+           itens: itens.slice(0, 30).map(function (i) {
+             return { dia: i.d.dia, valor: i.d.valor, carteira: i.d.carteira,
+                      estabelecimento: i.d.estabelecimento }; }) };
+}
+
+/** Diag da intenção financeira falada. args {frase}. */
+function diagFinanceiroVoz(args) {
+  args = args || {};
+  var i = _interpretarFinanceiro(args.frase);
+  return { ok: true, frase: args.frase, interpretado: i,
+           resposta: i ? (i.tipo === 'gastos' ? _finFalarGastos(i.dias) : _finFalarSaldo(i.carteira)) : null };
+}
+
+/** Diag do parser: {texto,titulo} testa sem gravar · {reprocessar:true,aplicarSaldo} · {gastos:true} */
+function diagParserFinanceiro(args) {
+  args = args || {};
+  if (args.reprocessar === true) return reprocessarFinanceiro(args);
+  if (args.gastos === true) return consultarGastos(args);
+  return { ok: true, entrada: { titulo: args.titulo, texto: args.texto },
+           interpretado: _finParse(args.titulo, args.texto) };
+}
+
+/** Saldo/extrato do Swile em UMA frase, sem LLM. Saldo é fato: o modelo já respondeu só uma
+ *  carteira e, no follow-up, repetiu o valor da mobilidade como se fosse o do voucher. Número
+ *  não se parafraseia. args {carteira} limita a resposta a uma carteira. */
+function _finFalarSaldo(carteira) {
+  var sd = obterSaldoFinanceiro();
+  function br(v) { return 'R$ ' + Number(v).toFixed(2).replace('.', ','); }
+  if (sd.voucher === null && sd.mobilidade === null) {
+    return 'Você ainda não me informou o saldo do Swile. Eu pergunto na próxima recarga.';
+  }
+  var partes = [];
+  if (carteira !== 'mobilidade' && sd.voucher !== null) partes.push('voucher, ' + br(sd.voucher));
+  if (carteira !== 'voucher' && sd.mobilidade !== null) partes.push('mobilidade, ' + br(sd.mobilidade));
+  var quando = sd.em ? (' Informado em ' + Utilities.formatDate(new Date(sd.em), 'America/Sao_Paulo', 'dd/MM') + '.') : '';
+  return 'Saldo do Swile: ' + partes.join('; e ') + '.' + quando;
+}
+
+/** Texto livre → intenção financeira. null quando não for pergunta de saldo/gasto. */
+function _interpretarFinanceiro(msg) {
+  var s = String(msg || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  // "suav", "suail", "swaile": o reconhecimento de voz erra o nome da marca com frequência.
+  var marca = /(swile|suav|suail|swaile|su[ai]le|vale|voucher|mobilidade|alimenta|refeic|combust)/.test(s);
+  if (!marca && !/\bsaldo\b/.test(s)) return null;
+  if (/quanto (eu )?gastei|onde (eu )?gastei|extrato|maiores gastos|gastos d[eo]/.test(s)) {
+    var dias = 30;
+    if (/hoje/.test(s)) dias = 1; else if (/semana/.test(s)) dias = 7; else if (/m[eê]s/.test(s)) dias = 30;
+    return { tipo: 'gastos', dias: dias };
+  }
+  if (/\bsaldo\b|quanto (eu )?tenho|quanto sobrou|quanto resta/.test(s)) {
+    var cart = null;
+    if (/voucher|refeic|alimenta/.test(s)) cart = 'voucher';
+    else if (/mobilidade|combust|transporte/.test(s)) cart = 'mobilidade';
+    return { tipo: 'saldo', carteira: cart };
+  }
+  return null;
+}
+
+/** Extrato falado, determinístico. */
+function _finFalarGastos(dias) {
+  var g = consultarGastos({ dias: dias });
+  function br(v) { return 'R$ ' + Number(v).toFixed(2).replace('.', ','); }
+  if (!g.compras) return 'Não registrei nenhuma compra do Swile nos últimos ' + dias + ' dias.';
+  var top = (g.maioresEstabelecimentos || [])[0];
+  return 'Nos últimos ' + dias + ' dias: ' + g.compras + ' compra' + (g.compras > 1 ? 's' : '') +
+         ', ' + br(g.gastoVoucher + g.gastoMobilidade) + ' no total.' +
+         (top ? ' Maior gasto: ' + top.estabelecimento + ', ' + br(top.total) + '.' : '') +
+         ' ' + _finFalarSaldo(null);
+}
 /** Diag da fase 1. args {} lista · {limpar:true} · {simular:{app,titulo,texto}} */
 function diagFinanceiro(args) {
   args = args || {};
@@ -5167,6 +5358,10 @@ function _diagDispatch(body) {
     diagPonto:              (typeof diagPonto !== 'undefined') ? diagPonto : null,
     diagFinanceiro:         (typeof diagFinanceiro !== 'undefined') ? diagFinanceiro : null,
     diagSaldo:              (typeof diagSaldo !== 'undefined') ? diagSaldo : null,
+    diagParserFinanceiro:   (typeof diagParserFinanceiro !== 'undefined') ? diagParserFinanceiro : null,
+    diagFinanceiroVoz:      (typeof diagFinanceiroVoz !== 'undefined') ? diagFinanceiroVoz : null,
+    diagIndexacao:          (typeof diagIndexacao !== 'undefined') ? diagIndexacao : null,
+    configurarIndexacaoAutomatica:(typeof configurarIndexacaoAutomatica !== 'undefined') ? configurarIndexacaoAutomatica : null,
     configurarNotificacoes: (typeof configurarNotificacoes !== 'undefined') ? configurarNotificacoes : null,
     resumirNotificacoes:    (typeof resumirNotificacoes !== 'undefined') ? resumirNotificacoes : null,
     registrarFeedbackInsight:(typeof registrarFeedbackInsight !== 'undefined') ? registrarFeedbackInsight : null,

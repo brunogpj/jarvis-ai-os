@@ -814,8 +814,16 @@ var Jarvis = (function () {
         parameters: { type: 'OBJECT', properties: { turno: { type: 'STRING', description: '"manha" ou "tarde"' } }, required: ['turno'] }
       },
       {
+        name: 'consultarGastosSwile',
+        description: 'Extrato do cartao Swile: quanto o dono GASTOU num periodo, em quais estabelecimentos e quanto sobrou. Use para "quanto gastei essa semana/hoje/esse mes", "onde gastei", "quais meus maiores gastos". Diferente de consultarSaldoSwile, que so diz o saldo. Os valores vem das notificacoes de compra capturadas do celular.',
+        parameters: { type: 'OBJECT', properties: {
+          dias: { type: 'NUMBER', description: 'Janela em dias para tras (padrao 30).' },
+          carteira: { type: 'STRING', description: 'Opcional: "voucher" (refeicao/alimentacao) ou "mobilidade" (combustivel).' }
+        }, required: [] }
+      },
+      {
         name: 'consultarSaldoSwile',
-        description: 'Consulta o SALDO do cartão Swile do dono: carteira VOUCHER (Refeição e Alimentação) e carteira MOBILIDADE (combustível/transporte). Use quando ele perguntar quanto tem de saldo, quanto sobrou do vale, do voucher, do vale-refeição, do vale-alimentação ou do vale-combustível. O valor é a ÂNCORA que ele informou na última recarga — informe também quando foi informado, para ele saber se está defasado. NÃO invente valor: se vier nulo, diga que ele ainda não informou e que o Jarvis pergunta na próxima recarga.',
+        description: 'Consulta o SALDO do cartão Swile do dono: carteira VOUCHER (Refeição e Alimentação) e carteira MOBILIDADE (combustível/transporte). Use quando ele perguntar quanto tem de saldo, quanto sobrou do vale, do voucher, do vale-refeição, do vale-alimentação ou do vale-combustível. O valor é a ÂNCORA que ele informou na última recarga — informe também quando foi informado, para ele saber se está defasado. SEMPRE informe AS DUAS carteiras na resposta, mesmo que ele pergunte por uma — e NUNCA reaproveite um valor de uma resposta anterior: chame a ferramenta de novo a cada pergunta, porque o saldo muda a cada compra. NÃO invente valor: se vier nulo, diga que ele ainda não informou e que o Jarvis pergunta na próxima recarga.',
         parameters: { type: 'OBJECT', properties: {}, required: [] }
       },
       {
@@ -1082,8 +1090,8 @@ var Jarvis = (function () {
         nomes: ['criarLembreteCondicional', 'listarLembretesCondicionais']
       },
       {
-        re: /(saldo|swile|voucher|vale[- ]?(refei|aliment|combust)|mobilidade|quanto (eu )?tenho|quanto sobrou|cart[ãa]o de aliment)/i,
-        nomes: ['consultarSaldoSwile']
+        re: /(saldo|swile|voucher|vale[- ]?(refei|aliment|combust)|mobilidade|quanto (eu )?tenho|quanto sobrou|quanto (eu )?gastei|onde (eu )?gastei|extrato|maiores gastos|cart[ãa]o de aliment)/i,
+        nomes: ['consultarSaldoSwile', 'consultarGastosSwile']
       },
       {
         re: /(o que (eu )?perdi|perdi alg|que chegou|chegou alg|notifica|me atualiza|novidades?\s+no\s+celular)/,
@@ -1334,6 +1342,7 @@ var Jarvis = (function () {
       case 'cancelarAlertaVoz':    return isOwner ? (typeof AlertasVoz !== 'undefined' ? AlertasVoz.cancelar(args && args.alerta) : { status: 'error' }) : _denied(name);
       case 'definirTurnoTrabalho': return isOwner ? (typeof AlertasVoz !== 'undefined' && AlertasVoz.definirTurno ? AlertasVoz.definirTurno(args && args.turno) : { status: 'error', erro: 'AlertasVoz indisponível.' }) : _denied(name);
       // Lembretes por PRESENÇA (Wi-Fi) — implementados em Code.js, disparam nas transições de local.
+      case 'consultarGastosSwile':      return isOwner ? (typeof consultarGastos === 'function' ? consultarGastos(args) : { status: 'error', erro: 'Extrato indisponivel.' }) : _denied(name);
       case 'consultarSaldoSwile':       return isOwner ? (function () {
         if (typeof obterSaldoFinanceiro !== 'function') return { status: 'error', erro: 'Saldo indisponível.' };
         var sd = obterSaldoFinanceiro();

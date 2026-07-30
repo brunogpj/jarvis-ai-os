@@ -354,7 +354,134 @@ var Semantica = (function () {
     return n;
   }
 
-  return { indexar: indexar, buscar: buscar, buscarHibrido: buscarHibrido, status: status, limpar: limpar, purgarMeta: purgarMeta, purgarSkills: purgarSkills };
+
+  /* ── INDEXAÇÃO INCREMENTAL ────────────────────────────────────────────────────────────────
+   * O elo NotebookLM → Drive é manual e não tem conserto (não há API). Mas Drive → Jarvis tem:
+   * hoje um arquivo novo na wiki só é encontrado depois de alguém mandar reindexar. Este job
+   * fecha o ciclo — ele salva a síntese e o Jarvis já responde por voz, sem mais nenhum passo.
+   *
+   * Detecta por DATA DE MODIFICAÇÃO, não por listagem completa: guarda o instante da última
+   * varredura e só reindexa o que mudou desde então. Arquivo EDITADO também entra (o indexar()
+   * normal pula o que já tem vetor, então edição passava batida).
+   */
+  var _VARREDURA = 'SEMANTICA_ULTIMA_VARREDURA';
+
+  /** Como _arquivosWiki, mas traz a data de modificação de cada arquivo. */
+  function _arquivosWikiComData() {
+    var rootId = _p('WIKI_DRIVE_ID');
+    if (!rootId) throw new Error('WIKI_DRIVE_ID ausente.');
+    var lista = [];
+    (function walk(folder, prefixo) {
+      var fs2 = folder.getFiles();
+      while (fs2.hasNext()) {
+        var fl = fs2.next(), nm = fl.getName();
+        if (!/\.md$/i.test(nm) || ehMetaArquivoWiki(nm)) continue;
+        lista.push({ id: fl.getId(), caminho: prefixo + nm, em: fl.getLastUpdated().getTime() });
+      }
+      var subs = folder.getFolders();
+      while (subs.hasNext()) {
+        var sf = subs.next();
+        if (/^raw$/i.test(sf.getName())) continue;
+        walk(sf, prefixo + sf.getName() + '/');
+      }
+    })(DriveApp.getFolderById(rootId), '');
+    return lista;
+  }
+
+  /** Apaga os vetores de UM caminho, por id determinístico — sem listar a coleção inteira. */
+  function _purgarCaminho(caminho, maxChunks) {
+    var base = _hash(caminho), n = 0;
+    for (var i = 0; i < (maxChunks || 60); i++) {
+      try { if (Firestore.getDoc(COL, base + '_' + i)) { Firestore.deleteDoc(COL, base + '_' + i); n++; } else if (i > 2) break; }
+      catch (e) { break; }
+    }
+    return n;
+  }
+
+  /**
+   * Indexa só o que mudou. opts { maxArquivos, budgetMs, desde, simular }.
+   * @return { status, novos, reindexados, trechos, restantes, proximaVarredura }
+   */
+  function indexarNovos(opts) {
+    opts = opts || {};
+    var inicio = Date.now();
+    var budget = opts.budgetMs || (4 * 60 * 1000);
+    var maxArq = opts.maxArquivos || 8;          // teto por execução: embedding custa cota
+    var props = PropertiesService.getScriptProperties();
+    var desde = (opts.desde !== undefined) ? Number(opts.desde) : Number(props.getProperty(_VARREDURA) || 0);
+
+    var arquivos = _arquivosWikiComData();
+
+    // PRIMEIRA EXECUÇÃO: sem marcador, TODO arquivo parece novo — seriam 172 reindexações e uma
+    // queima de cota para refazer o que já está indexado. O corpus atual já foi indexado pelo
+    // indexar() normal, então aqui só cravamos o marco: daqui para frente, só o que mudar.
+    // Para forçar uma passada completa, use indexar({forcar:true}) — é outra operação, deliberada.
+    if (!desde && opts.desde === undefined) {
+      var agora0 = Date.now();
+      if (opts.simular !== true) props.setProperty(_VARREDURA, String(agora0));
+      return { status: 'success', primeiraExecucao: true, novos: 0, reindexados: 0, trechos: 0,
+               restantes: 0, totalNaWiki: arquivos.length,
+               nota: 'marcador ajustado para agora — a partir daqui indexa só o que mudar' };
+    }
+
+    var mudados = arquivos.filter(function (a) { return a.em > desde; })
+                          .sort(function (a, b) { return a.em - b.em; });   // mais antigo primeiro
+    if (opts.simular === true) {
+      return { status: 'simulado', desde: desde ? new Date(desde).toISOString() : '(nunca varreu)',
+               totalNaWiki: arquivos.length, mudados: mudados.length,
+               amostra: mudados.slice(0, 10).map(function (a) { return a.caminho; }) };
+    }
+    if (!mudados.length) {
+      props.setProperty(_VARREDURA, String(Date.now()));
+      return { status: 'success', novos: 0, reindexados: 0, trechos: 0, restantes: 0, nota: 'nada mudou' };
+    }
+
+    var novos = 0, reidx = 0, trechos = 0, erro1 = '', maiorEm = desde;
+    for (var i = 0; i < mudados.length && i < maxArq; i++) {
+      if (Date.now() - inicio > budget) break;
+      var a = mudados[i];
+      var base = _hash(a.caminho);
+      var jaTinha = false;
+      try { jaTinha = !!Firestore.getDoc(COL, base + '_0'); } catch (e) {}
+      if (jaTinha) _purgarCaminho(a.caminho);        // editado: troca os vetores, não duplica
+
+      var texto = '';
+      try { texto = DriveApp.getFileById(a.id).getBlob().getDataAsString('UTF-8'); } catch (e) { continue; }
+      var cs = _chunks(texto);
+      var okArquivo = true;
+      for (var j = 0; j < cs.length && j < 50; j++) {
+        try {
+          var vec = Gemini.embeddar(cs[j], { tipo: 'RETRIEVAL_DOCUMENT' });
+          if (vec && vec.length) {
+            Firestore.setDoc(COL, base + '_' + j, { caminho: a.caminho, ord: j,
+              trecho: cs[j].substring(0, 1500), vetor: JSON.stringify(vec), atualizadoEm: Date.now() });
+            trechos++;
+          }
+        } catch (e) {
+          var msg = String(e && e.message || e);
+          if (!erro1) erro1 = msg;
+          okArquivo = false;
+          // Cota estourada: para TUDO e não avança o marcador — o resto entra na próxima rodada.
+          if (/\b429\b|quota|RESOURCE_EXHAUSTED|exceeded|spending cap/i.test(msg)) {
+            return { status: 'cota', novos: novos, reindexados: reidx, trechos: trechos,
+                     restantes: mudados.length - i, erro1: erro1,
+                     nota: 'marcador NÃO avançado — retoma de onde parou' };
+          }
+        }
+      }
+      if (okArquivo) { if (jaTinha) reidx++; else novos++; if (a.em > maiorEm) maiorEm = a.em; }
+    }
+
+    // Avança o marcador até o arquivo mais recente CONCLUÍDO — não até "agora". Se algo falhou,
+    // ele volta na próxima varredura em vez de sumir.
+    props.setProperty(_VARREDURA, String(maiorEm));
+    var restantes = Math.max(0, mudados.length - Math.min(mudados.length, maxArq));
+    return { status: restantes ? 'continuar' : 'success', novos: novos, reindexados: reidx,
+             trechos: trechos, restantes: restantes, erro1: erro1,
+             proximaVarredura: new Date(maiorEm).toISOString() };
+  }
+
+  return { indexar: indexar, indexarNovos: indexarNovos, buscar: buscar, buscarHibrido: buscarHibrido, status: status, limpar: limpar, purgarMeta: purgarMeta, purgarSkills: purgarSkills };
 })();
 
 /**
@@ -668,4 +795,39 @@ function configurarCentralizacao(args) {
   if (args.ligar === false) p.setProperty('SEMANTICA_CENTRALIZAR', 'off');
   else p.deleteProperty('SEMANTICA_CENTRALIZAR');
   return { ok: true, centralizando: p.getProperty('SEMANTICA_CENTRALIZAR') !== 'off' };
+}
+
+/** Handler do gatilho de indexação incremental (a cada 30 min). Bate o coração no Heartbeat. */
+function jobIndexarWiki() {
+  try { if (typeof Heartbeat !== 'undefined' && Heartbeat.bater) Heartbeat.bater('indexWiki'); } catch (e) {}
+  var r = Semantica.indexarNovos({ maxArquivos: 8 });
+  Logger.log('[indexarNovos] ' + JSON.stringify(r));
+  return r;
+}
+
+/** Liga/desliga o job. args {ligar:false} desliga · {minutos} muda a cadência (padrão 30). */
+function configurarIndexacaoAutomatica(args) {
+  args = args || {};
+  var min = Number(args.minutos || 30);
+  var achou = 0;
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'jobIndexarWiki') { ScriptApp.deleteTrigger(t); achou++; }
+  });
+  if (args.ligar === false) return { ok: true, ligado: false, removidos: achou };
+  ScriptApp.newTrigger('jobIndexarWiki').timeBased().everyMinutes(min === 15 || min === 30 ? min : 30).create();
+  return { ok: true, ligado: true, cadenciaMin: min, removidos: achou };
+}
+
+/** Diag: {} estado · {simular:true} mostra o que reindexaria · {rodar:true} roda agora · {resetar:true} */
+function diagIndexacao(args) {
+  args = args || {};
+  var p = PropertiesService.getScriptProperties();
+  if (args.resetar === true) { p.deleteProperty('SEMANTICA_ULTIMA_VARREDURA'); return { ok: true, resetado: true, nota: 'próxima varredura reindexa TUDO' }; }
+  if (args.rodar === true) return Semantica.indexarNovos({ maxArquivos: Number(args.maxArquivos || 8) });
+  if (args.simular !== false) {
+    var r = Semantica.indexarNovos({ simular: true });
+    r.gatilhoAtivo = ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === 'jobIndexarWiki'; });
+    return r;
+  }
+  return { ok: true };
 }

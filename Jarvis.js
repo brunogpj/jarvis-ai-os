@@ -662,6 +662,31 @@ var Jarvis = (function () {
         }
       },
       {
+        name: 'gerarPodcastWiki',
+        description: 'Gera um PODCAST DE 2 VOZES (estilo Audio Overview do NotebookLM) a partir de um tópico ou arquivo do Wiki. Cria um diálogo dinâmico entre 2 apresentadores (vozes masculina e feminina) e salva o áudio MP3 no Google Drive (/outputs).',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            topico: { type: 'STRING', description: 'Tópico ou assunto para gerar o podcast (ex: "Manutenção de Micro-ondas", "IA Agentica").' },
+            caminhoWiki: { type: 'STRING', description: 'Opcional. Caminho relativo de um arquivo específico do Wiki (ex: "concepts/reparos-microondas.md").' }
+          },
+          required: ['topico']
+        }
+      },
+      {
+        name: 'prepararBriefingNotebookLM',
+        description: 'Prepara e formata um BRIEFING ESTRUTURADO em Markdown pronto para ingestão no NotebookLM e salva na Wiki em sources/.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            titulo: { type: 'STRING', description: 'Título do briefing.' },
+            conteudo: { type: 'STRING', description: 'Conteúdo ou notas do briefing.' },
+            topicos: { type: 'ARRAY', items: { type: 'STRING' }, description: 'Lista de tópicos chave.' }
+          },
+          required: ['titulo', 'conteudo']
+        }
+      },
+      {
         name: 'controlarDispositivo',
         description: 'Executa uma AÇÃO NATIVA no CELULAR Android do dono (enviada ao app de automação no aparelho). Use quando ele pedir algo DO APARELHO/celular ou para notificações interativas de confirmação/resposta. AÇÕES: alarme(hora) · timer(minutos) · brilho(nivel 0-100) · volume(nivel 0-100 ou "alto"/"medio"/"baixo"/"mudo") · midia(comando:"pausar"/"tocar"/"proxima"/"anterior" — controla a música/vídeo em reprodução) · lanterna() (alterna liga/desliga) · tela(estado:"desligar") · tema(modo:"claro"/"escuro") · naoperturbe(estado:"on"/"off") · notificar(titulo,texto) · notificacao_interativa(titulo,texto,opcao1,opcao2,modo,metadata?) · abrirApp(nome) · wifi(estado) · bluetooth(estado) · navegar(destino,origem?) · abrirUrl(url) · intent(intent_action,intent_package?,intent_data?,intent_mime?,intent_extra_key_1?,intent_extra_val_1?,...).',
         parameters: {
@@ -787,6 +812,11 @@ var Jarvis = (function () {
         name: 'definirTurnoTrabalho',
         description: 'Define o TURNO DE TRABALHO da semana do dono e reconfigura automaticamente os 4 alertas falados de ponto no Android (Seg–Sex). Use quando o dono disser que vai trabalhar no turno da manhã (ponto 08:00, 12:00, 13:00, 16:45) ou da tarde (14:00, 19:00, 20:00, 23:00).',
         parameters: { type: 'OBJECT', properties: { turno: { type: 'STRING', description: '"manha" ou "tarde"' } }, required: ['turno'] }
+      },
+      {
+        name: 'consultarSaldoSwile',
+        description: 'Consulta o SALDO do cartão Swile do dono: carteira VOUCHER (Refeição e Alimentação) e carteira MOBILIDADE (combustível/transporte). Use quando ele perguntar quanto tem de saldo, quanto sobrou do vale, do voucher, do vale-refeição, do vale-alimentação ou do vale-combustível. O valor é a ÂNCORA que ele informou na última recarga — informe também quando foi informado, para ele saber se está defasado. NÃO invente valor: se vier nulo, diga que ele ainda não informou e que o Jarvis pergunta na próxima recarga.',
+        parameters: { type: 'OBJECT', properties: {}, required: [] }
       },
       {
         name: 'resumirNotificacoes',
@@ -1052,6 +1082,10 @@ var Jarvis = (function () {
         nomes: ['criarLembreteCondicional', 'listarLembretesCondicionais']
       },
       {
+        re: /(saldo|swile|voucher|vale[- ]?(refei|aliment|combust)|mobilidade|quanto (eu )?tenho|quanto sobrou|cart[ãa]o de aliment)/i,
+        nomes: ['consultarSaldoSwile']
+      },
+      {
         re: /(o que (eu )?perdi|perdi alg|que chegou|chegou alg|notifica|me atualiza|novidades?\s+no\s+celular)/,
         nomes: ['resumirNotificacoes']
       },
@@ -1067,13 +1101,13 @@ var Jarvis = (function () {
         ]
       },
       {
-        re: /(anote|escrev|ingir|ingest|aprend|documenta|salv.*(conhecimento|wiki))/,
-        nomes: ['escreverWiki', 'registrarNoLog', 'ingerirFonte', 'listarRaw', 'lerWiki', 'listarWiki', 'buscarNoWiki']
+        re: /(anote|escrev|ingir|ingest|aprend|documenta|salv.*(conhecimento|wiki)|notebook|podcast|briefing|promov)/,
+        nomes: ['escreverWiki', 'registrarNoLog', 'ingerirFonte', 'listarRaw', 'lerWiki', 'listarWiki', 'buscarNoWiki', 'gerarPodcastWiki', 'prepararBriefingNotebookLM', 'promoverRawParaWiki']
       },
       {
         // Segundo cérebro: capturar (salvar) e reindexar a busca semântica (msg sem acento).
-        re: /(cerebro|captur|guarda.*(link|artigo|isso|esse)|salv.*(cerebro|link|artigo)|reindex|atualiz.*(busca|indice|semantic)|indexar?.*(conhecimento|cerebro|wiki))/,
-        nomes: ['capturarConhecimento', 'reindexarConhecimento', 'buscarConhecimento']
+        re: /(cerebro|captur|guarda.*(link|artigo|isso|esse)|salv.*(cerebro|link|artigo)|reindex|atualiz.*(busca|indice|semantic)|indexar?.*(conhecimento|cerebro|wiki)|podcast)/,
+        nomes: ['capturarConhecimento', 'reindexarConhecimento', 'buscarConhecimento', 'gerarPodcastWiki']
       },
       {
         re: /(skill|habilidade|ative|execut.*script|subagente|delegue|gere.*codigo)/,
@@ -1280,6 +1314,9 @@ var Jarvis = (function () {
       case 'lerMensagensWhatsApp':     return isOwner ? WhatsApp.findMessages(args.contato || args.numero, args.limite) : _denied(name);
       case 'gerarImagem':          return isOwner ? _gerarImagem(args, userEmail) : _denied(name);
       case 'gerarAudio':           return isOwner ? _gerarAudio(args, userEmail) : _denied(name);
+      case 'gerarPodcastWiki':     return isOwner ? _gerarPodcastWiki(args, userEmail) : _denied(name);
+      case 'prepararBriefingNotebookLM': return isOwner ? _prepararBriefingNotebookLM(args) : _denied(name);
+      case 'promoverRawParaWiki':  return isOwner ? WikiMemoryService.promoverRawParaWiki(args.caminhoRawOuId, args.subpastaWiki) : _denied(name);
       case 'controlarDispositivo': return isOwner ? _controlarDispositivo(args) : _denied(name);
       case 'lerPagina':            return isOwner ? _lerPagina(args) : _denied(name);
       case 'monitorarPagina':      return isOwner ? Web.monitorar(args.url, args.descricao) : _denied(name);
@@ -1297,6 +1334,16 @@ var Jarvis = (function () {
       case 'cancelarAlertaVoz':    return isOwner ? (typeof AlertasVoz !== 'undefined' ? AlertasVoz.cancelar(args && args.alerta) : { status: 'error' }) : _denied(name);
       case 'definirTurnoTrabalho': return isOwner ? (typeof AlertasVoz !== 'undefined' && AlertasVoz.definirTurno ? AlertasVoz.definirTurno(args && args.turno) : { status: 'error', erro: 'AlertasVoz indisponível.' }) : _denied(name);
       // Lembretes por PRESENÇA (Wi-Fi) — implementados em Code.js, disparam nas transições de local.
+      case 'consultarSaldoSwile':       return isOwner ? (function () {
+        if (typeof obterSaldoFinanceiro !== 'function') return { status: 'error', erro: 'Saldo indisponível.' };
+        var sd = obterSaldoFinanceiro();
+        var dias = sd.em ? Math.floor((Date.now() - Number(sd.em)) / 86400000) : null;
+        return { status: 'success', voucher: sd.voucher, mobilidade: sd.mobilidade,
+                 informadoEm: sd.em ? new Date(sd.em).toISOString() : null, diasDesdeInformado: dias,
+                 origem: sd.origem,
+                 nota: sd.em ? 'Valor informado pelo dono na recarga; compras posteriores ainda não são descontadas automaticamente.'
+                             : 'Nenhum saldo informado ainda.' };
+      })() : _denied(name);
       case 'resumirNotificacoes':        return isOwner ? (typeof resumirNotificacoes === 'function' ? resumirNotificacoes(args) : { status: 'error', erro: 'Notificações indisponíveis.' }) : _denied(name);
       case 'criarLembreteCondicional':   return isOwner ? (typeof criarLembreteCondicional === 'function' ? criarLembreteCondicional(args) : { status: 'error', erro: 'Lembretes condicionais indisponíveis.' }) : _denied(name);
       case 'listarLembretesCondicionais': return isOwner ? (typeof listarLembretesCondicionais === 'function' ? listarLembretesCondicionais({}) : { status: 'error', erro: 'Lembretes condicionais indisponíveis.' }) : _denied(name);
@@ -1900,6 +1947,166 @@ var Jarvis = (function () {
     } catch (e) { return { status: 'error', erro: e.message }; }
   }
 
+  // Helper para chamar Gemini.gerar com prompt de texto simples
+  function _chamarGeminiTexto(promptTexto) {
+    try {
+      var resp = Gemini.gerar({
+        contents: [{ role: 'user', parts: [{ text: promptTexto }] }]
+      });
+      var cand = (((resp.json || {}).candidates || [])[0] || {});
+      var text = (((cand.content || {}).parts || [])[0] || {}).text || '';
+      if (!text) Logger.log('[Jarvis._chamarGeminiTexto] Candidato sem texto: ' + JSON.stringify(resp.json || {}));
+      return text.trim();
+    } catch (e) {
+      Logger.log('[Jarvis._chamarGeminiTexto] Erro: ' + e.message);
+      return '';
+    }
+  }
+
+  // Gera um PODCAST DE 2 VOZES (Audio Overview) usando a base curada no Drive / NotebookLM
+  function _gerarPodcastWiki(a, userEmail) {
+    try {
+      a = a || {};
+      if (!a.topico && !a.caminhoWiki) return { status: 'error', erro: 'Informe o tópico ou caminhoWiki para gerar o podcast.' };
+      if (typeof Voz === 'undefined' || !Voz.temChave()) return { status: 'error', erro: 'Síntese de voz indisponível (Service Account / API ausente).' };
+
+      var topico = a.topico || a.caminhoWiki;
+
+      // 1. CHECAGEM INBOUND NOTEBOOKLM: Procura por arquivo de áudio (Audio Overview) pré-gerado pelo NotebookLM no Drive
+      try {
+        var rootWiki = WikiMemoryService._getWikiRoot();
+        var pastasChecagem = [rootWiki];
+        var itOut = rootWiki.getFoldersByName('outputs');
+        if (itOut.hasNext()) pastasChecagem.push(itOut.next());
+        
+        var rawFolderId = PropertiesService.getScriptProperties().getProperty('RAW_DRIVE_ID');
+        if (rawFolderId) pastasChecagem.push(DriveApp.getFolderById(rawFolderId));
+
+        for (var pIdx = 0; pIdx < pastasChecagem.length; pIdx++) {
+          var pastaAtual = pastasChecagem[pIdx];
+          var arqsAudio = pastaAtual.getFiles();
+          while (arqsAudio.hasNext()) {
+            var fAudio = arqsAudio.next();
+            var nomeAudio = fAudio.getName().toLowerCase();
+            var mimeAudio = (fAudio.getMimeType() || '').toLowerCase();
+            if ((mimeAudio.indexOf('audio/') === 0 || /\.(mp3|wav|m4a|aac|ogg)$/i.test(nomeAudio)) &&
+                nomeAudio.indexOf(topico.toLowerCase().replace(/[^a-z0-9]/g, '')) !== -1) {
+              var msgDrive = 'Encontrei o Audio Overview do NotebookLM sobre "' + topico + '" no seu Google Drive!';
+              try { _falarNoCelular(msgDrive); } catch (eF) {}
+              return {
+                status: 'success',
+                topico: topico,
+                origem: 'notebooklm_drive',
+                url: fAudio.getUrl(),
+                fileId: fAudio.getId(),
+                mensagem: msgDrive + ' Áudio: ' + fAudio.getUrl()
+              };
+            }
+          }
+        }
+      } catch (eDriveSearch) {
+        Logger.log('[Jarvis._gerarPodcastWiki] Erro ao buscar áudio pré-existente no Drive: ' + eDriveSearch.message);
+      }
+
+      // 2. BUSCA DE CONHECIMENTO CURADO NAS PASTAS DO DRIVE (/wiki/ e /raw/)
+      var textoBase = '';
+      if (a.caminhoWiki) {
+        var rWiki = WikiMemoryService.lerWiki(a.caminhoWiki);
+        if (rWiki.status === 'success') textoBase = rWiki.conteudo;
+      }
+
+      if (!textoBase) {
+        var rBusca = _buscarConhecimento({ consulta: topico });
+        if (rBusca && rBusca.trechos && rBusca.trechos.length) {
+          textoBase = rBusca.trechos.map(function(t) { return t.trecho; }).join('\n\n');
+        }
+      }
+
+      if (!textoBase) {
+        var palavras = String(topico).split(/\s+/).filter(function(p) { return p.length > 3; });
+        for (var p = 0; p < palavras.length; p++) {
+          var rSimpl = _buscarConhecimento({ consulta: palavras[p] });
+          if (rSimpl && rSimpl.trechos && rSimpl.trechos.length) {
+            textoBase = rSimpl.trechos.map(function(t) { return t.trecho; }).join('\n\n');
+            break;
+          }
+        }
+      }
+
+      if (!textoBase) {
+        return { status: 'error', erro: 'Não encontrei nenhum documento ou nota da base do Drive/NotebookLM sobre "' + topico + '". Por favor, adicione o manual/documento na pasta /raw/ ou /wiki/ do Drive para o NotebookLM e o Jarvis digerirem.' };
+      }
+
+      // 3. GERAÇÃO DE ROTEIRO DINÂMICO DE PODCAST DE 2 VOZES BASEADO NOS DOCUMENTOS DO DRIVE
+      var promptRoteiro = 'Você é o estúdio de podcast do NotebookLM. Transforme as notas e documentos extraídos do Google Drive abaixo em um diálogo vibrante e altamente educativo em formato de Podcast (Audio Overview) entre 2 apresentadores (Host A: Enceladus [Masculino] e Host B: Sulafat [Feminino]).\n' +
+        'O diálogo deve durar cerca de 1 a 2 minutos e cobrir com fidelidade acadêmica os detalhes técnicos apresentados nos documentos.\n\n' +
+        'Formate EXATAMENTE assim:\n' +
+        'Host A: [fala do Enceladus]\n' +
+        'Host B: [fala da Sulafat]\n\n' +
+        'Documentos Extraídos do Drive:\n' + textoBase.substring(0, 5000);
+
+      var roteiro = _chamarGeminiTexto(promptRoteiro);
+      if (!roteiro) return { status: 'error', erro: 'Falha ao gerar o roteiro do podcast via Gemini (roteiro vazio).' };
+
+      // 4. SÍNTESE COM VOZES PREMIUM CHIRP3-HD (pt-BR-Chirp3-HD-Enceladus e pt-BR-Chirp3-HD-Sulafat)
+      var resVoz = Voz.sintetizarDialogo(roteiro, {
+        vozA: 'pt-BR-Chirp3-HD-Enceladus',
+        vozB: 'pt-BR-Chirp3-HD-Sulafat',
+        salvarNoDrive: true
+      });
+
+      if (resVoz.status !== 'success') {
+        return { status: 'error', erro: 'Falha na síntese de áudio das vozes Chirp3-HD: ' + (resVoz.erro || JSON.stringify(resVoz)) };
+      }
+
+      var msgResumo = 'Criei o podcast de 2 vozes (Enceladus & Sulafat) sobre ' + topico + ' a partir das notas do Drive! O áudio foi salvo no seu Google Drive.';
+      try { _falarNoCelular(msgResumo); } catch (eF) {}
+
+      return {
+        status: 'success',
+        topico: topico,
+        totalFalas: resVoz.totalFalas,
+        url: resVoz.url,
+        fileId: resVoz.fileId,
+        mensagem: msgResumo + ' Link no Drive: ' + (resVoz.url || 'outputs/')
+      };
+    } catch (e) {
+      Logger.log('[Jarvis._gerarPodcastWiki] Erro: ' + e.message);
+      return { status: 'error', erro: 'Exceção em podcast: ' + e.message };
+    }
+  }
+
+  // Prepara e formata um Briefing estruturado em Markdown para ingestão no NotebookLM
+  function _prepararBriefingNotebookLM(a) {
+    try {
+      a = a || {};
+      if (!a.titulo || !a.conteudo) return { status: 'error', erro: 'Informe titulo e conteudo para o briefing.' };
+      var slug = String(a.titulo).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+      var carimbo = Utilities.formatDate(new Date(), 'America/Sao_Paulo', 'yyyy-MM-dd');
+      var caminho = 'sources/' + carimbo + '_briefing-' + slug + '.md';
+
+      var topicosTxt = (Array.isArray(a.topicos) && a.topicos.length)
+        ? a.topicos.map(function(t) { return '- ' + t; }).join('\n')
+        : '- Ingestão e curadoria preparada via Jarvis para o NotebookLM.';
+
+      var docMd = '# Briefing NotebookLM: ' + a.titulo + '\n\n' +
+        '**Resumo:** Briefing preparado pelo Jarvis para análise no NotebookLM.\n' +
+        '**Data:** ' + Utilities.formatDate(new Date(), 'America/Sao_Paulo', 'dd/MM/yyyy HH:mm') + '\n\n' +
+        '## Conteúdo Principal\n\n' + a.conteudo + '\n\n' +
+        '## Tópicos Chave\n\n' + topicosTxt + '\n';
+
+      var resEscrita = WikiMemoryService.escreverWiki(caminho, docMd);
+      WikiMemoryService.registrarNoLog('Briefing criado para NotebookLM: ' + caminho);
+
+      return {
+        status: 'success',
+        caminho: caminho,
+        detalhes: resEscrita,
+        instrucoesNotebookLM: 'Briefing salvo no Drive (' + caminho + '). Conecte essa pasta no NotebookLM para análise profunda.'
+      };
+    } catch (e) { return { status: 'error', erro: e.message }; }
+  }
+
   // Transcreve um áudio (base64) via Gemini multimodal.
   // P-I · viés léxico (ASR lexicon biasing): nomes próprios prováveis (contatos do Google +
   // termos do projeto) dados como DICA ao transcritor → conserta a grafia de nomes/termos
@@ -2200,8 +2407,24 @@ var Jarvis = (function () {
           // de https://drive.google.com/uc?export=download&{webhook_query_params}. Demais ações: campo=val...
           var alvo, qs;
           if (acao === 'falar') {
-            var fala = _falarNoCelular(args.texto, a.voz);
-            if (!fala.ok) return { status: 'error', erro: 'Falha ao gerar a voz na nuvem: ' + fala.erro };
+            // SERIALIZAÇÃO DA FALA. A macro Jarvis Falar baixa SEMPRE o mesmo arquivo (ID fixo no
+            // Drive) para /Download/jarvis-fala.wav e toca. Se uma segunda fala chega enquanto a
+            // primeira ainda toca, o arquivo é sobrescrito no meio da reprodução — o áudio sai
+            // cortado e emendado (foi o que aconteceu na chegada em casa: lembrete + saudação).
+            // Aqui a fala vira exclusiva: espera a anterior terminar antes de gerar a próxima.
+            var _lockFala = null;
+            try { _lockFala = LockService.getScriptLock(); _lockFala.waitLock(45000); } catch (eLk) { _lockFala = null; }
+            try {
+              var _pFala = PropertiesService.getScriptProperties();
+              var _livreEm = Number(_pFala.getProperty('FALA_LIVRE_EM') || 0);
+              var _espera = _livreEm - Date.now();
+              if (_espera > 0) Utilities.sleep(Math.min(_espera, 30000));   // teto: não trava o request
+              var fala = _falarNoCelular(args.texto, a.voz);
+              if (!fala.ok) { if (_lockFala) _lockFala.releaseLock(); return { status: 'error', erro: 'Falha ao gerar a voz na nuvem: ' + fala.erro }; }
+              // Duração estimada: ~14 caracteres/s em pt-BR, + 4 s de download e partida do player.
+              var _dur = Math.ceil(String(args.texto || '').length / 14) * 1000 + 4000;
+              _pFala.setProperty('FALA_LIVRE_EM', String(Date.now() + Math.min(_dur, 90000)));
+            } finally { if (_lockFala) { try { _lockFala.releaseLock(); } catch (eRl) {} } }
             alvo = _mdEvento(url, 'jarvis_falar');
             qs = ''; // a URL do áudio é FIXA na macro (ID estável) → só precisamos DISPARAR o evento
           } else {
@@ -2971,7 +3194,7 @@ var Jarvis = (function () {
                        : '⚠️ Atingi o limite de passos sem concluir. Tente reformular o pedido.';
   }
 
-  return { ask: ask, _isOwner: _isOwner, registrarEvento: _registrarEvento, lerPrefs: _lerPrefs, prepararVozCelular: _falarNoCelular, controlarDispositivo: _controlarDispositivo, capturarConhecimento: _capturarConhecimento, buscarConhecimento: _buscarConhecimento, ultimoTrace: function () { return (_ultimoTrace || []).slice(); } };
+  return { ask: ask, _isOwner: _isOwner, registrarEvento: _registrarEvento, lerPrefs: _lerPrefs, prepararVozCelular: _falarNoCelular, controlarDispositivo: _controlarDispositivo, capturarConhecimento: _capturarConhecimento, buscarConhecimento: _buscarConhecimento, gerarPodcastWiki: _gerarPodcastWiki, ultimoTrace: function () { return (_ultimoTrace || []).slice(); } };
 })();
 
 /**

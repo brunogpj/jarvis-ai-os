@@ -153,22 +153,86 @@ var Semantica = (function () {
     return v || [];
   }
 
-  /** Busca semântica: embeda a consulta e retorna os top-k trechos por cosseno. Resultado cacheado. */
+  // Algoritmo Lexical BM25 (Best Matching 25) para ranking textual no Apps Script
+  function _bm25Buscar(consulta, docs, k) {
+    k = k || 5;
+    if (!docs || !docs.length) return [];
+    var termos = String(consulta || '').toLowerCase().replace(/[^\w\s\u00C0-\u00FF]/g, ' ').split(/\s+/).filter(function(t) { return t.length > 2; });
+    if (!termos.length) return [];
+
+    var N = docs.length;
+    var avgdl = 0;
+    var docTokens = docs.map(function(d) {
+      var tok = String((d.dados && d.dados.trecho) || d.trecho || '').toLowerCase().replace(/[^\w\s\u00C0-\u00FF]/g, ' ').split(/\s+/).filter(Boolean);
+      avgdl += tok.length;
+      return tok;
+    });
+    avgdl = N > 0 ? (avgdl / N) : 1;
+
+    var k1 = 1.5, b = 0.75;
+    var idf = {};
+    termos.forEach(function(t) {
+      var n_t = 0;
+      docTokens.forEach(function(toks) {
+        if (toks.indexOf(t) !== -1) n_t++;
+      });
+      idf[t] = Math.log(1 + (N - n_t + 0.5) / (n_t + 0.5));
+    });
+
+    var scored = docs.map(function(d, idx) {
+      var toks = docTokens[idx];
+      var docLen = toks.length;
+      var score = 0;
+
+      termos.forEach(function(t) {
+        var tf = 0;
+        for (var i = 0; i < toks.length; i++) { if (toks[i] === t) tf++; }
+        if (tf > 0) {
+          var num = tf * (k1 + 1);
+          var den = tf + k1 * (1 - b + b * (docLen / avgdl));
+          score += (idf[t] || 0) * (num / den);
+        }
+      });
+
+      var cam = String((d.dados && d.dados.caminho) || d.caminho || '').toLowerCase();
+      termos.forEach(function(t) {
+        if (cam.indexOf(t) !== -1) score += 3.0;
+      });
+
+      return { caminho: (d.dados && d.dados.caminho) || d.caminho, trecho: (d.dados && d.dados.trecho) || d.trecho, score: Number(score.toFixed(4)), via: 'bm25' };
+    });
+
+    scored.sort(function(a, b) { return b.score - a.score; });
+    return scored.filter(function(s) { return s.score > 0; }).slice(0, k);
+  }
+
+  /** Busca semântica: embeda a consulta e retorna os top-k trechos por cosseno. Se a cota de embeddings esgotar, faz fallback gracioso para BM25. */
   function buscar(consulta, k, opts) {
     k = k || 5;
     var cache = CacheService.getScriptCache();
-    // o modo de similaridade entra na chave: sem isso, um A/B leria o resultado do outro modo.
     var modo = ((opts && opts.centralizar !== undefined) ? !!opts.centralizar : _centralizando()) ? 'c' : 'r';
     var ck = 'sem_res_' + modo + '_' + _hash(String(consulta) + '|' + k);
     try { var hit = cache.get(ck); if (hit) return JSON.parse(hit); } catch (eC) {}
     var docs = Firestore.listDocs(COL, 1000);
     if (!docs.length) return [];
-    var qv = Gemini.embeddar(consulta, { tipo: 'RETRIEVAL_QUERY' });
+
+    var qv = null;
+    try {
+      qv = Gemini.embeddar(consulta, { tipo: 'RETRIEVAL_QUERY' });
+    } catch (eEmb) {
+      Logger.log('[Semantica] Gemini.embeddar indisponível (' + eEmb.message + ') — ativando fallback BM25.');
+    }
+
+    if (!qv || !qv.length) {
+      var resBM25 = _bm25Buscar(consulta, docs, k);
+      try { cache.put(ck, JSON.stringify(resBM25), 600); } catch (eP) {}
+      return resBM25;
+    }
+
     var mu = (modo === 'c') ? _centroide(docs) : null;
-    // VAR-1: cache semântico por SIMILARIDADE — se já respondemos uma consulta parecida (cosseno
-    // alto entre os embeddings da query), reusa o resultado e pula o escaneamento de TODOS os docs.
     var sim = _simCacheGet(qv, k, modo);
     if (sim) { try { cache.put(ck, JSON.stringify(sim), 1800); } catch (e1) {} return sim; }
+
     var scored = docs.map(function (d) {
       return { caminho: d.dados.caminho, trecho: d.dados.trecho, score: _cossenoCentrado(qv, _vetorDe(d.dados.vetor), mu) };
     });
@@ -177,6 +241,47 @@ var Semantica = (function () {
     try { cache.put(ck, JSON.stringify(top), 1800); } catch (eP) {}
     _simCachePut(qv, k, top, modo);
     return top;
+  }
+
+  /**
+   * Busca HÍBRIDA (Cosseno + BM25 fundidos via RRF - Reciprocal Rank Fusion).
+   * Se embeddings estiverem indisponíveis (cota 429), degrada perfeitamente para BM25.
+   */
+  function buscarHibrido(consulta, k) {
+    k = k || 5;
+    var docs = Firestore.listDocs(COL, 1000);
+    if (!docs.length) return [];
+
+    var rankBM25 = _bm25Buscar(consulta, docs, 20);
+    var rankSem = [];
+    try {
+      rankSem = buscar(consulta, 20);
+    } catch (e) {
+      Logger.log('[Semantica] Erro na busca semântica para RRF: ' + e.message);
+    }
+
+    var rrfScores = {};
+    var rrfConst = 60;
+
+    rankSem.forEach(function(item, rank) {
+      var key = item.caminho + '|||' + item.trecho.substring(0, 50);
+      if (!rrfScores[key]) rrfScores[key] = { caminho: item.caminho, trecho: item.trecho, rrfScore: 0, semScore: item.score, bm25Score: 0 };
+      rrfScores[key].rrfScore += (1 / (rrfConst + (rank + 1)));
+    });
+
+    rankBM25.forEach(function(item, rank) {
+      var key = item.caminho + '|||' + item.trecho.substring(0, 50);
+      if (!rrfScores[key]) rrfScores[key] = { caminho: item.caminho, trecho: item.trecho, rrfScore: 0, semScore: 0, bm25Score: item.score };
+      rrfScores[key].bm25Score = item.score;
+      rrfScores[key].rrfScore += (1 / (rrfConst + (rank + 1)));
+    });
+
+    var fused = Object.keys(rrfScores).map(function(k) { return rrfScores[k]; });
+    fused.sort(function(a, b) { return b.rrfScore - a.rrfScore; });
+
+    return fused.slice(0, k).map(function(f) {
+      return { caminho: f.caminho, trecho: f.trecho, score: Number(f.rrfScore.toFixed(4)), semScore: f.semScore, bm25Score: f.bm25Score };
+    });
   }
 
   // VAR-1 · cache semântico por similaridade (lista curta de {emb arredondado, k, top} no CacheService).
@@ -249,7 +354,7 @@ var Semantica = (function () {
     return n;
   }
 
-  return { indexar: indexar, buscar: buscar, status: status, limpar: limpar, purgarMeta: purgarMeta, purgarSkills: purgarSkills };
+  return { indexar: indexar, buscar: buscar, buscarHibrido: buscarHibrido, status: status, limpar: limpar, purgarMeta: purgarMeta, purgarSkills: purgarSkills };
 })();
 
 /**

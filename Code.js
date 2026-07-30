@@ -14,6 +14,19 @@
  * Usa createTemplateFromFile().evaluate() para PROCESSAR os scriptlets
  * <?!= include('...') ?> dentro do Index.html.
  */
+/** Ponte para o painel interativo: o fetch() do painel era CROSS-ORIGIN (a pagina roda em
+ *  script.googleusercontent.com e chamava script.google.com), e o GAS nao manda cabecalho CORS —
+ *  a requisicao nao chegava. Com google.script.run a chamada e same-origin e devolve o resultado
+ *  REAL, para o painel parar de anunciar sucesso que nao houve. */
+function responderCallbackInterativo(id, botao, resposta) {
+  try {
+    var out = doGet({ parameter: { action: 'callback_interativa', id: String(id || ''),
+                                   botao: String(botao || ''), resposta: String(resposta || '') } });
+    var txt = (out && out.getContent) ? out.getContent() : String(out);
+    return { ok: !/^Erro|^N[aã]o entendi|^Digite os saldos/.test(txt), mensagem: txt };
+  } catch (e) { return { ok: false, mensagem: 'Falha: ' + e.message }; }
+}
+
 function doGet(e) {
   if (e && e.parameter && e.parameter.action === 'ler_debug') {
     var jsonOut = function (obj) { return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON); };
@@ -68,6 +81,29 @@ function doGet(e) {
       cbDoc.respondido = true;
       Firestore.setDoc('callbacks_interativos', id, cbDoc);
       
+      // SALDO: ele digita os dois valores no campo de texto do painel.
+      if (cbDoc.tipo === 'saldo') {
+        if (botao === '2') return ContentService.createTextOutput('Ok, depois então.').setMimeType(ContentService.MimeType.TEXT);
+        if (botao !== 'texto') {
+          // botão 1 não carrega valor — reabre para ele digitar, em vez de gravar lixo.
+          cbDoc.respondido = false;
+          try { Firestore.setDoc('callbacks_interativos', id, cbDoc); } catch (eR) {}
+          return ContentService.createTextOutput('Digite os saldos no campo de texto (ex.: 700, 250) e toque em Enviar.').setMimeType(ContentService.MimeType.TEXT);
+        }
+        var lidoS = (typeof _finLerSaldoDeTexto === 'function') ? _finLerSaldoDeTexto(resposta) : null;
+        if (!lidoS) {
+          cbDoc.respondido = false;
+          try { Firestore.setDoc('callbacks_interativos', id, cbDoc); } catch (eR2) {}
+          return ContentService.createTextOutput('Não entendi o valor. Tente algo como "700, 250".').setMimeType(ContentService.MimeType.TEXT);
+        }
+        var rs = definirSaldoFinanceiro({ voucher: lidoS.voucher, mobilidade: lidoS.mobilidade, origem: 'recarga' });
+        var txtOk = rs.ok
+          ? ('Saldo registrado - voucher ' + (rs.saldo.voucher === null ? '(nao informado)' : ('R$ ' + rs.saldo.voucher.toFixed(2))) +
+             ', mobilidade ' + (rs.saldo.mobilidade === null ? '(nao informado)' : ('R$ ' + rs.saldo.mobilidade.toFixed(2))) + '.')
+          : ('Nao consegui gravar: ' + rs.erro);
+        return ContentService.createTextOutput(txtOk).setMimeType(ContentService.MimeType.TEXT);
+      }
+
       // Processa conforme o tipo
       if (cbDoc.tipo === 'conversa') {
         var textoResposta = "";
@@ -2623,6 +2659,12 @@ function doPost(e) {
           var num = m[1].replace(/[^\d]/g, '');
           return (num.length >= 8 && num.length <= 13) ? num : null; // só número; nome → LLM (buscarContato)
         })();
+        // (ix) PODCAST DE CONHECIMENTO WIKI -> determinístico (Audio Overview)
+        var _pod = (function () {
+          var m = msgVoz.trim().match(/(?:ger[ae]|gerar|cri[ae]|criar|faz|fazer)\s+(?:um\s+)?podcast\s+(?:sobre\s+|do\s+|da\s+|de\s+)?(.+?)[\s\.!?]*$/i);
+          if (!m) m = msgVoz.trim().match(/podcast\s+(?:sobre\s+|do\s+|da\s+|de\s+)?(.+?)[\s\.!?]*$/i);
+          return m ? m[1].trim() : null;
+        })();
         var _mAbrir = msgVoz.trim().match(/^(?:abr[ae]|abrir|inicie?|inicia|iniciar|lan[çc]a(?:r)?|lance)\s+(?:o |a |os |as |ao |meu |minha |app |aplicativo (?:d[oae] )?)*(.+?)[\s\.!?]*$/i);
         var _appNome = _mAbrir ? _mAbrir[1].trim() : '';
         var _acaoComposta = /(pesquis|busque|busca|toque|toca|reproduz|\d{1,3}\s*:\s*\d{1,3}|vers[ií]culo|cap[ií]tulo|salmo|rota|navegue|caminho|dire[cç]|conversa|mensagem|manda|envi[ae]|mostre|veja|leia|liga)/i.test(msgVoz);
@@ -2775,6 +2817,15 @@ function doPost(e) {
             Jarvis.controlarDispositivo({ acao: 'navegar', destino: _rota });
             respVoz = 'Traçando a rota para ' + _rota + '.';
           } catch (eRt) { respVoz = Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false }); }
+        } else if (_pod && typeof Jarvis !== 'undefined' && Jarvis.gerarPodcastWiki) {
+          try {
+            var _rPod = Jarvis.gerarPodcastWiki({ topico: _pod }, emailUser);
+            if (_rPod && _rPod.status === 'success') {
+              respVoz = _rPod.mensagem;
+            } else {
+              respVoz = 'Não consegui criar o podcast sobre ' + _pod + ': ' + ((_rPod && _rPod.erro) || 'erro desconhecido') + '.';
+            }
+          } catch (ePd) { respVoz = 'Erro ao gerar podcast: ' + ePd.message; }
         } else if (_loja && typeof Jarvis !== 'undefined' && Jarvis.controlarDispositivo) {
           try {
             Jarvis.controlarDispositivo({ acao: 'abrirUrl', url: _loja.url });
@@ -4061,6 +4112,93 @@ function diagFinanceiro(args) {
                       titulo: i.d.titulo, texto: i.d.texto, parseado: i.d.parseado === true }; }) };
 }
 
+
+/* ── SALDO DO SWILE: âncora informada por ele ──────────────────────────────────────────────
+ * A notificação de recarga do Swile NÃO traz número ("Tem carga nova no seu Swile! / Já decidiu
+ * como vai usar?"). É isca de marketing, não aviso de crédito. Então a âncora do saldo não pode
+ * vir dela — mas a de SAÍDA vem completa ("Compra aprovada de R$ 1,19 na carteira Refeição e
+ * Alimentação, no estabelecimento PADARIA MIRAGO"), e é o que permite decrementar.
+ * Desenho: a recarga DISPARA uma notificação interativa pedindo os dois saldos; ele digita uma
+ * vez por mês e o Jarvis debita sozinho o resto do tempo.
+ */
+var _FIN_SALDO = 'FIN_SALDO';
+
+/** "1.234,56" | "700,50" | "700" → número. Formato BR: vírgula decimal, ponto de milhar. */
+function _finNum(v) {
+  var t = String(v === undefined || v === null ? '' : v).replace(/[^\d.,]/g, '');
+  if (!t) return null;
+  if (/,\d{1,2}$/.test(t)) t = t.replace(/\./g, '').replace(',', '.');
+  else t = t.replace(/,/g, '');
+  var n = Number(t);
+  return (isFinite(n) && n >= 0) ? n : null;
+}
+
+/** Grava a âncora. args {voucher, mobilidade, origem}. Campo ausente NÃO apaga o que já havia. */
+function definirSaldoFinanceiro(args) {
+  args = args || {};
+  var p = PropertiesService.getScriptProperties();
+  var atual = obterSaldoFinanceiro();
+  var v = (args.voucher !== undefined) ? _finNum(args.voucher) : atual.voucher;
+  var m = (args.mobilidade !== undefined) ? _finNum(args.mobilidade) : atual.mobilidade;
+  if (v === null && m === null) return { ok: false, erro: 'nenhum valor válido informado' };
+  var doc = { voucher: v, mobilidade: m, em: Date.now(), origem: String(args.origem || 'manual') };
+  try { p.setProperty(_FIN_SALDO, JSON.stringify(doc)); } catch (e) { return { ok: false, erro: e.message }; }
+  return { ok: true, saldo: doc };
+}
+
+function obterSaldoFinanceiro() {
+  try {
+    var d = JSON.parse(PropertiesService.getScriptProperties().getProperty(_FIN_SALDO) || 'null');
+    if (d) return d;
+  } catch (e) {}
+  return { voucher: null, mobilidade: null, em: null, origem: null };
+}
+
+/** Extrai um ou dois valores de texto livre ("700, 250" · "voucher 700 mobilidade 250"). */
+function _finLerSaldoDeTexto(txt) {
+  var t = String(txt || '');
+  var mv = t.match(/(?:voucher|refei[çc][ãa]o|alimenta[çc][ãa]o)\D{0,12}([\d.,]+)/i);
+  var mm = t.match(/(?:mobilidade|combust[íi]vel|cr[ée]dito)\D{0,12}([\d.,]+)/i);
+  if (mv || mm) {
+    return { voucher: mv ? _finNum(mv[1]) : null, mobilidade: mm ? _finNum(mm[1]) : null, porRotulo: true };
+  }
+  var nums = (t.match(/[\d.,]*\d/g) || []).map(_finNum).filter(function (n) { return n !== null; });
+  if (!nums.length) return null;
+  return { voucher: nums[0], mobilidade: nums.length > 1 ? nums[1] : null, porRotulo: false };
+}
+
+/** Pede os saldos por notificação interativa. Chamado pela regra ao ver a recarga. */
+function _finPedirSaldo() {
+  if (typeof Jarvis === 'undefined' || !Jarvis.controlarDispositivo) return { ok: false, erro: 'Jarvis indisponível' };
+  try {
+    var r = Jarvis.controlarDispositivo({
+      acao: 'notificacao_interativa',
+      modo: 'saldo',
+      titulo: 'Recarga do Swile caiu',
+      texto: 'Quanto entrou? Toque aqui e digite os dois saldos no campo de texto - ex.: "700, 250" (voucher, mobilidade).',
+      opcao1: 'Vou digitar abaixo',
+      opcao2: 'Depois'
+    });
+    return { ok: !!(r && r.status === 'success'), resposta: r };
+  } catch (e) { return { ok: false, erro: e.message }; }
+}
+
+/** Diag: {} mostra o saldo · {voucher,mobilidade} define · {texto} interpreta · {pedir:true} dispara. */
+function diagSaldo(args) {
+  args = args || {};
+  if (args.pedir === true) return _finPedirSaldo();
+  if (args.texto !== undefined) {
+    var lido = _finLerSaldoDeTexto(args.texto);
+    if (!lido) return { ok: false, erro: 'não achei número no texto', entrada: args.texto };
+    if (args.simular === true) return { ok: true, simulado: true, lido: lido };
+    return definirSaldoFinanceiro({ voucher: lido.voucher, mobilidade: lido.mobilidade, origem: 'texto' });
+  }
+  if (args.voucher !== undefined || args.mobilidade !== undefined) return definirSaldoFinanceiro(args);
+  var sd = obterSaldoFinanceiro();
+  return { ok: true, saldo: sd, informadoEm: sd.em ? new Date(sd.em).toISOString() : null,
+           nota: sd.em ? null : 'nenhum saldo informado ainda — a recarga dispara o pedido' };
+}
+
 /* ===================== REGRAS DE NOTIFICAÇÃO (guardar → AGIR) =====================
  * Guardar não é agir. Uma regra é: app + padrão no texto → o que fazer.
  * Ações:
@@ -4119,6 +4257,13 @@ function _notifAplicarRegras(d) {
 
     // financeiro = também vai para a coleção de retenção longa, com o texto BRUTO preservado.
     // NÃO fala: extrato não é interrupção.
+    // recarga: guarda o bruto E pede os saldos, porque a notificação não traz número nenhum.
+    if (acao === 'perguntar_saldo') {
+      var rfs = _finGuardarBruto(d);
+      var rp = _finPedirSaldo();
+      return { regra: r.id, acao: 'perguntar_saldo', arquivado: rfs.ok, pediu: rp.ok, erro: rp.erro || null };
+    }
+
     if (acao === 'financeiro') {
       var rf = _finGuardarBruto(d);
       return { regra: r.id, acao: 'financeiro', arquivado: rf.ok, erro: rf.erro || null };
@@ -4353,6 +4498,20 @@ function _dispararLembretesDe(gatilho, opts) {
       expirados++; return;
     }
     if (l.gatilho !== gatilho) return;
+    // MODO COLETA: não fala aqui. A fala do celular grava um arquivo TTS e a macro toca uma URL
+    // FIXA — duas falas no mesmo ciclo sobrescrevem o arquivo com a primeira ainda tocando, e o
+    // áudio sai cortado e emendado (foi o que aconteceu na chegada em casa: lembrete do boleto +
+    // saudação com e-mails). Quem coleta junta tudo numa fala só e consome depois do sucesso.
+    if (opts.coletar && opts.coletar.push) {
+      // termina em ponto: sem isso a fala emenda 'guarda-chuva Lembrete: passar no mercado'.
+      opts.coletar.push(noite ? null : ('Lembrete: ' + String(l.texto).replace(/[.\s]+$/, '') + '.'));
+      if (opts.pendentes && opts.pendentes.push) opts.pendentes.push(l.id);
+      if (noite && !opts.simular) {   // madrugada: notificação silenciosa, fora da fala
+        try { Jarvis.controlarDispositivo({ acao: 'notificar', titulo: 'Lembrete do Jarvis', texto: l.texto }); } catch (eN) {}
+      }
+      entregues.push({ id: l.id, texto: l.texto, canal: noite ? 'notificacao' : 'voz-coletada', ok: true });
+      return;
+    }
     if (opts.simular) { entregues.push({ id: l.id, texto: l.texto, canal: noite ? 'notificacao' : 'voz', ok: 'simulado' }); return; }
     var res = null;
     if (typeof Jarvis !== 'undefined' && Jarvis.controlarDispositivo) {
@@ -4371,6 +4530,19 @@ function _dispararLembretesDe(gatilho, opts) {
   });
   if (mudou) _lembSalvar(arr);
   return { entregues: entregues, expirados: expirados };
+}
+
+/** Marca como entregues os lembretes coletados, DEPOIS que a fala única deu certo. */
+function _lembConsumir(ids) {
+  if (!ids || !ids.length) return 0;
+  var arr = _lembLer(), n = 0, agora = Date.now();
+  arr.forEach(function (l) {
+    if (ids.indexOf(l.id) === -1) return;
+    if (l.repetir !== true) l.ativo = false;
+    l.disparadoEm = agora; n++;
+  });
+  if (n) _lembSalvar(arr);
+  return n;
 }
 
 /** Texto livre → lembrete condicional. Cobre as DUAS ordens:
@@ -4581,8 +4753,10 @@ function _avaliarEventosProativos(tel, opts) {
     if (transicao.para === 'trabalho') _evsLemb.push('chegou_trabalho');
     if (transicao.de === 'casa') _evsLemb.push('saiu_casa');
     if (transicao.de === 'trabalho') _evsLemb.push('saiu_trabalho');
+    // UMA fala por transição (ver comentário no modo coleta): junta lembretes + saudação.
+    var _falas = [], _pendLemb = [];
     _evsLemb.forEach(function (ev) {
-      var rl = _dispararLembretesDe(ev, { simular: simular });
+      var rl = _dispararLembretesDe(ev, { simular: simular, coletar: _falas, pendentes: _pendLemb });
       if (rl.entregues.length) disparos.push({ evento: 'lembretes:' + ev, entregues: rl.entregues });
     });
     if (transicao.para === 'casa') {
@@ -4591,23 +4765,43 @@ function _avaliarEventosProativos(tel, opts) {
       var txtCasa = 'Bem-vindo, Bruno.' + (naoLidos !== null
         ? (naoLidos > 0 ? ' Você tem ' + naoLidos + (naoLidos === 1 ? ' e-mail não lido.' : ' e-mails não lidos.') : ' Sua caixa de entrada está limpa.')
         : '');
-      var rCasa = _falarProativo('chegou_casa', txtCasa, { cooldownMin: 180, simular: simular });
-      disparos.push({ evento: 'chegou_casa', texto: txtCasa, resultado: rCasa });
+      var gCasa = _governanca('chegou_casa', { cooldownMin: 180, simular: simular });
+      if (gCasa.permitido) _falas.push(txtCasa);
+      disparos.push({ evento: 'chegou_casa', texto: txtCasa, permitido: gCasa.permitido, motivo: gCasa.motivo || null });
     } else if (transicao.para === 'trabalho') {
       var txtTrab = 'Bom trabalho, Bruno.' + (minPonto !== null && minPonto <= 60
         ? ' Você bate o ponto em ' + minPonto + ' minutos.' : ' Lembre-se de bater o ponto.');
-      var rTrab = _falarProativo('chegou_trabalho', txtTrab, { cooldownMin: 240, simular: simular });
-      disparos.push({ evento: 'chegou_trabalho', texto: txtTrab, resultado: rTrab });
+      var gTrab = _governanca('chegou_trabalho', { cooldownMin: 240, simular: simular });
+      if (gTrab.permitido) _falas.push(txtTrab);
+      disparos.push({ evento: 'chegou_trabalho', texto: txtTrab, permitido: gTrab.permitido, motivo: gTrab.motivo || null });
     } else if (transicao.de === 'casa') {
       // Saiu de casa: só vale avisar se o ponto está próximo (senão é interrupção sem valor).
       if (minPonto !== null && minPonto <= 90) {
         var txtSaiu = 'Você bate o ponto em ' + minPonto + ' minutos.' +
           (nivel !== null && nivel < 40 && carregando !== true ? ' Atenção: a bateria está em ' + nivel + ' por cento.' : '');
-        var rSaiu = _falarProativo('saiu_casa', txtSaiu, { cooldownMin: 180, simular: simular });
-        disparos.push({ evento: 'saiu_casa', texto: txtSaiu, resultado: rSaiu });
+        var gSaiu = _governanca('saiu_casa', { cooldownMin: 180, simular: simular });
+        if (gSaiu.permitido) _falas.push(txtSaiu);
+        disparos.push({ evento: 'saiu_casa', texto: txtSaiu, permitido: gSaiu.permitido, motivo: gSaiu.motivo || null });
       } else {
         disparos.push({ evento: 'saiu_casa', ignorado: 'ponto distante (' + minPonto + ' min)' });
       }
+    }
+
+    // A ÚNICA fala da transição. Lembrete vem primeiro: ele pediu, tem prioridade sobre saudação.
+    var _txtUnico = _falas.filter(function (x) { return x; }).join(' ');
+    if (_txtUnico) {
+      var _falou = false;
+      if (simular) { _falou = true; }
+      else {
+        try {
+          var _rf = (typeof Jarvis !== 'undefined' && Jarvis.controlarDispositivo)
+            ? Jarvis.controlarDispositivo({ acao: 'falar', texto: _txtUnico }) : null;
+          _falou = !!(_rf && _rf.status === 'success');
+        } catch (eF) { _falou = false; }
+      }
+      // só consome o lembrete se a fala saiu — senão ele volta na próxima transição.
+      if (_falou && !simular) _lembConsumir(_pendLemb);
+      disparos.push({ evento: 'fala_unica', texto: _txtUnico, falou: _falou, lembretesConsumidos: _falou ? _pendLemb.length : 0 });
     }
   }
 
@@ -4972,6 +5166,7 @@ function _diagDispatch(body) {
     configurarRegraNotificacao:(typeof configurarRegraNotificacao !== 'undefined') ? configurarRegraNotificacao : null,
     diagPonto:              (typeof diagPonto !== 'undefined') ? diagPonto : null,
     diagFinanceiro:         (typeof diagFinanceiro !== 'undefined') ? diagFinanceiro : null,
+    diagSaldo:              (typeof diagSaldo !== 'undefined') ? diagSaldo : null,
     configurarNotificacoes: (typeof configurarNotificacoes !== 'undefined') ? configurarNotificacoes : null,
     resumirNotificacoes:    (typeof resumirNotificacoes !== 'undefined') ? resumirNotificacoes : null,
     registrarFeedbackInsight:(typeof registrarFeedbackInsight !== 'undefined') ? registrarFeedbackInsight : null,

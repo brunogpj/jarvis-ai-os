@@ -298,6 +298,7 @@ const SkillsManager = {
 
   _getSkillsLocaisFallback: function (nomeAgente) {
     return [
+      { id: null, nome: 'notebooklm_helper', folderId: null, origem: 'Local', descricao: 'Prepara e formata briefings em Markdown para ingestão no NotebookLM' },
       { id: null, nome: 'MentorTecnico', folderId: null, origem: 'Local', descricao: 'Ensino socrático de IA Engineering e GAS' },
       { id: null, nome: 'GestaoConhecimento', folderId: null, origem: 'Local', descricao: 'Ingestão/consulta da base wiki' },
       { id: null, nome: 'ProdutividadePessoal', folderId: null, origem: 'Local', descricao: 'Automações no Workspace' }
@@ -306,6 +307,7 @@ const SkillsManager = {
 
   _getConteudoSkillLocal: function (nomeSkill) {
     const ns = (nomeSkill || '').toLowerCase();
+    if (ns.indexOf('notebook') !== -1) return '---\nname: notebooklm_helper\ndescription: Prepara e formata briefings em Markdown para ingestão no NotebookLM.\n---\n## Instruções\n1. Formate a nota com títulos claros (#, ##) e tags legíveis.\n2. Inclua seção de Resumo, Conteúdo Principal e Tópicos Chave.\n3. Salve o arquivo em sources/ para que o NotebookLM consiga ingerir e o RAG do Jarvis o encontre.';
     if (ns.indexOf('mentor') !== -1) return '---\nname: MentorTecnico\ndescription: Ensino socrático de IA Engineering e GAS.\n---\n## Instruções\n1. Consulte o wiki (buscarNoWiki) antes de explicar.\n2. Método socrático.\n3. Exemplos concretos em GAS.\n4. Ofereça arquivar o aprendizado em concepts/.';
     if (ns.indexOf('gestao') !== -1 || ns.indexOf('conhecimento') !== -1) return '---\nname: GestaoConhecimento\ndescription: Ingestão e consulta do wiki.\n---\n## Instruções\nIngestão: ingerirFonte → resumo → escreverWiki(sources/) → entities/ e concepts/ → atualizar index.md e log.md.\nConsulta: listarWiki → buscarNoWiki → lerWiki → sintetizar citando páginas.';
     if (ns.indexOf('produtividade') !== -1) return '---\nname: ProdutividadePessoal\ndescription: Automações no Workspace.\n---\n## Instruções\n1. Confirme ações irreversíveis.\n2. Use Calendar/Gmail/Drive.\n3. Informe links diretos.';

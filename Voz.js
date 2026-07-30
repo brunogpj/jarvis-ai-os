@@ -280,7 +280,103 @@ var Voz = (function () {
     return { status: 'success', base64: _pcmParaWav(pcm, rate), mime: 'audio/wav', ext: 'wav', voz: voz, estilo: estilo, model: model };
   }
 
-  return { sintetizar: sintetizar, sintetizarLongo: sintetizarLongo, sintetizarGemini: sintetizarGemini, temChave: temChave, listarVozes: listarVozes, transcrever: transcrever };
+  /**
+   * Sintetiza um diálogo de 2 vozes (estilo Podcast / Audio Overview do NotebookLM).
+   * Intercala entre 2 vozes (ex.: Voz A: pt-BR-Neural2-B [masculino], Voz B: pt-BR-Neural2-C [feminino]).
+   * Concatena os blocos MP3 em um único arquivo de áudio e salva no Drive /outputs.
+   * @param {Array|string} dialogo - Array de {voz, texto} OU texto no formato "Host A: ... \n Host B: ..."
+   * @param {Object} [opts] - { vozA, vozB, salvarNoDrive }
+   * @return { status:'success', base64, mime:'audio/mpeg', ext:'mp3', totalFalas, fileId, url }
+   */
+  // Intercala entre 2 vozes no formato Podcast / Audio Overview.
+  // Suporta vozes Chirp3-HD (pt-BR-Chirp3-HD-Enceladus [masculina] e pt-BR-Chirp3-HD-Sulafat [feminina]).
+  function sintetizarDialogo(dialogo, opts) {
+    opts = opts || {};
+    var vozA = opts.vozA || 'pt-BR-Chirp3-HD-Enceladus';
+    var vozB = opts.vozB || 'pt-BR-Chirp3-HD-Sulafat';
+
+    var falas = [];
+    if (Array.isArray(dialogo)) {
+      falas = dialogo;
+    } else if (typeof dialogo === 'string') {
+      var linhas = dialogo.split('\n').filter(function(l) { return l.trim().length > 0; });
+      linhas.forEach(function(l, idx) {
+        var matchA = l.match(/^(?:A|Host A|Apresentador|Bruno|Pessoa 1):\s*(.*)$/i);
+        var matchB = l.match(/^(?:B|Host B|Apresentadora|Jarvis|Pessoa 2):\s*(.*)$/i);
+        if (matchA) {
+          falas.push({ voz: vozA, texto: matchA[1] });
+        } else if (matchB) {
+          falas.push({ voz: vozB, texto: matchB[1] });
+        } else {
+          falas.push({ voz: (idx % 2 === 0 ? vozA : vozB), texto: l.replace(/^[-•*]\s*/, '') });
+        }
+      });
+    }
+
+    if (!falas.length) return { status: 'error', erro: 'Nenhuma fala para sintetizar no diálogo.' };
+
+    var combinado = [];
+    var mimeFinal = _FORMATOS.mp3.mime;
+    var extFinal = _FORMATOS.mp3.ext;
+
+    for (var i = 0; i < falas.length; i++) {
+      var f = falas[i];
+      var vozAtual = f.voz || (i % 2 === 0 ? vozA : vozB);
+      var r;
+
+      // Se a voz solicitada for Chirp3-HD ou Gemini TTS (Enceladus / Sulafat)
+      if (/Chirp3|Enceladus|Sulafat/i.test(vozAtual)) {
+        var nomeGemini = /Sulafat/i.test(vozAtual) ? 'Sulafat' : 'Enceladus';
+        r = sintetizarGemini(f.texto, { voz: nomeGemini });
+        if (r.status !== 'success') {
+          // Fallback para Cloud TTS com voz compatível
+          var vozFallback = /Sulafat/i.test(vozAtual) ? 'pt-BR-Neural2-A' : 'pt-BR-Neural2-B';
+          r = sintetizar(f.texto, { voz: vozFallback, formato: 'mp3' });
+        } else {
+          mimeFinal = r.mime || 'audio/wav';
+          extFinal = r.ext || 'wav';
+        }
+      } else {
+        r = sintetizar(f.texto, { voz: vozAtual, formato: 'mp3' });
+      }
+
+      if (r.status !== 'success') {
+        Logger.log('[Voz.sintetizarDialogo] Erro na fala ' + (i+1) + ': ' + r.erro);
+        continue;
+      }
+      var bytes = Utilities.base64Decode(r.base64);
+      for (var b = 0; b < bytes.length; b++) combinado.push(bytes[b]);
+    }
+
+    if (!combinado.length) return { status: 'error', erro: 'Falha ao gerar áudio de todas as falas.' };
+
+    var base64Final = Utilities.base64Encode(combinado);
+    var resultado = { status: 'success', base64: base64Final, mime: mimeFinal, ext: extFinal, totalFalas: falas.length };
+
+    if (opts.salvarNoDrive || opts.salvarDrive !== false) {
+      try {
+        var wikiFolderId = _p('WIKI_DRIVE_ID');
+        if (wikiFolderId) {
+          var rootWiki = DriveApp.getFolderById(wikiFolderId);
+          var outputsFolder;
+          var itOut = rootWiki.getFoldersByName('outputs');
+          if (itOut.hasNext()) outputsFolder = itOut.next();
+          else outputsFolder = rootWiki.createFolder('outputs');
+
+          var blob = Utilities.newBlob(Utilities.base64Decode(base64Final), 'audio/mpeg', 'podcast_' + Date.now() + '.mp3');
+          var file = outputsFolder.createFile(blob);
+          resultado.fileId = file.getId();
+          resultado.url = file.getUrl();
+        }
+      } catch (eDrive) {
+        Logger.log('[Voz.sintetizarDialogo] Erro ao salvar no Drive: ' + eDrive.message);
+      }
+    }
+
+    return resultado;
+  }
+
+  return { sintetizar: sintetizar, sintetizarLongo: sintetizarLongo, sintetizarGemini: sintetizarGemini, sintetizarDialogo: sintetizarDialogo, temChave: temChave, listarVozes: listarVozes, transcrever: transcrever };
 })();
 
 /** Setup/diagnóstico: configura a voz (opcional) e confirma a SA. Rode no editor.

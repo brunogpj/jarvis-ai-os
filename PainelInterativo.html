@@ -287,7 +287,7 @@
     <div class="card success-container" id="successCard">
       <div class="success-icon">✓</div>
       <h1>Enviado com Sucesso</h1>
-      <p class="description">Obrigado Bruno, sua resposta foi processada e enviada para o Jarvis.</p>
+      <p class="description"><span id="successText">Obrigado Bruno, sua resposta foi processada e enviada para o Jarvis.</span></p>
       <button class="btn btn-secondary" style="width:100%" onclick="fecharJanela()">Fechar</button>
     </div>
   </div>
@@ -295,6 +295,26 @@
   <script>
     const webappUrl = 'https://script.google.com/macros/s/<DEPLOYMENT_ID>/exec';
     const callbackId = '<?= id ?>';
+
+    // BOTÃO VOLTAR DO ANDROID: o navegador restaura a página do cache (bfcache) no estado em que
+    // ela estava — inclusive com o card de sucesso visível de um envio ANTERIOR. O usuário via
+    // "ação realizada com sucesso" sem ter confirmado nada. Recarregar ao voltar do cache resolve:
+    // a página volta do servidor, que sabe se o callback foi ou não respondido de verdade.
+    window.addEventListener('pageshow', function (ev) {
+      if (ev.persisted) window.location.reload();
+    });
+
+    // Rede de segurança: ao carregar, o card de sucesso só aparece se o servidor disser que já
+    // houve resposta. Sem isto, qualquer estado herdado do cache passaria por confirmação.
+    document.addEventListener('DOMContentLoaded', function () {
+      var jaRespondido = <?= respondido ? 'true' : 'false' ?>;
+      var principal = document.getElementById('mainCard');
+      var sucesso = document.getElementById('successCard');
+      if (!jaRespondido && principal && sucesso) {
+        principal.style.display = '';
+        sucesso.style.display = 'none';
+      }
+    });
 
     function responder(botao, element) {
       let resposta = '';
@@ -313,23 +333,31 @@
       const textInput = document.getElementById('responseText');
       if (textInput) textInput.disabled = true;
 
-      const url = `${webappUrl}?action=callback_interativa&id=${callbackId}&botao=${botao}&resposta=${encodeURIComponent(resposta)}`;
+      // google.script.run em vez de fetch(): a página roda em script.googleusercontent.com e o
+      // fetch para script.google.com era CROSS-ORIGIN — o GAS não manda cabeçalho CORS, então a
+      // requisição não chegava ao servidor. Pior: o .then() antigo mostrava 'Enviado com Sucesso'
+      // para QUALQUER resposta, inclusive erro. Agora o painel só comemora o que o servidor confirmou.
+      const reabilitar = () => {
+        element.innerHTML = originalText;
+        document.querySelectorAll('button').forEach(btn => btn.disabled = false);
+        if (textInput) textInput.disabled = false;
+      };
 
-      fetch(url)
-        .then(response => response.text())
-        .then(text => {
-          console.log(text);
-          // Transição suave para o card de sucesso
+      google.script.run
+        .withSuccessHandler(r => {
+          const ok = r && r.ok;
+          const msg = (r && r.mensagem) ? r.mensagem : 'Sem resposta do servidor.';
+          if (!ok) { alert(msg); reabilitar(); return; }
+          const okTxt = document.getElementById('successText');
+          if (okTxt) okTxt.textContent = msg;
           document.getElementById('mainCard').style.display = 'none';
           document.getElementById('successCard').style.display = 'block';
         })
-        .catch(err => {
-          alert('Erro ao enviar resposta: ' + err.message);
-          // Reabilita em caso de erro
-          element.innerHTML = originalText;
-          document.querySelectorAll('button').forEach(btn => btn.disabled = false);
-          if (textInput) textInput.disabled = false;
-        });
+        .withFailureHandler(err => {
+          alert('Erro ao enviar: ' + (err && err.message ? err.message : err));
+          reabilitar();
+        })
+        .responderCallbackInterativo(callbackId, botao, resposta);
     }
 
     function fecharJanela() {

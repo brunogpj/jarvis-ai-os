@@ -427,12 +427,68 @@ const WikiMemoryService = {
     };
   },
 
+  /**
+   * Promove um arquivo .md do /raw/ para a estrutura /wiki/ sem custo de LLM.
+   * Ideal para notas já formatadas ou organizadas pelo NotebookLM.
+   * @param {string} caminhoRawOuId - Nome/caminho do arquivo em /raw/ ou o fileId no Drive.
+   * @param {string} [subpastaWiki] - Subpasta destino em /wiki/ (ex: "sources", "entities", "concepts"). Padrão "sources".
+   */
+  promoverRawParaWiki: function(caminhoRawOuId, subpastaWiki) {
+    try {
+      subpastaWiki = subpastaWiki || 'sources';
+      let f;
+      if (/^[a-zA-Z0-9_-]{20,}$/.test(String(caminhoRawOuId))) {
+        f = DriveApp.getFileById(caminhoRawOuId);
+      } else {
+        const rawId = PropertiesService.getScriptProperties().getProperty('RAW_DRIVE_ID');
+        if (!rawId) return { status: 'error', erro: 'RAW_DRIVE_ID não configurado.' };
+        const rawFolder = DriveApp.getFolderById(rawId);
+        const { caminhoPasta, nomeArquivo } = this._parsearCaminho(caminhoRawOuId);
+        const pastaTarget = caminhoPasta ? this._navegarPasta(caminhoPasta) : rawFolder;
+        const it = pastaTarget.getFilesByName(nomeArquivo);
+        if (!it.hasNext()) return { status: 'error', erro: 'Arquivo bruto "' + caminhoRawOuId + '" não encontrado.' };
+        f = it.next();
+      }
+
+      const nome = f.getName();
+      const conteudo = f.getBlob().getDataAsString('UTF-8');
+      const slug = nome.toLowerCase().replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '');
+      const destinoCaminho = subpastaWiki.replace(/^\/|\/$/g, '') + '/' + (slug.endsWith('.md') ? slug : (slug + '.md'));
+
+      const res = this.escreverWiki(destinoCaminho, conteudo);
+      this.registrarNoLog('Promovido de raw para wiki: "' + nome + '" → "' + destinoCaminho + '"');
+
+      return {
+        status: 'success',
+        origem: nome,
+        destino: destinoCaminho,
+        tamanho: conteudo.length,
+        detalhes: res
+      };
+    } catch (err) {
+      Logger.log('[WikiMemoryService] Erro promoverRawParaWiki: ' + err.message);
+      return { status: 'error', erro: err.message };
+    }
+  },
+
   // ===================================================================================
   // DECLARAÇÕES FC (Function Calling declarations para o Gemini)
   // ===================================================================================
 
   getToolDeclarations: function() {
     return [
+      {
+        name: 'promoverRawParaWiki',
+        description: 'Promove um arquivo da pasta /raw/ (bruto) para o /wiki/ (fontes/conceitos) sem custo de LLM. Ideal para notas e resumos gerados pelo NotebookLM.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            caminhoRawOuId: { type: 'STRING', description: 'Nome/caminho do arquivo em /raw/ ou o ID no Drive.' },
+            subpastaWiki: { type: 'STRING', description: 'Subpasta destino no wiki. Ex: "sources", "entities", "concepts". Padrão "sources".' }
+          },
+          required: ['caminhoRawOuId']
+        }
+      },
       {
         name: 'lerWiki',
         description: 'Lê o conteúdo de um arquivo da base de conhecimento wiki. Use antes de responder perguntas sobre qualquer conceito, ferramenta, pessoa ou projeto que possa estar documentado. Sempre prefira ler o wiki antes de depender apenas do conhecimento interno do LLM.',

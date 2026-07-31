@@ -85,7 +85,35 @@ var Semantica = (function () {
   /** Ligada por padrão; SEMANTICA_CENTRALIZAR='off' desliga (serve para medir A/B). */
   function _centralizando() { return _p('SEMANTICA_CENTRALIZAR') !== 'off'; }
 
-  // Lista recursivamente os arquivos .md do wiki (pula a pasta raw/ E os meta-arquivos).
+  /* ── O QUE CONTA COMO CONHECIMENTO INDEXÁVEL ──────────────────────────────────────────────
+   * Só TEXTO. PDF, imagem, áudio e vídeo exigiriam visão/transcrição, e isso queima cota do
+   * Gemini a cada arquivo. Markdown, .txt e Google Docs são lidos por API do Workspace — custo
+   * ZERO de IA. É o que torna viável despejar as sínteses do NotebookLM aqui sem medo.
+   * Um Doc do Google é o caminho mais fácil na interface do Drive: Novo → Documentos, colar.
+   */
+  var _MIME_DOC = 'application/vnd.google-apps.document';
+
+  function _ehIndexavel(file) {
+    var nm = file.getName();
+    var mime = '';
+    try { mime = file.getMimeType(); } catch (e) {}
+    if (mime === _MIME_DOC) return !ehMetaArquivoWiki(nm + '.md');   // Doc não tem extensão
+    if (!/\.(md|markdown|txt)$/i.test(nm)) return false;
+    return !ehMetaArquivoWiki(nm.replace(/\.(markdown|txt)$/i, '.md'));
+  }
+
+  /** Texto puro do arquivo. Zero chamada de IA — Drive/Docs API apenas. */
+  function _textoDoArquivo(id) {
+    var file = DriveApp.getFileById(id);
+    var mime = '';
+    try { mime = file.getMimeType(); } catch (e) {}
+    if (mime === _MIME_DOC) {
+      try { return DocumentApp.openById(id).getBody().getText(); }
+      catch (e) { return ''; }
+    }
+    try { return file.getBlob().getDataAsString('UTF-8'); } catch (e) { return ''; }
+  }
+  // Lista recursivamente os arquivos de TEXTO do wiki (pula a pasta raw/ E os meta-arquivos).
   // Meta-arquivos (manual/índice/registro) NÃO são conhecimento — indexá-los polui a busca.
   // @return [{id, caminho}].
   function _arquivosWiki() {
@@ -94,7 +122,7 @@ var Semantica = (function () {
     var lista = [];
     (function walk(folder, prefixo) {
       var fs = folder.getFiles();
-      while (fs.hasNext()) { var f = fs.next(); var nm = f.getName(); if (/\.md$/i.test(nm) && !ehMetaArquivoWiki(nm)) lista.push({ id: f.getId(), caminho: prefixo + nm }); }
+      while (fs.hasNext()) { var f = fs.next(); if (_ehIndexavel(f)) lista.push({ id: f.getId(), caminho: prefixo + f.getName() }); }
       var subs = folder.getFolders();
       while (subs.hasNext()) { var sf = subs.next(); if (/^raw$/i.test(sf.getName())) continue; walk(sf, prefixo + sf.getName() + '/'); }
     })(DriveApp.getFolderById(rootId), '');
@@ -123,7 +151,7 @@ var Semantica = (function () {
         try { if (Firestore.getDoc(COL, base + '_0')) { pulados++; continue; } } catch (e) {}
       }
       var texto = '';
-      try { texto = DriveApp.getFileById(a.id).getBlob().getDataAsString('UTF-8'); } catch (e) { continue; }
+      try { texto = _textoDoArquivo(a.id); } catch (e) { continue; }
       var cs = _chunks(texto);
       for (var j = 0; j < cs.length && j < maxChunks; j++) {
         try {
@@ -375,7 +403,7 @@ var Semantica = (function () {
       var fs2 = folder.getFiles();
       while (fs2.hasNext()) {
         var fl = fs2.next(), nm = fl.getName();
-        if (!/\.md$/i.test(nm) || ehMetaArquivoWiki(nm)) continue;
+        if (!_ehIndexavel(fl)) continue;
         lista.push({ id: fl.getId(), caminho: prefixo + nm, em: fl.getLastUpdated().getTime() });
       }
       var subs = folder.getFolders();
@@ -446,7 +474,7 @@ var Semantica = (function () {
       if (jaTinha) _purgarCaminho(a.caminho);        // editado: troca os vetores, não duplica
 
       var texto = '';
-      try { texto = DriveApp.getFileById(a.id).getBlob().getDataAsString('UTF-8'); } catch (e) { continue; }
+      try { texto = _textoDoArquivo(a.id); } catch (e) { continue; }
       var cs = _chunks(texto);
       var okArquivo = true;
       for (var j = 0; j < cs.length && j < 50; j++) {

@@ -93,16 +93,28 @@ var AlertasVoz = (function () {
       var h = Number(Utilities.formatDate(agora, TZ, 'H'));
       var m = Number(Utilities.formatDate(agora, TZ, 'm'));
       var dow = Number(Utilities.formatDate(agora, TZ, 'u')) % 7; // 1=Seg..7=Dom → %7: Dom=0..Sáb=6
-      var carimbo = Utilities.formatDate(agora, TZ, 'yyyy-MM-dd') + 'T' + h + ':' + m;
+      // JANELA DE TOLERÂNCIA em vez de minuto exato. O gatilho de 1 minuto do GAS não é
+      // garantido: atrasa ou pula sob carga/cota. Com a comparação exata, UM tick perdido
+      // matava o alerta para sempre — foi o que aconteceu com o ponto das 23:00 de 30/07,
+      // que ficou com ult=29/07 mesmo sendo dia útil e estando ativo.
+      // Agora o alerta dispara se o horário JÁ passou e ainda está dentro da janela, e o dedup
+      // é por DIA (não por minuto) — então ele sai uma vez só, mesmo com vários ticks na janela.
+      var TOLERANCIA_MIN = Number(PropertiesService.getScriptProperties().getProperty('ALERTA_TOLERANCIA_MIN') || 10);
+      var dia = Utilities.formatDate(agora, TZ, 'yyyy-MM-dd');
+      var minutosAgora = h * 60 + m;
       var arr = _ler(), mudou = false;
       arr.forEach(function (a) {
         if (a.ativo === false) return;
-        if (Number(a.hora) !== h || Number(a.minuto || 0) !== m) return;
+        var alvo = Number(a.hora) * 60 + Number(a.minuto || 0);
+        var atraso = minutosAgora - alvo;
+        if (atraso < 0 || atraso > TOLERANCIA_MIN) return;   // ainda não deu a hora, ou passou demais
         if (a.dias && a.dias.length && a.dias.indexOf(dow) === -1) return;
-        if (a.ult === carimbo) return; // dedup (property, mesmo minuto)
+        var carimbo = dia + 'T' + a.hora + ':' + (a.minuto || 0);   // uma vez por dia, por alerta
+        if (a.ult === carimbo) return;
         // dedup à prova de múltiplos gatilhos/race (CacheService, atômico entre execuções): cada
-        // (alerta, minuto) dispara UMA vez — evita até a geração dinâmica (Jarvis.ask) em dobro.
-        try { var _ck = CacheService.getScriptCache(), _ckk = 'av_' + a.id + '_' + carimbo; if (_ck.get(_ckk)) return; _ck.put(_ckk, '1', 120); } catch (eAv) {}
+        // (alerta, DIA) dispara UMA vez. TTL de 30 min cobre a janela de tolerância inteira — com os
+        // 10 min padrão sobra folga, e o dedup por property (a.ult) segura o resto do dia.
+        try { var _ck = CacheService.getScriptCache(), _ckk = 'av_' + a.id + '_' + carimbo; if (_ck.get(_ckk)) return; _ck.put(_ckk, '1', 1800); } catch (eAv) {}
         var fala = a.texto;
         if (a.dinamico) {
           try { fala = String(Jarvis.ask(_owner(), a.texto, [], null, { interativo: false }) || a.texto); } catch (e) { fala = a.texto; }

@@ -10,6 +10,60 @@ var Semantica = (function () {
   'use strict';
   var COL = 'wiki_vetores';
 
+  /* ── INDICE COMPACTO NO DRIVE ─────────────────────────────────────────────────────────
+   * buscar()/buscarHibrido() faziam Firestore.listDocs(COL, 1000) A CADA pergunta nova —
+   * medido em produção: p50=446ms, mas p90=8,2s e pico de 113s (~1200 vetores, ~10,7KB cada,
+   * um monte de idas à rede síncronas segurando a resposta de voz no ar). Um doc médio (com o
+   * vetor de embedding) pesa ~10,7KB — não cabe no CacheService (teto de 100KB por chave), mas
+   * cabe tranquilo num arquivo único no Drive, ID estável, mesmo padrão do jarvis-fala.wav.
+   * Reconstruído sozinho ao fim de indexarNovos/purgarOrfaos — nunca fica velho sem motivo.
+   */
+  var _IDX_FILE_PROP = 'SEMANTICA_INDICE_FILE_ID';
+
+  /** Le o indice do Drive (rapido, 1 chamada). Cai para Firestore se o indice ainda nao existe
+   *  ou falhar ao ler — nunca deixa a busca sem resultado por causa do atalho. */
+  function _docsParaBuscar() {
+    var id = null;
+    try { id = PropertiesService.getScriptProperties().getProperty(_IDX_FILE_PROP); } catch (eP) {}
+    if (id) {
+      try {
+        var conteudo = DriveApp.getFileById(id).getBlob().getDataAsString();
+        var arr = JSON.parse(conteudo);
+        if (arr && arr.length) return arr.map(function (x) { return { dados: x }; });
+      } catch (eIdx) {
+        Logger.log('[Semantica] índice no Drive indisponível, caindo p/ Firestore: ' + eIdx.message);
+      }
+    }
+    return Firestore.listDocs(COL, 1000);   // 1ª execução (índice ainda não existe) ou falha — sempre funciona
+  }
+
+  /** Reconstrói o arquivo do Drive a partir do Firestore (fonte de verdade). Chamado sozinho
+   *  ao fim de indexarNovos/purgarOrfaos — o custo de varrer 1000 docs é pago UMA VEZ no job
+   *  de indexação (background), nunca mais durante uma pergunta de voz (tempo real). */
+  function _reconstruirIndiceDrive() {
+    try {
+      var docs = Firestore.listDocs(COL, 1000) || [];
+      var compacto = docs.map(function (d) {
+        return { caminho: d.dados.caminho, trecho: d.dados.trecho, vetor: d.dados.vetor };
+      });
+      var json = JSON.stringify(compacto);
+      var props = PropertiesService.getScriptProperties();
+      var id = props.getProperty(_IDX_FILE_PROP);
+      var arquivo = null;
+      if (id) {
+        try { arquivo = DriveApp.getFileById(id); arquivo.setContent(json); }
+        catch (eOld) { id = null; }   // arquivo sumiu/foi movido — recria abaixo
+      }
+      if (!id) {
+        var pasta = DriveUploads._subpasta('assets');
+        arquivo = pasta.createFile('indice-semantico.json', json, 'application/json');
+        id = arquivo.getId();
+        props.setProperty(_IDX_FILE_PROP, id);
+      }
+      return { ok: true, trechos: compacto.length, bytes: json.length, id: id };
+    } catch (e) { return { ok: false, erro: e.message }; }
+  }
+
   function _p(k) { return PropertiesService.getScriptProperties().getProperty(k); }
 
   // hash estável p/ compor ids de documento determinísticos por caminho.
@@ -241,7 +295,7 @@ var Semantica = (function () {
     var modo = ((opts && opts.centralizar !== undefined) ? !!opts.centralizar : _centralizando()) ? 'c' : 'r';
     var ck = 'sem_res_' + modo + '_' + _hash(String(consulta) + '|' + k);
     try { var hit = cache.get(ck); if (hit) return JSON.parse(hit); } catch (eC) {}
-    var docs = Firestore.listDocs(COL, 1000);
+    var docs = _docsParaBuscar();
     if (!docs.length) return [];
 
     var qv = null;
@@ -277,7 +331,7 @@ var Semantica = (function () {
    */
   function buscarHibrido(consulta, k) {
     k = k || 5;
-    var docs = Firestore.listDocs(COL, 1000);
+    var docs = _docsParaBuscar();   // antes: Firestore.listDocs(COL,1000) aqui E DE NOVO dentro de buscar() — 2x o custo
     if (!docs.length) return [];
 
     var rankBM25 = _bm25Buscar(consulta, docs, 20);
@@ -491,6 +545,7 @@ var Semantica = (function () {
           okArquivo = false;
           // Cota estourada: para TUDO e não avança o marcador — o resto entra na próxima rodada.
           if (/\b429\b|quota|RESOURCE_EXHAUSTED|exceeded|spending cap/i.test(msg)) {
+            if (trechos > 0) try { _reconstruirIndiceDrive(); } catch (eRi) {}   // salvou o que deu antes de parar
             return { status: 'cota', novos: novos, reindexados: reidx, trechos: trechos,
                      restantes: mudados.length - i, erro1: erro1,
                      nota: 'marcador NÃO avançado — retoma de onde parou' };
@@ -504,12 +559,72 @@ var Semantica = (function () {
     // ele volta na próxima varredura em vez de sumir.
     props.setProperty(_VARREDURA, String(maiorEm));
     var restantes = Math.max(0, mudados.length - Math.min(mudados.length, maxArq));
+    if (trechos > 0) try { _reconstruirIndiceDrive(); } catch (eRi2) {}   // mantém o atalho de busca em dia
     return { status: restantes ? 'continuar' : 'success', novos: novos, reindexados: reidx,
              trechos: trechos, restantes: restantes, erro1: erro1,
              proximaVarredura: new Date(maiorEm).toISOString() };
   }
 
-  return { indexar: indexar, indexarNovos: indexarNovos, buscar: buscar, buscarHibrido: buscarHibrido, status: status, limpar: limpar, purgarMeta: purgarMeta, purgarSkills: purgarSkills };
+
+  /* ── VETORES ÓRFÃOS ───────────────────────────────────────────────────────────────────────
+   * Apagar um arquivo da wiki NÃO apagava seus vetores: o purgarCaminho só roda quando um
+   * arquivo MUDA e é reindexado. Arquivo deletado deixava o vetor para trás, e o Jarvis seguia
+   * citando página que não existe mais — afirmando com confiança sobre conteúdo apagado.
+   * Com a wiki crescendo e sendo podada, isso deixa de ser detalhe.
+   *
+   * A varredura é cara (lê a coleção inteira), então NÃO roda a cada ciclo: só quando o número
+   * de arquivos da wiki DIMINUI em relação à última contagem — que é exatamente o sinal de que
+   * algo foi apagado.
+   */
+  var _CONTAGEM = 'SEMANTICA_ULTIMA_CONTAGEM';
+
+  function purgarOrfaos(opts) {
+    opts = opts || {};
+    var vivos = {};
+    _arquivosWiki().forEach(function (a) { vivos[a.caminho] = true; });
+
+    var docs = [];
+    try { docs = Firestore.listDocs(COL, 1000) || []; } catch (e) { return { ok: false, erro: e.message }; }
+
+    var orfaos = {}, nOrf = 0;
+    docs.forEach(function (d) {
+      var cam = (d.dados || {}).caminho;
+      if (!cam || vivos[cam]) return;
+      if (!orfaos[cam]) orfaos[cam] = [];
+      orfaos[cam].push(d.id);
+      nOrf++;
+    });
+
+    var caminhos = Object.keys(orfaos);
+    if (opts.simular === true) {
+      return { ok: true, simulado: true, arquivosVivos: Object.keys(vivos).length,
+               vetores: docs.length, orfaos: nOrf, paginasSumidas: caminhos };
+    }
+
+    var apagados = 0;
+    caminhos.forEach(function (c) {
+      orfaos[c].forEach(function (id) {
+        try { Firestore.deleteDoc(COL, id); apagados++; } catch (e) {}
+      });
+    });
+    if (apagados > 0) try { _reconstruirIndiceDrive(); } catch (eRi3) {}   // tira os órfãos do atalho também
+    return { ok: true, arquivosVivos: Object.keys(vivos).length, vetoresAntes: docs.length,
+             apagados: apagados, paginasSumidas: caminhos };
+  }
+
+  /** Só varre se o nº de arquivos CAIU — o sinal barato de que houve exclusão. */
+  function purgarOrfaosSeNecessario() {
+    var props = PropertiesService.getScriptProperties();
+    var agora = _arquivosWiki().length;
+    var antes = Number(props.getProperty(_CONTAGEM) || 0);
+    props.setProperty(_CONTAGEM, String(agora));
+    if (!antes || agora >= antes) return { ok: true, varreu: false, arquivos: agora, antes: antes };
+    var r = purgarOrfaos({});
+    r.varreu = true; r.antes = antes; r.agora = agora;
+    return r;
+  }
+
+  return { indexar: indexar, indexarNovos: indexarNovos, purgarOrfaos: purgarOrfaos, purgarOrfaosSeNecessario: purgarOrfaosSeNecessario, buscar: buscar, buscarHibrido: buscarHibrido, status: status, limpar: limpar, purgarMeta: purgarMeta, purgarSkills: purgarSkills, reconstruirIndice: _reconstruirIndiceDrive };
 })();
 
 /**
@@ -829,6 +944,8 @@ function configurarCentralizacao(args) {
 function jobIndexarWiki() {
   try { if (typeof Heartbeat !== 'undefined' && Heartbeat.bater) Heartbeat.bater('indexWiki'); } catch (e) {}
   var r = Semantica.indexarNovos({ maxArquivos: 8 });
+  // Depois de indexar o que entrou, limpa o que SAIU. Barato: só varre se a contagem caiu.
+  try { r.orfaos = Semantica.purgarOrfaosSeNecessario(); } catch (e) { r.orfaos = { erro: e.message }; }
   Logger.log('[indexarNovos] ' + JSON.stringify(r));
   return r;
 }
@@ -858,4 +975,10 @@ function diagIndexacao(args) {
     return r;
   }
   return { ok: true };
+}
+/** Diag dos vetores orfaos: {} simula · {rodar:true} apaga de verdade. */
+function diagOrfaos(args) {
+  args = args || {};
+  if (args.rodar === true) return Semantica.purgarOrfaos({});
+  return Semantica.purgarOrfaos({ simular: true });
 }

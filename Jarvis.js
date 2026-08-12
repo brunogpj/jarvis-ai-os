@@ -1090,7 +1090,7 @@ var Jarvis = (function () {
         nomes: ['criarLembreteCondicional', 'listarLembretesCondicionais']
       },
       {
-        re: /(saldo|swile|voucher|vale[- ]?(refei|aliment|combust)|mobilidade|quanto (eu )?tenho|quanto sobrou|quanto (eu )?gastei|onde (eu )?gastei|extrato|maiores gastos|cart[ãa]o de aliment)/i,
+        re: (typeof _FIN_PALAVRAS_RE !== 'undefined') ? _FIN_PALAVRAS_RE : /(saldo|swile|voucher|mobilidade|alimenta|cart[ãa]o)/i,  // mesma constante de Code.js (FIX unificação 05/08)
         nomes: ['consultarSaldoSwile', 'consultarGastosSwile']
       },
       {

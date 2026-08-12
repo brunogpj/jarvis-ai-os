@@ -331,6 +331,8 @@ function reposicionarBriefing(args) {
 function criarAlertaVoz(args)    { return (typeof AlertasVoz !== 'undefined') ? AlertasVoz.criar(args || {}) : { ok: false, erro: 'AlertasVoz indisponível.' }; }
 function listarAlertasVoz()      { return (typeof AlertasVoz !== 'undefined') ? AlertasVoz.listar() : []; }
 function cancelarAlertaVoz(args) { return (typeof AlertasVoz !== 'undefined') ? AlertasVoz.cancelar(args && (args.alerta || args.id || args)) : { ok: false }; }
+/** Define o turno (manha|tarde): limpa os alertas de ponto antigos e cria os 4 do turno. */
+function definirTurnoTrabalho(args) { return (typeof AlertasVoz !== 'undefined' && AlertasVoz.definirTurno) ? AlertasVoz.definirTurno(args && (args.turno || args)) : { ok: false, erro: 'AlertasVoz indisponível.' }; }
 
 /** Liga/desliga o aviso falado no Android quando um contato manda mensagem. args:{estado:'on'|'off'}. */
 function configurarAvisoContato(args) {
@@ -2594,7 +2596,15 @@ function doPost(e) {
               });
               msgs.sort(function (a, b) { return a.ts - b.ts; });
               
-              historico = msgs.slice(-4).map(function (m) {
+              // Corta por TEMPO antes de pegar os últimos 4: sem isso, um papo antigo (ex.:
+              // sobre saldo, há 12h) "vaza" pra dentro de um pedido novo sem nenhuma relação —
+              // bug real, visto em produção em 05/08 (pedido de "bom dia" às 06h respondido com
+              // saldo do cartão, puxado de uma pergunta financeira da tarde anterior).
+              var _JANELA_HIST_MS = 2 * 60 * 60 * 1000; // 2h: fora disso não é mais "a mesma conversa"
+              var _agoraHist = Date.now();
+              historico = msgs.filter(function (m) {
+                return (_agoraHist - m.ts) <= _JANELA_HIST_MS;
+              }).slice(-4).map(function (m) {
                 return { role: m.role, text: m.text };
               }).filter(function (m) {
                 return m.text && m.text.indexOf('[') !== 0 && m.text.indexOf('⚠️') !== 0;
@@ -2716,6 +2726,11 @@ function doPost(e) {
         var _ofr = null;
         if (_voto === null && _insOfertaAberta()) {
           var _sOf = msgVoz.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+          // Tira interjeição solta na frente ("Ok quero ouvir", "Ah então quero") — sem isso,
+          // qualquer coisa antes do "sim/quero" quebrava o match e caía no LLM livre, que não
+          // sabe da oferta pendente e inventa uma recusa (bug real, visto em produção em 05/08).
+          var _FILLER_OFR_RE = /^(ok|okay|beleza|entao|bom|ta bom|ta|certo|e ai|eai|pois|bem|enfim|ah)[,.\s]+/;
+          for (var _fiOfr = 0; _fiOfr < 3 && _FILLER_OFR_RE.test(_sOf); _fiOfr++) { _sOf = _sOf.replace(_FILLER_OFR_RE, ''); }
           if (/^(sim|claro|quero|manda|pode|pode mandar|bora|vai|conta|fala)\b/.test(_sOf)) _ofr = true;
           else if (/^(nao|agora nao|depois|deixa|passa|nem)\b/.test(_sOf)) _ofr = false;
         }
@@ -2734,13 +2749,38 @@ function doPost(e) {
         }
         // (-1.5) SALDO/EXTRATO DO SWILE — determinístico. Número não passa pelo modelo.
         var _fin = (_voto === null && _ofr === null && _perdi === null) ? _interpretarFinanceiro(msgVoz) : null;
-        var _livre = (_voto === null && _ofr === null && _perdi === null && _fin === null);
+        var _trn = (_voto === null && _ofr === null && _perdi === null && _fin === null) ? _interpretarTurnoTrabalho(msgVoz) : null;
+        var _insV = (_voto === null && _ofr === null && _perdi === null && _fin === null && _trn === null) ? _interpretarInsight(msgVoz) : null;
+        var _livre = (_voto === null && _ofr === null && _perdi === null && _fin === null && _trn === null && _insV === null);
         var _lembC = _livre ? _interpretarLembreteCondicional(msgVoz) : null;
         var _rot   = (_livre && !_lembC) ? _interpretarRotina(msgVoz) : null;
         if (_fin !== null) {
           try {
             respVoz = (_fin.tipo === 'gastos') ? _finFalarGastos(_fin.dias) : _finFalarSaldo(_fin.carteira);
           } catch (eFin) { respVoz = 'Não consegui consultar o saldo agora.'; }
+        } else if (_trn !== null) {
+          // Chama a MESMA função da ferramenta (definirTurno), que limpa os alertas antigos por tag
+          // e cria os 4 do turno numa operação só — em vez de o modelo criar um a um.
+          try {
+            var _rt = definirTurnoTrabalho({ turno: _trn });
+            respVoz = (_rt && _rt.ok) ? _rt.resumo : ('Não consegui trocar o turno: ' + ((_rt && _rt.erro) || 'erro') + '.');
+          } catch (eTr) { respVoz = 'Não consegui trocar o turno agora.'; }
+        } else if (_insV !== null) {
+          try {
+            if (_insV.acao === 'gravar') {
+              var _rg = _insSalvarComoConceito();
+              respVoz = _rg.ok
+                ? ('Anotei na wiki, em ' + _rg.caminho + '.')
+                : ('Não consegui anotar: ' + (_rg.erro || 'erro') + '.');
+            } else {
+              var _ip = _insightAtual();
+              if (!_ip) { respVoz = 'Ainda não tenho uma ideia pronta hoje. Eu gero uma por dia, de manhã.'; }
+              else {
+                try { marcarInsightEntregue('voz'); } catch (eM) {}
+                respVoz = _ip.insight + (_ip.acao ? ' Primeiro passo: ' + _ip.acao : '');
+              }
+            }
+          } catch (eIn) { respVoz = 'Não consegui trazer a ideia agora.'; }
         } else if (_perdi !== null) {
           try {
             var _rp = resumirNotificacoes({ horas: 12, marcarLidas: true });
@@ -3477,9 +3517,48 @@ var _INS_SYS =
   '· UMA ideia só, concreta e aplicável ao Jarvis ou ao SGT. Nada de lista de possibilidades.\n' +
   '· Se a ideia não puder virar algo que ele faça nesta semana, escolha outro ângulo do mesmo tema.\n' +
   '· Sem elogio, sem introdução, sem "que tal". Vá direto.\n' +
+  '· ANTES de propor, confira o INVENTÁRIO DE FERRAMENTAS JÁ IMPLEMENTADAS (se vier no prompt). Se a ' +
+  'ideia já existe implementada lá, NÃO a proponha como novidade — ou fale do que FALTA além do que já ' +
+  'existe, ou escolha outro ângulo do mesmo tema. Proponha do zero algo já pronto é o pior tipo de erro aqui.\n' +
   '· `insight` será FALADO em voz alta: no máximo 45 palavras, português coloquial, sem markdown.\n' +
   'Responda SÓ com JSON: {"titulo","insight","porque","acao"} — `porque` = por que isso importa pra ' +
   'ele agora (1 frase); `acao` = o primeiro passo concreto (1 frase, começando com verbo).';
+
+// Fonte de verdade do que JÁ EXISTE nos dois projetos (Jarvis + SGT) — gerada a partir do CÓDIGO
+// real, não da wiki. O GAS não tem acesso ao disco local, então esta página é publicada por fora
+// (Claude, com acesso aos .js reais) e o insight diário só a LÊ. Cache de 6h: evita reler a wiki
+// toda vez que o job roda, e a lista muda pouco (só quando ferramentas novas entram nos projetos).
+var _INS_INVENTARIO_CAMINHO = 'inventario-ferramentas.md';
+function _insInventarioFerramentas() {
+  var ck = 'ins_inventario_v1';
+  try {
+    var cache = CacheService.getScriptCache();
+    var hit = cache.get(ck);
+    if (hit !== null) return hit;
+  } catch (e) {}
+  var texto = '';
+  try {
+    var pag = WikiMemoryService.lerWiki(_INS_INVENTARIO_CAMINHO);
+    texto = String((pag && (pag.conteudo || pag.texto)) || pag || '');
+  } catch (eR) {}
+  try { CacheService.getScriptCache().put(ck, texto, 21600); } catch (e2) {}  // 6h
+  return texto;
+}
+
+/** Publica/atualiza inventario-ferramentas.md na wiki (Drive). args {conteudo} obrigatorio.
+ *  Fonte de verdade vem de FORA do GAS (Claude lendo o código real) — este diag só grava o que
+ *  já foi extraído. Limpa o cache de 6h para o próximo insight já ler a versão nova.
+ */
+function diagPublicarInventarioFerramentas(args) {
+  args = args || {};
+  var conteudo = String(args.conteudo || '');
+  if (!conteudo || conteudo.length < 100) return { ok: false, erro: 'args.conteudo vazio ou curto demais' };
+  try {
+    var r = WikiMemoryService.escreverWiki(_INS_INVENTARIO_CAMINHO, conteudo);
+    try { CacheService.getScriptCache().remove('ins_inventario_v1'); } catch (eC) {}
+    return { ok: r.status === 'success', resultado: r, tamanho: conteudo.length };
+  } catch (e) { return { ok: false, erro: e.message }; }
+}
 
 /** Gera o insight do dia. args {forcar, tema, semSalvar}. */
 function gerarInsightDiario(args) {
@@ -3516,9 +3595,11 @@ function gerarInsightDiario(args) {
     }
     if (!ctx.length) return { ok: false, erro: 'sem contexto para o tema "' + tema.tema + '" (wiki vazia ou busca indisponível)' };
 
+    var _inv = _insInventarioFerramentas();
     var prompt = 'TEMA: ' + tema.tema + '  (pasta: ' + tema.categoria + ')\n\n' +
       'TRECHOS DAS NOTAS DELE:\n' +
-      ctx.map(function (c, i) { return (i + 1) + ') [' + c.de + ']\n' + c.texto; }).join('\n\n');
+      ctx.map(function (c, i) { return (i + 1) + ') [' + c.de + ']\n' + c.texto; }).join('\n\n') +
+      (_inv ? '\n\nINVENTÁRIO DE FERRAMENTAS JÁ IMPLEMENTADAS (código real — confira antes de propor):\n' + _inv.substring(0, 40000) : '');
 
     var r = Gemini.gerar({
       systemInstruction: { parts: [{ text: _INS_SYS }] },
@@ -3890,7 +3971,9 @@ function registrarNotificacao(d) {
   if (cont >= _NOTIF_MAX_DIA) return { ok: true, ignorado: 'teto diário (' + _NOTIF_MAX_DIA + ')' };
 
   // Dedup curto: mesma app+título em 5 min é repique, não fato novo.
-  var chaveDup = 'ntf_' + _notifHash(app + '|' + titulo);
+  // O TEXTO entra na chave: o Swile usa sempre o mesmo titulo ('Compra aprovada'), entao
+  // duas compras em menos de 5 min eram tratadas como repique e a segunda sumia.
+  var chaveDup = 'ntf_' + _notifHash(app + '|' + titulo + '|' + texto);
   try {
     var ck = CacheService.getScriptCache();
     if (ck.get(chaveDup)) return { ok: true, ignorado: 'duplicada (5 min)', app: app };
@@ -4086,7 +4169,18 @@ function _finGuardarBruto(d) {
     em: agora, dia: Utilities.formatDate(new Date(agora), 'America/Sao_Paulo', 'yyyy-MM-dd'),
     parseado: false, versaoParser: 0            // a fase 2 preenche isto sem perder o bruto
   };
-  // FASE 2: interpreta na chegada, mas NUNCA por cima do bruto — os dois convivem no mesmo doc.
+
+  // IDEMPOTÊNCIA POR CONTEÚDO. O id era timestamp + aleatório, então reenviar a MESMA notificação
+  // criava outro lançamento E DEBITAVA DE NOVO. Aconteceu de verdade ao recuperar as compras
+  // perdidas nos 403: o voucher foi de 1000,04 para 980,04 em vez de 990,04.
+  // O id agora vem do CONTEÚDO + o dia. O dia entra porque gastar o mesmo valor no mesmo lugar
+  // em dias diferentes é legítimo; no mesmo dia, é reenvio.
+  var idFin = 'f' + _notifHash((doc.app || '') + '|' + (doc.titulo || '') + '|' + (doc.texto || '')) + '_' + doc.dia;
+  var jaExiste = null;
+  try { jaExiste = Firestore.getDoc(_FIN_COL, idFin); } catch (eG) {}
+  if (jaExiste) return { ok: true, dia: doc.dia, id: idFin, jaRegistrado: true };
+
+  // FASE 2: interpreta e DEBITA — só aqui, depois de confirmado que o lançamento é novo.
   try {
     var _p2 = _finParse(doc.titulo, doc.texto);
     if (_p2) {
@@ -4097,9 +4191,10 @@ function _finGuardarBruto(d) {
       doc.saldoDepois = _ap.para !== undefined ? _ap.para : null;
     }
   } catch (e2) {}
+
   try {
-    Firestore.setDoc(_FIN_COL, String(1e13 - agora) + '_' + Math.floor(Math.random() * 1000), doc);
-    return { ok: true, dia: doc.dia };
+    Firestore.setDoc(_FIN_COL, idFin, doc);
+    return { ok: true, dia: doc.dia, id: idFin };
   } catch (e) { return { ok: false, erro: e.message }; }
 }
 
@@ -4255,18 +4350,89 @@ function _finFalarSaldo(carteira) {
   return 'Saldo do Swile: ' + partes.join('; e ') + '.' + quando;
 }
 
+/* INSIGHT por voz — determinístico. Dois verbos que o LLM não cobria:
+ *  · PEDIR   "me dá uma ideia" / "quero ouvir sua ideia" — hoje só existia aceitar uma OFERTA,
+ *    e a oferta expira em 20 min. Fora dessa janela o pedido caía no LLM, que se apoiava no
+ *    histórico e repetia a última ação (em 10/08 devolveu a confirmação de TURNO — bug real).
+ *  · GRAVAR  "anota essa ideia na wiki" — o insight já é arquivado sozinho em insights/, mas
+ *    virar página em concepts/ dependia do LLM lembrar QUAL era a ideia. Em 06/08 ele perguntou
+ *    "o que você quer que eu anote?" 71s depois de entregar o insight, e o assunto se perdeu.
+ * Ordem importa: GRAVAR é testado ANTES de PEDIR, senão "anota essa ideia" cairia no pedir. */
+function _interpretarInsight(msg) {
+  var s = String(msg || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  var refIdeia = /\b(ideia|insight|sugest|dica)/.test(s);
+  var verboGravar = /\b(anot|grav|salv|registr|guard)/.test(s);
+  // GRAVAR: precisa do verbo E de uma referência ao que foi dito (demonstrativo + ideia, ou isso+wiki).
+  if (verboGravar) {
+    var refDemo = /\b(essa|esse|est[ae]|a|o)\s+(ideia|insight|sugest|dica)/.test(s);
+    var refIsso = /\bisso\b/.test(s) && /\bwiki\b/.test(s);
+    if (refDemo || refIsso) return { acao: 'gravar' };
+    return null;   // "anota na wiki que comprei um carro" NÃO é sobre o insight
+  }
+  // PEDIR: referência à ideia + verbo de pedido.
+  if (refIdeia && /\b(quero ouvir|quero saber|me d[aeê]|me fala|me conta|qual|tem alguma|manda|conta|fala)\b/.test(s)) {
+    return { acao: 'pedir' };
+  }
+  return null;
+}
+
+/* Promove o insight ATUAL a uma página de concepts/ (o arquivamento em insights/ já é automático
+ * no gerarInsightDiario — isto é a versão "conceito", que foi o que ele pediu nas 3 vezes). */
+function _insSalvarComoConceito() {
+  var ins = _insightAtual();
+  if (!ins) return { ok: false, erro: 'não há insight recente para gravar' };
+  try {
+    var caminho = 'concepts/' + _insSlug(ins.titulo) + '.md';
+    var md = '# ' + ins.titulo + '\n\n' + ins.insight + '\n\n' +
+      (ins.porque ? '**Por que importa:** ' + ins.porque + '\n\n' : '') +
+      (ins.acao ? '**Primeiro passo:** ' + ins.acao + '\n\n' : '') +
+      '---\n\n> Insight gerado pelo Jarvis em ' + ins.dia + ' · tema: **' + ins.tema + '**\n\n' +
+      'Baseado em:\n' + (ins.fontes || []).map(function (x) { return '- ' + x; }).join('\n') + '\n';
+    var r = WikiMemoryService.escreverWiki(caminho, md);
+    if (!r || r.status !== 'success') return { ok: false, erro: (r && (r.erro || r.mensagem)) || 'falha ao escrever' };
+    try { WikiMemoryService.registrarNoLog('Insight "' + ins.titulo + '" promovido a conceito em ' + caminho + '.'); } catch (eL) {}
+    return { ok: true, caminho: caminho, titulo: ins.titulo };
+  } catch (e) { return { ok: false, erro: e.message }; }
+}
+
+/* TURNO DE TRABALHO por voz — determinístico.
+ * Sem isto, "minha jornada essa semana é de manhã" ia para o LLM, que ANUNCIAVA os 4 horários e
+ * criava só 1 alerta avulso (sem tag), deixando os 4 do turno anterior vivos — os dois turnos
+ * avisando ao mesmo tempo. Aconteceu de verdade em 03/08.
+ * Exige contexto de TRABALHO + palavra do turno: "boa tarde" e "vou trabalhar amanhã" NÃO entram
+ * (o \b antes de "manha" impede casar dentro de "amanhã", que foi a armadilha mais perigosa). */
+function _interpretarTurnoTrabalho(msg) {
+  var s = String(msg || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  if (!/\b(turno|jornada|expediente|escala|horario|trabalh|servico|plantao)/.test(s)) return null;
+  var manha = /\bmanha|\bmatutin|\bde cedo\b/.test(s);
+  var tarde = /\btarde\b|\bvespertin|\bnoturn|\bnoite\b/.test(s);
+  if (manha && !tarde) return 'manha';
+  if (tarde && !manha) return 'tarde';
+  return null;   // ambíguo (citou os dois) → deixa o LLM perguntar
+}
+
 /** Texto livre → intenção financeira. null quando não for pergunta de saldo/gasto. */
+// Fonte UNICA de palavras que indicam pergunta sobre o Swile. Usada pela cadeia determinística
+// de voz (_interpretarFinanceiro, abaixo) E pelo filtro de ferramentas do chat (Jarvis.js) —
+// antes eram duas regex divergentes: "cartão alimentação" (sem "de") passava na primeira e
+// falhava na segunda, deixando o modelo responder sem a ferramenta de saldo (bug real, 05/08).
+var _FIN_PALAVRAS_RE = /(swile|suav|suail|swaile|su[ai]le|saldo|vale|voucher|mobilidade|alimenta|refeic|combust|cart[ãa]o|quanto (eu )?(tenho|tem)\b|quanto sobrou|quanto resta|quanto (eu )?gastei|onde (eu )?gastei|extrato|maiores gastos)/i;
+
 function _interpretarFinanceiro(msg) {
   var s = String(msg || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  // "suav", "suail", "swaile": o reconhecimento de voz erra o nome da marca com frequência.
-  var marca = /(swile|suav|suail|swaile|su[ai]le|vale|voucher|mobilidade|alimenta|refeic|combust)/.test(s);
-  if (!marca && !/\bsaldo\b/.test(s)) return null;
-  if (/quanto (eu )?gastei|onde (eu )?gastei|extrato|maiores gastos|gastos d[eo]/.test(s)) {
+  // "suav", "suail", "swaile": o reconhecimento de voz erra o nome da marca com frequência —
+  // por isso ele prefere dizer "cartão alimentação", que também entra aqui.
+  var marca = _FIN_PALAVRAS_RE.test(s);
+  // Pergunta sobre GASTO é inequívoca por si só: "quanto eu gastei essa semana" não precisa
+  // nomear o cartão. Antes exigia a marca e caía fora, indo parar no LLM.
+  var pareceGasto = /quanto (eu )?gastei|onde (eu )?gastei|extrato|maiores gastos|meus gastos|gastos d[ae]|gasto total/.test(s);
+  if (!marca && !pareceGasto && !/\bsaldo\b/.test(s)) return null;
+  if (pareceGasto) {
     var dias = 30;
     if (/hoje/.test(s)) dias = 1; else if (/semana/.test(s)) dias = 7; else if (/m[eê]s/.test(s)) dias = 30;
     return { tipo: 'gastos', dias: dias };
   }
-  if (/\bsaldo\b|quanto (eu )?tenho|quanto sobrou|quanto resta/.test(s)) {
+  if (/\bsaldo\b|quanto (eu )?(tenho|tem)\b|quanto sobrou|quanto resta/.test(s)) {  // "quanto tem" tambem e pergunta de saldo (05/08: so "tenho" deixava passar)
     var cart = null;
     if (/voucher|refeic|alimenta/.test(s)) cart = 'voucher';
     else if (/mobilidade|combust|transporte/.test(s)) cart = 'mobilidade';
@@ -5198,6 +5364,24 @@ function diagTelemetria() {
 }
 
 /** DEBUG: replica a lógica do atalho de voz da Bíblia p/ ver s/querFalar/parse (verdade de terra). */
+/** Testa o atalho determinístico de insight sem passar pelo celular.
+ *  args.frase — o que seria dito; args.executar=true também EXECUTA (entrega ou grava de verdade). */
+function diagAtalhoInsight(args) {
+  args = args || {};
+  var frase = String(args.frase || args.msg || args.message || '');
+  var r = _interpretarInsight(frase);
+  var out = { ok: true, frase: frase, interpretado: !!r, acao: r ? r.acao : null };
+  if (!r || args.executar !== true) return out;
+  if (r.acao === 'gravar') { out.resultado = _insSalvarComoConceito(); }
+  else {
+    var i = _insightAtual();
+    if (!i) { out.resultado = { ok: false, erro: 'sem insight hoje' }; }
+    else { try { marcarInsightEntregue('voz'); } catch (e) {}
+      out.resultado = { ok: true, falaria: i.insight + (i.acao ? ' Primeiro passo: ' + i.acao : '') }; }
+  }
+  return out;
+}
+
 function diagVoiceParse(args) {
   var msgVoz = String((args && (args.msg || args.message)) || '');
   var r = _interpretarBiblia(msgVoz);
@@ -5208,9 +5392,155 @@ function diagVoiceParse(args) {
 
 
 /** Info não-sensível do banco (p/ montar o link do console real). project_id aparece em toda URL da API. */
+/** Reconstrói o índice compacto de busca semântica no Drive (1x manual, ou reparo). */
+function diagReconstruirIndiceSemantico() {
+  try {
+    if (typeof Semantica === 'undefined' || !Semantica.reconstruirIndice) return { ok: false, erro: 'Semantica indisponível' };
+    return Semantica.reconstruirIndice();
+  } catch (e) { return { ok: false, erro: e.message }; }
+}
+
+
 function diagFsInfo() {
   try { return { ok: true, projectId: _fsSa().project_id, database: FS_DATABASE }; }
   catch (e) { return { ok: false, erro: e.message }; }
+}
+
+
+/* ===================== REGISTRO DE CONECTIVIDADE =====================
+ * O celular manda telemetria a cada ~15 min. Quando ele fica sem internet,
+ * a telemetria simplesmente NAO CHEGA — e a AUSENCIA e o sinal. Este modulo
+ * le o historico, acha as LACUNAS e as transforma em registro permanente.
+ *
+ * Por que assim, e nao um "ping" no celular: se o aparelho esta offline, ele
+ * nao consegue avisar que esta offline. Detectar do lado do servidor e a unica
+ * forma que funciona justamente no momento em que se precisa dela.
+ *
+ * Idempotente: o id da lacuna vem do instante em que ela comecou, entao rodar
+ * duas vezes nao duplica (mesma licao do cofre financeiro).
+ * ================================================================== */
+var _CONECT_COL = 'conectividade';
+
+/** Converte o id de timestamp invertido da telemetria em milissegundos. */
+function _conectMsDoId(id) {
+  var n = Number(id);
+  return (isFinite(n) && n > 0) ? (1e13 - n) : 0;
+}
+
+/** Extrai o primeiro valor util de um campo da macro (ex.: "Link|Link|[wifi_ssid]"). */
+function _conectLimpo(v) {
+  var partes = String(v || '').split('|');
+  for (var i = 0; i < partes.length; i++) {
+    var p = partes[i].trim();
+    if (p && p.indexOf('[') === -1 && p.indexOf('{') === -1) return p;
+  }
+  return '';
+}
+
+/**
+ * Analisa a telemetria e devolve as lacunas (periodos sem contato).
+ * args: { minutos: limite p/ considerar lacuna (padrao 25), amostras: quantos
+ *         registros olhar (padrao 100 = ~25h), registrar: true p/ persistir }
+ */
+function diagConectividade(args) {
+  args = args || {};
+  var LIMITE_MIN = Number(args.minutos || 25);
+  var N = Math.min(Number(args.amostras || 100), 100);
+
+  var q = diagFsQuery({ colecao: 'telemetria_dispositivo', limite: N });
+  if (!q || !q.ok) return { ok: false, erro: (q && q.erro) || 'falha ao ler telemetria' };
+
+  // normaliza: cada registro vira { ms, wifi, bateria }
+  var pts = [];
+  (q.resultados || []).forEach(function (r) {
+    var ms = _conectMsDoId(r.id);
+    if (!ms) {
+      var re = (r.dados && r.dados.recebidoEm) ? Date.parse(r.dados.recebidoEm) : 0;
+      ms = re || 0;
+    }
+    if (!ms) return;
+    var b = (r.dados && r.dados.body) || {};
+    pts.push({ ms: ms, wifi: _conectLimpo(b.wifi_nome), bateria: _conectLimpo(b.bateria_nivel) });
+  });
+  if (pts.length < 2) return { ok: true, amostras: pts.length, lacunas: [], nota: 'poucos dados' };
+
+  pts.sort(function (a, b) { return a.ms - b.ms; });   // do mais antigo p/ o mais novo
+
+  var lacunas = [], fmt = function (ms) {
+    return Utilities.formatDate(new Date(ms), 'America/Sao_Paulo', 'dd/MM HH:mm');
+  };
+  for (var i = 1; i < pts.length; i++) {
+    var dif = (pts[i].ms - pts[i - 1].ms) / 60000;
+    if (dif >= LIMITE_MIN) {
+      lacunas.push({
+        inicio: fmt(pts[i - 1].ms), fim: fmt(pts[i].ms),
+        minutos: Math.round(dif),
+        wifiAntes: pts[i - 1].wifi || '?', wifiDepois: pts[i].wifi || '?',
+        bateriaAntes: pts[i - 1].bateria || '?',
+        inicioMs: pts[i - 1].ms
+      });
+    }
+  }
+
+  // quanto tempo desde o ultimo contato (lacuna em curso?)
+  var agora = Date.now();
+  var desdeUltimo = Math.round((agora - pts[pts.length - 1].ms) / 60000);
+
+  // persiste, se pedido. Id = instante de inicio -> reexecutar nao duplica.
+  var gravadas = 0;
+  if (args.registrar === true) {
+    lacunas.forEach(function (L) {
+      var id = 'g' + L.inicioMs;
+      var ja = null;
+      try { ja = Firestore.getDoc(_CONECT_COL, id); } catch (e) {}
+      if (ja) return;
+      try {
+        Firestore.setDoc(_CONECT_COL, id, {
+          inicio: L.inicio, fim: L.fim, minutos: L.minutos,
+          wifiAntes: L.wifiAntes, wifiDepois: L.wifiDepois,
+          bateriaAntes: L.bateriaAntes, inicioMs: L.inicioMs,
+          registradoEm: agora
+        });
+        gravadas++;
+      } catch (e2) {}
+    });
+  }
+
+  return {
+    ok: true,
+    amostras: pts.length,
+    janela: fmt(pts[0].ms) + ' ate ' + fmt(pts[pts.length - 1].ms),
+    limiteMin: LIMITE_MIN,
+    minutosDesdeUltimoContato: desdeUltimo,
+    offlineAgora: desdeUltimo >= LIMITE_MIN,
+    totalLacunas: lacunas.length,
+    tempoTotalOffline: lacunas.reduce(function (s, L) { return s + L.minutos; }, 0),
+    lacunas: lacunas,
+    gravadas: gravadas
+  };
+}
+
+/** Historico ja registrado de quedas (coleção conectividade). */
+function diagHistoricoConectividade(args) {
+  args = args || {};
+  var q = diagFsQuery({ colecao: _CONECT_COL, limite: Number(args.limite || 30) });
+  if (!q || !q.ok) return { ok: false, erro: (q && q.erro) || 'falha' };
+  var itens = (q.resultados || []).map(function (r) { return r.dados; })
+    .sort(function (a, b) { return (b.inicioMs || 0) - (a.inicioMs || 0); });
+  return { ok: true, total: itens.length,
+    tempoTotalOffline: itens.reduce(function (s, x) { return s + (Number(x.minutos) || 0); }, 0),
+    quedas: itens };
+}
+
+/** Job: roda periodicamente e grava as lacunas novas. Sem fala, sem gasto de IA. */
+function jobRegistrarConectividade() {
+  try {
+    var r = diagConectividade({ registrar: true });
+    if (r && r.ok && r.gravadas > 0) {
+      Logger.log('[conectividade] ' + r.gravadas + ' lacuna(s) nova(s) registrada(s)');
+    }
+    return r;
+  } catch (e) { return { ok: false, erro: e.message }; }
 }
 
 /** Consulta ESTRUTURADA (runQuery) — traduz args amigáveis p/ structuredQuery REST e executa.
@@ -5341,8 +5671,14 @@ function _diagDispatch(body) {
     diagFsListar:           (typeof diagFsListar !== 'undefined') ? diagFsListar : null,
     diagFsDoc:              (typeof diagFsDoc !== 'undefined') ? diagFsDoc : null,
     diagFsQuery:            (typeof diagFsQuery !== 'undefined') ? diagFsQuery : null,
+    diagReconstruirIndiceSemantico: (typeof diagReconstruirIndiceSemantico !== 'undefined') ? diagReconstruirIndiceSemantico : null,
+    diagPublicarInventarioFerramentas: (typeof diagPublicarInventarioFerramentas !== 'undefined') ? diagPublicarInventarioFerramentas : null,
+    diagConectividade:      (typeof diagConectividade !== 'undefined') ? diagConectividade : null,
+    diagHistoricoConectividade: (typeof diagHistoricoConectividade !== 'undefined') ? diagHistoricoConectividade : null,
+    jobRegistrarConectividade: (typeof jobRegistrarConectividade !== 'undefined') ? jobRegistrarConectividade : null,
     diagFsInfo:             (typeof diagFsInfo !== 'undefined') ? diagFsInfo : null,
     diagVoiceParse:         (typeof diagVoiceParse !== 'undefined') ? diagVoiceParse : null,
+    diagAtalhoInsight:      (typeof diagAtalhoInsight !== 'undefined') ? diagAtalhoInsight : null,
     configurarEvolutionUrl: (typeof configurarEvolutionUrl !== 'undefined') ? configurarEvolutionUrl : null,
     diagEventoProativo:     (typeof diagEventoProativo !== 'undefined') ? diagEventoProativo : null,
     diagTemas:              (typeof diagTemas !== 'undefined') ? diagTemas : null,
@@ -5361,6 +5697,7 @@ function _diagDispatch(body) {
     diagParserFinanceiro:   (typeof diagParserFinanceiro !== 'undefined') ? diagParserFinanceiro : null,
     diagFinanceiroVoz:      (typeof diagFinanceiroVoz !== 'undefined') ? diagFinanceiroVoz : null,
     diagIndexacao:          (typeof diagIndexacao !== 'undefined') ? diagIndexacao : null,
+    diagOrfaos:             (typeof diagOrfaos !== 'undefined') ? diagOrfaos : null,
     configurarIndexacaoAutomatica:(typeof configurarIndexacaoAutomatica !== 'undefined') ? configurarIndexacaoAutomatica : null,
     configurarNotificacoes: (typeof configurarNotificacoes !== 'undefined') ? configurarNotificacoes : null,
     resumirNotificacoes:    (typeof resumirNotificacoes !== 'undefined') ? resumirNotificacoes : null,
@@ -5398,6 +5735,7 @@ function _diagDispatch(body) {
     diagContatos:           (typeof diagContatos !== 'undefined') ? diagContatos : null,
     testarAvisoContato:     (typeof testarAvisoContato !== 'undefined') ? testarAvisoContato : null,
     criarAlertaVoz:         (typeof criarAlertaVoz !== 'undefined') ? criarAlertaVoz : null,
+    definirTurnoTrabalho:   (typeof definirTurnoTrabalho !== 'undefined') ? definirTurnoTrabalho : null,
     listarAlertasVoz:       (typeof listarAlertasVoz !== 'undefined') ? listarAlertasVoz : null,
     cancelarAlertaVoz:      (typeof cancelarAlertaVoz !== 'undefined') ? cancelarAlertaVoz : null,
     tickAlertasVoz:         (typeof tickAlertasVoz !== 'undefined') ? tickAlertasVoz : null,

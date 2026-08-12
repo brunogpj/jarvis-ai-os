@@ -111,10 +111,12 @@ var AlertasVoz = (function () {
         if (a.dias && a.dias.length && a.dias.indexOf(dow) === -1) return;
         var carimbo = dia + 'T' + a.hora + ':' + (a.minuto || 0);   // uma vez por dia, por alerta
         if (a.ult === carimbo) return;
-        // dedup à prova de múltiplos gatilhos/race (CacheService, atômico entre execuções): cada
-        // (alerta, DIA) dispara UMA vez. TTL de 30 min cobre a janela de tolerância inteira — com os
-        // 10 min padrão sobra folga, e o dedup por property (a.ult) segura o resto do dia.
-        try { var _ck = CacheService.getScriptCache(), _ckk = 'av_' + a.id + '_' + carimbo; if (_ck.get(_ckk)) return; _ck.put(_ckk, '1', 1800); } catch (eAv) {}
+        // GUARDA DE CORRIDA (CacheService, atômico entre execuções): impede dois ticks simultâneos
+        // de falarem o mesmo alerta. TTL CURTO de propósito — 90s, não 30 min. Com 30 min, uma fala
+        // que falhasse ficava bloqueada para o resto da janela de tolerância e o alerta simplesmente
+        // não acontecia naquele dia. Quem garante "uma vez por dia" é o a.ult abaixo, e ele agora só
+        // é gravado quando a fala DEU CERTO — então falha vira retentativa no minuto seguinte.
+        try { var _ck = CacheService.getScriptCache(), _ckk = 'av_' + a.id + '_' + carimbo; if (_ck.get(_ckk)) return; _ck.put(_ckk, '1', 90); } catch (eAv) {}
         var fala = a.texto;
         if (a.dinamico) {
           // Em alerta dinâmico o a.texto é a INSTRUÇÃO ("me dê as notícias do dia"), não a fala.
@@ -126,8 +128,31 @@ var AlertasVoz = (function () {
           fala = (limpo && limpo.length >= 15) ? limpo : 'Bruno, não consegui montar isso agora. Me pergunte daqui a pouco.';
         }
         try { if (typeof _prepararTextoFala === 'function') fala = _prepararTextoFala(fala); } catch (e) {}
-        try { Jarvis.controlarDispositivo({ acao: 'falar', texto: fala }); } catch (e) {}
-        a.ult = carimbo; mudou = true;
+        // O RESULTADO DA FALA IMPORTA. Antes era `try { falar } catch {}` seguido de `a.ult = carimbo`:
+        // o alerta era marcado como feito mesmo se a fala explodisse, e ninguém nunca ficava sabendo —
+        // nem o Bruno (que não ouviu), nem o log (que não registrava). Foi o buraco que impediu de
+        // diagnosticar o ponto perdido das 19:00 de 12/08: o `ult` dizia "disparou", sem provar nada.
+        var _t0 = Date.now(), _res = null, _erro = null;
+        try { _res = Jarvis.controlarDispositivo({ acao: 'falar', texto: fala }); }
+        catch (eF) { _erro = eF.message; }
+        // 'dedupe' conta como sucesso: quer dizer que a MESMA fala acabou de sair por outro caminho.
+        var _ok = !!(_res && (_res.status === 'success' || _res.via === 'dedupe'));
+        if (!_ok && !_erro) _erro = (_res && (_res.erro || _res.status)) || 'sem resposta do dispositivo';
+        a.ultResultado = { em: Utilities.formatDate(agora, TZ, 'yyyy-MM-dd HH:mm:ss'),
+                           ok: _ok, erro: _ok ? null : String(_erro).substring(0, 140) };
+        // Entra no MESMO log das ferramentas (agente_eventos). Sem isto, alerta falado era o único
+        // caminho de fala invisível no sistema — dava para ver conversa e proativo, nunca alerta.
+        try {
+          if (Jarvis.registrarEvento) Jarvis.registrarEvento({
+            tool: 'alertaVoz:' + (a.tag || (a.dinamico ? 'dinamico' : 'fixo')),
+            ok: _ok, ms: Date.now() - _t0, userEmail: _owner(),
+            resumo: _ok ? fala : ('FALHOU: ' + _erro)
+          });
+        } catch (eEv) {}
+        // SÓ marca o dia como resolvido se falou. Falhou → o próximo tick tenta de novo, dentro da
+        // janela de tolerância. É a diferença entre perder o alerta do dia e atrasá-lo um minuto.
+        if (_ok) a.ult = carimbo;
+        mudou = true;
       });
       if (mudou) _salvar(arr);
       // Auto-limpeza: sem alertas ativos → remove o gatilho de 1 min (criar() recria quando precisar).

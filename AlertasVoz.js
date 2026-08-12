@@ -117,7 +117,13 @@ var AlertasVoz = (function () {
         try { var _ck = CacheService.getScriptCache(), _ckk = 'av_' + a.id + '_' + carimbo; if (_ck.get(_ckk)) return; _ck.put(_ckk, '1', 1800); } catch (eAv) {}
         var fala = a.texto;
         if (a.dinamico) {
-          try { fala = String(Jarvis.ask(_owner(), a.texto, [], null, { interativo: false }) || a.texto); } catch (e) { fala = a.texto; }
+          // Em alerta dinâmico o a.texto é a INSTRUÇÃO ("me dê as notícias do dia"), não a fala.
+          // O fallback antigo era `fala = a.texto`: quando o Jarvis.ask falhava, o aparelho
+          // recitava o próprio prompt em voz alta. Melhor admitir a falha do que ler a ordem.
+          var gerado = '';
+          try { gerado = String(Jarvis.ask(_owner(), a.texto, [], null, { interativo: false }) || ''); } catch (e) { gerado = ''; }
+          var limpo = (typeof _prepararTextoFala === 'function') ? _prepararTextoFala(gerado) : gerado;
+          fala = (limpo && limpo.length >= 15) ? limpo : 'Bruno, não consegui montar isso agora. Me pergunte daqui a pouco.';
         }
         try { if (typeof _prepararTextoFala === 'function') fala = _prepararTextoFala(fala); } catch (e) {}
         try { Jarvis.controlarDispositivo({ acao: 'falar', texto: fala }); } catch (e) {}

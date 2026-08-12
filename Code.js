@@ -559,6 +559,12 @@ function _prepararTextoFala(s) {
   return String(s || '')
     .replace(/```[\s\S]*?```/g, ' ')        // blocos de código
     .replace(/\[([^\]]*?)\]\([^)]*?\)/g, '$1') // [texto](link) → texto
+    // PLACEHOLDER NÃO SUBSTITUÍDO — some antes de virar áudio. Duas origens, mesmo sintoma:
+    // magic text do MacroDroid que não existe ([Notícia do dia], {not_text}) e rótulo que o
+    // modelo devolve quando não conseguiu preencher a seção. Nos dois casos o aparelho lia o
+    // RÓTULO em voz alta — soa como defeito. Só pega rótulo curto e de uma linha, para não
+    // comer texto legítimo. Roda DEPOIS do link markdown, senão engoliria o [texto](link).
+    .replace(/[\[\{]\s*[^\]\}\n]{1,60}\s*[\]\}]/g, ' ')
     .replace(/https?:\/\/\S+/g, ' ')         // urls soltas
     .replace(/[*_`#>~|]/g, ' ')              // marcadores markdown
     .replace(/\s+/g, ' ').trim()
@@ -4664,7 +4670,9 @@ function configurarRegraNotificacao(args) {
       { id: 'banco',    app: 'bradesco|ita[uú]|mercado pago|swile', padrao: '',        acao: 'avisar' },
       { id: 'vaga',     app: 'catho|linkedin',       padrao: 'vaga|oportunidade|candidat|entrevista', acao: 'avisar' },
       { id: 'entrega',  app: 'mercado livre|amazon|olx|sam',        padrao: 'entrega|entregue|saiu para|a caminho|chegou', acao: 'avisar' },
-      { id: 'escola',   app: 'agenda edu', padrao: '',                                 acao: 'avisar' },
+      // O app instalado no aparelho dele é o AgendaKids (com.agendakidsdigital.app); 'agenda edu'
+      // sozinho não casava com nada e a notificação da escola era guardada sem ação nenhuma.
+      { id: 'escola',   app: 'agenda ?edu|agenda ?kids|agendakids', padrao: '',                acao: 'avisar' },
       { id: 'gov',      app: 'gov.br|inss|carteira de trabalho',    padrao: '',        acao: 'avisar' }
     ];
     p.setProperty(_NOTIF_REGRAS, JSON.stringify(regras));
@@ -4685,6 +4693,66 @@ function configurarRegraNotificacao(args) {
     return { ok: true, regra: nova, total: regras.length };
   }
   return { ok: true, total: regras.length, regras: regras };
+}
+
+/** QUAIS APPS O JARVIS RECEBE DE FATO. Responde a pergunta que não dava para responder de fora:
+ *  o filtro de verdade mora na macro do MacroDroid (no aparelho), e daqui só dá para ver o que
+ *  CHEGOU. Então o relatório é por evidência: app que apareceu, quando, e qual regra o pegaria.
+ *  A parte útil é a última — regra configurada que nunca viu tráfego é sinal de app faltando
+ *  no filtro da macro (foi assim que o Sisponto e o AgendaKids apareceram como ausentes). */
+function diagAppsNotificacao(args) {
+  args = args || {};
+  // Teto na RETENÇÃO real: a coleção é podada em _NOTIF_RETENCAO_DIAS, então pedir 14 dias devolve
+  // 7 e faz app que chegou há mais tempo parecer ausente do filtro (o LinkedIn caiu nessa).
+  var dias = Math.min(Number(args.dias || _NOTIF_RETENCAO_DIAS), _NOTIF_RETENCAO_DIAS);
+  var corte = Date.now() - dias * 86400000;
+  var p = PropertiesService.getScriptProperties();
+  var vistos = {};
+  try {
+    _notifLer(500).forEach(function (n) {
+      var em = Number(n.d.em || 0); if (em < corte) return;
+      var app = String(n.d.app || '(sem nome)');
+      if (!vistos[app]) vistos[app] = { app: app, n: 0, ultimo: 0 };
+      vistos[app].n++; if (em > vistos[app].ultimo) vistos[app].ultimo = em;
+    });
+  } catch (e) { return { ok: false, erro: e.message }; }
+
+  var regras = _notifRegras();
+  var comTrafego = {};
+  // Casa SÓ o app da regra, ignorando o `padrao`. Usar o matcher completo aqui era erro meu:
+  // regra com padrao (boleto, vaga, entrega) nunca casa com texto vazio, então Bradesco e
+  // LinkedIn — que CHEGAM — apareciam como "regra sem tráfego" e afogavam o sinal real,
+  // que é app ausente do filtro da macro. Aqui a pergunta é só "esse app chega?".
+  function _appCasa(regra, nomeApp) {
+    if (!regra.app) return false;
+    try { return new RegExp(regra.app, 'i').test(String(nomeApp || '')); }
+    catch (e) { return String(nomeApp || '').toLowerCase().indexOf(String(regra.app).toLowerCase()) !== -1; }
+  }
+  var apps = Object.keys(vistos).map(function (k) {
+    var v = vistos[k], ids = [];
+    regras.forEach(function (r) { if (_appCasa(r, v.app)) { ids.push(r.id); comTrafego[r.id] = true; } });
+    return { app: v.app, notificacoes: v.n,
+             ultima: Utilities.formatDate(new Date(v.ultimo), 'America/Sao_Paulo', 'dd/MM HH:mm'),
+             regras: ids.length ? ids.join(',') : null,
+             acao: ids.length ? 'ver regras' : 'guardar (sem regra)' };
+  }).sort(function (a, b) { return b.notificacoes - a.notificacoes; });
+
+  var semTrafego = regras.filter(function (r) {
+    return r.app && String(r.acao) !== 'ignorar' && !comTrafego[r.id];
+  }).map(function (r) { return { regra: r.id, app: r.app, acao: r.acao }; });
+
+  return { ok: true, dias: dias, retencaoDias: _NOTIF_RETENCAO_DIAS, totalApps: apps.length,
+           total: apps.reduce(function (t, a) { return t + a.notificacoes; }, 0),
+           apps: apps,
+           regrasSemTrafego: semTrafego,
+           nota: semTrafego.length ? 'Regra sem tráfego = app provavelmente fora do filtro da macro do MacroDroid.' : 'Toda regra ativa viu tráfego.',
+           filtros: { NOTIF_APPS: p.getProperty('NOTIF_APPS') || '(vazio = aceita todos)',
+                      NOTIF_FALAR_APPS: p.getProperty('NOTIF_FALAR_APPS') || '',
+                      NOTIF_FALAR_JANELA: p.getProperty('NOTIF_FALAR_JANELA') || '06:00-20:00 (padrão)' },
+           ponto: { app: p.getProperty('PONTO_APP') || 'sisponto (padrão)',
+                    armado: !!p.getProperty('PONTO_APP_VISTO'),
+                    nota: p.getProperty('PONTO_APP_VISTO') ? 'cobrança de ausência ATIVA'
+                          : 'cobrança DESARMADA — arma sozinha na 1ª notificação do app de ponto' } };
 }
 
 /** Diag: {} lista · {simular:{app,titulo,texto}} testa qual regra casaria, SEM efeito colateral. */
@@ -5690,6 +5758,7 @@ function _diagDispatch(body) {
     diagFeedbackCuradoria:  (typeof diagFeedbackCuradoria !== 'undefined') ? diagFeedbackCuradoria : null,
     diagNotificacoes:       (typeof diagNotificacoes !== 'undefined') ? diagNotificacoes : null,
     diagRegrasNotificacao:  (typeof diagRegrasNotificacao !== 'undefined') ? diagRegrasNotificacao : null,
+    diagAppsNotificacao:    (typeof diagAppsNotificacao !== 'undefined') ? diagAppsNotificacao : null,
     configurarRegraNotificacao:(typeof configurarRegraNotificacao !== 'undefined') ? configurarRegraNotificacao : null,
     diagPonto:              (typeof diagPonto !== 'undefined') ? diagPonto : null,
     diagFinanceiro:         (typeof diagFinanceiro !== 'undefined') ? diagFinanceiro : null,

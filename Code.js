@@ -4772,6 +4772,88 @@ function configurarRegraNotificacao(args) {
   return { ok: true, total: regras.length, regras: regras };
 }
 
+/* ===================== MEMÓRIA DE CONVERSAS — INDEXAÇÃO E PODA =====================
+ * O `MemoriaConversas.js` estava escrito e a ferramenta de recall JÁ estava ligada no Jarvis.js,
+ * mas a coleção `conversa_vetores` tinha ZERO documentos: ninguém nunca rodou a indexação. O
+ * agente tinha a capacidade de lembrar conversas antigas e nada para lembrar.
+ *
+ * POR QUE ISSO IMPORTA MAIS DO QUE PARECE. Hoje a continuidade da conversa vem de uma janela
+ * cega de 2 horas — arrasta os últimos turnos independentemente de terem a ver com a pergunta.
+ * Foi um remendo para a contaminação de histórico (em 10/08 "quero ouvir sua ideia" recebeu a
+ * confirmação de TURNO, porque era o que estava no histórico). A janela resolve contaminação
+ * jogando contexto fora — inclusive o relevante.
+ *
+ * Com o índice ligado, o recall passa a ser POR RELEVÂNCIA e sob demanda: em vez de carregar as
+ * últimas 2 h sempre, busca o trecho que tem a ver com a pergunta, de qualquer conversa. É a
+ * diferença entre lembrar do que veio antes e lembrar do que interessa.
+ *
+ * A PODA é guarda de armazenamento, não política de esquecimento — e a distinção é deliberada.
+ * Apagar por idade descartaria justamente o que memória durável deveria preservar. O padrão é
+ * generoso (365 dias) e existe só para a coleção não crescer sem teto.
+ */
+var _MEM_DIAS_PROP = 'MEMORIA_CONVERSAS_DIAS';
+
+/** Remove vetores de trechos mais antigos que `dias`. Guarda de tamanho, não esquecimento. */
+function _memPodar(dias) {
+  var corte = Date.now() - Number(dias) * 86400000;
+  var n = 0;
+  try {
+    (Firestore.listDocs('conversa_vetores', 2000) || []).forEach(function (d) {
+      var ts = Number((d.dados || {}).ts || 0);
+      if (ts && ts < corte) { try { Firestore.deleteDoc('conversa_vetores', d.id); n++; } catch (e) {} }
+    });
+  } catch (e2) {}
+  return n;
+}
+
+/** JOB: indexa a memória de conversas (resumível) e poda o que passou da retenção. */
+function jobMemoriaConversas(args) {
+  args = args || {};
+  if (typeof MemoriaConversas === 'undefined') return { ok: false, erro: 'MemoriaConversas indisponível.' };
+  var dias = Number(PropertiesService.getScriptProperties().getProperty(_MEM_DIAS_PROP) || 365);
+  var r = null;
+  // budget curto: o gatilho roda todo dia, então 'continuar' é normal — retoma amanhã de onde parou.
+  try { r = MemoriaConversas.indexar({ budgetMs: args.budgetMs || 240000, maxPares: args.maxPares || 60 }); }
+  catch (e) { return { ok: false, erro: e.message }; }
+  var podados = (args.podar === false) ? 0 : _memPodar(dias);
+  var st = null; try { st = MemoriaConversas.status(); } catch (e3) {}
+  try {
+    if (typeof Jarvis !== 'undefined' && Jarvis.registrarEvento) Jarvis.registrarEvento({
+      tool: 'memoriaConversas', ok: true, ms: 0,
+      resumo: 'indexados=' + (r.pares || 0) + ' pulados=' + (r.pulados || 0) + ' podados=' + podados +
+              ' total=' + (st ? st.pares : '?') + ' status=' + (r.status || 'ok')
+    });
+  } catch (e4) {}
+  return { ok: true, indexacao: r, podados: podados, retencaoDias: dias, total: st };
+}
+
+/** Instala o gatilho diário da memória. args {hora:3} · {dias:365} · {desligar:true}. */
+function configurarMemoriaConversas(args) {
+  args = args || {};
+  var p = PropertiesService.getScriptProperties();
+  if (args.dias !== undefined) p.setProperty(_MEM_DIAS_PROP, String(Number(args.dias)));
+  var removidos = 0;
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'jobMemoriaConversas') { ScriptApp.deleteTrigger(t); removidos++; }
+  });
+  if (args.desligar === true) return { ok: true, removidos: removidos, instalado: false };
+  var hora = Number(args.hora); if (!isFinite(hora) || hora < 0 || hora > 23) hora = 3;
+  ScriptApp.newTrigger('jobMemoriaConversas').timeBased().everyDays(1).atHour(hora).create();
+  return { ok: true, removidos: removidos, instalado: true, hora: hora,
+           retencaoDias: Number(p.getProperty(_MEM_DIAS_PROP) || 365) };
+}
+
+/** Diag da memória: quantos pares indexados, de quantas conversas. */
+function diagMemoriaConversas(args) {
+  args = args || {};
+  if (typeof MemoriaConversas === 'undefined') return { ok: false, erro: 'MemoriaConversas indisponível.' };
+  if (args.indexar === true) return jobMemoriaConversas({ podar: false });
+  var st = null; try { st = MemoriaConversas.status(); } catch (e) { return { ok: false, erro: e.message }; }
+  return { ok: true, pares: st.pares, conversas: st.conversas,
+           retencaoDias: Number(PropertiesService.getScriptProperties().getProperty(_MEM_DIAS_PROP) || 365),
+           nota: st.pares === 0 ? 'Índice VAZIO — o recall entre conversas não funciona sem ele.' : 'Recall entre conversas ativo.' };
+}
+
 /** "O que eu perdi?" — extraido de dentro do doPost para poder entrar no golden set.
  *  Estava como regex solta na cadeia; regex que ninguem testa e regex que quebra calada. */
 function _interpretarPerdi(msg) {
@@ -4976,6 +5058,15 @@ function _autodiagVerificar() {
       texto: g.falhou + ' atalho(s) de voz pararam de funcionar: ' +
              g.falhas.slice(0, 3).map(function (x) { return '"' + x.frase + '"'; }).join(', ') + '.' });
   } catch (e6) {}
+
+  // 7) MEMÓRIA DE CONVERSAS. Índice vazio = a ferramenta de recall existe e não acha nada —
+  // falha silenciosa clássica: o agente responde "não encontrei" e parece limitação, não defeito.
+  try {
+    var mem = diagMemoriaConversas({});
+    estado.memPares = Number(mem.pares || 0);
+    if (estado.memPares === 0) achados.push({ chave: 'memoria_vazia', severidade: 'media',
+      texto: 'O índice de memória de conversas está vazio — o recall entre conversas não funciona.' });
+  } catch (e7) {}
 
   estado.em = agora;
   return { achados: achados, estado: estado, anterior: ant };
@@ -6100,6 +6191,9 @@ function _diagDispatch(body) {
     configurarVozJarvis:    (typeof configurarVozJarvis !== 'undefined') ? configurarVozJarvis : null,
     diagAutoDiagnostico:    (typeof diagAutoDiagnostico !== 'undefined') ? diagAutoDiagnostico : null,
     diagGoldenVoz:          (typeof diagGoldenVoz !== 'undefined') ? diagGoldenVoz : null,
+    diagMemoriaConversas:   (typeof diagMemoriaConversas !== 'undefined') ? diagMemoriaConversas : null,
+    jobMemoriaConversas:    (typeof jobMemoriaConversas !== 'undefined') ? jobMemoriaConversas : null,
+    configurarMemoriaConversas: (typeof configurarMemoriaConversas !== 'undefined') ? configurarMemoriaConversas : null,
     jobAutoDiagnostico:     (typeof jobAutoDiagnostico !== 'undefined') ? jobAutoDiagnostico : null,
     configurarAutoDiagnostico: (typeof configurarAutoDiagnostico !== 'undefined') ? configurarAutoDiagnostico : null,
     configurarEvolutionUrl: (typeof configurarEvolutionUrl !== 'undefined') ? configurarEvolutionUrl : null,

@@ -2799,11 +2799,7 @@ function doPost(e) {
         // então o `if (_lembC)` rodava sempre e o fim da cadeia sobrescrevia a resposta já montada.
         // (-2) "O QUE EU PERDI?" — resumo determinístico das notificações. Zero LLM: a resposta é
         // um fato, não uma opinião, e mandar isso pro modelo só adicionaria custo e risco de invenção.
-        var _perdi = null;
-        if (_voto === null && _ofr === null) {
-          var _sP = msgVoz.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-          if (/\b(o que (eu )?perdi|perdi algo|perdi alguma coisa|que chegou|chegou algo|alguma notificacao|tem notificacao|novidades? no celular|me atualiza)\b/.test(_sP)) _perdi = true;
-        }
+        var _perdi = (_voto === null && _ofr === null) ? _interpretarPerdi(msgVoz) : null;
         // (-1.5) SALDO/EXTRATO DO SWILE — determinístico. Número não passa pelo modelo.
         var _fin = (_voto === null && _ofr === null && _perdi === null) ? _interpretarFinanceiro(msgVoz) : null;
         var _trn = (_voto === null && _ofr === null && _perdi === null && _fin === null) ? _interpretarTurnoTrabalho(msgVoz) : null;
@@ -4776,6 +4772,101 @@ function configurarRegraNotificacao(args) {
   return { ok: true, total: regras.length, regras: regras };
 }
 
+/** "O que eu perdi?" — extraido de dentro do doPost para poder entrar no golden set.
+ *  Estava como regex solta na cadeia; regex que ninguem testa e regex que quebra calada. */
+function _interpretarPerdi(msg) {
+  var s = String(msg || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  return /\b(o que (eu )?perdi|perdi algo|perdi alguma coisa|que chegou|chegou algo|alguma notificacao|tem notificacao|novidades? no celular|me atualiza)\b/.test(s) ? true : null;
+}
+
+/* ===================== GOLDEN SET DA CADEIA DE VOZ =====================
+ * Regressao para os atalhos deterministicos. A motivacao e concreta: em 12/08 um `\b` virou
+ * caractere de backspace (codigo 8) dentro de uma regex — `grep` nao achou, `node --check` passou,
+ * e so apareceu inspecionando charCodeAt. Uma regex pode quebrar em SILENCIO, e o sintoma (o
+ * pedido cai no LLM) parece comportamento normal.
+ *
+ * COBERTURA — e importante ser honesto sobre o limite:
+ *  · COBERTOS os 7 interpretadores que sao FUNCOES compartilhadas (financeiro, turno, insight,
+ *    perdi, lembrete condicional, rotina, biblia). Sao os que mudaram nesta semana.
+ *  · NAO cobertos spotify/youtube/google/rota/compras/ligar/podcast/abrir-app/controles nativos:
+ *    vivem como IIFE dentro do doPost e testa-los exigiria duplicar a regex aqui — duplicata que
+ *    envelhece e passa a mentir. Extrai-los e o proximo passo, um de cada vez.
+ *  · FORA por natureza: voto e oferta de insight dependem de janela de tempo em cache.
+ *
+ * O previsor respeita a ORDEM REAL da cadeia. Uma ressalva registrada: no doPost os controles
+ * nativos (_ctl) rodam ENTRE rotina e biblia; como nao sao cobertos, uma frase ambigua entre
+ * controle nativo e biblia seria prevista errada. As frases do conjunto evitam essa zona.
+ */
+function _preverRotaDeterministica(msg) {
+  var m = String(msg || '');
+  var r;
+  try { r = _interpretarFinanceiro(m); if (r !== null && r !== undefined) return 'financeiro'; } catch (e) {}
+  try { r = _interpretarTurnoTrabalho(m); if (r !== null && r !== undefined) return 'turno'; } catch (e) {}
+  try { r = _interpretarInsight(m); if (r) return 'insight_' + r.acao; } catch (e) {}
+  try { if (_interpretarPerdi(m) !== null) return 'notificacoes'; } catch (e) {}
+  try { r = _interpretarLembreteCondicional(m); if (r) return 'lembrete_condicional'; } catch (e) {}
+  try { r = _interpretarRotina(m); if (r) return 'rotina:' + r; } catch (e) {}
+  try { r = _interpretarBiblia(m); if (r) return 'biblia'; } catch (e) {}
+  return 'nao_coberto';   // cai nos inline do doPost ou no LLM
+}
+
+/* Casos canonicos. Cada um nasceu de uma frase REAL ou de uma armadilha REAL. */
+var _GOLDEN_VOZ = [
+  // --- financeiro: as duas listas de palavras ja divergiram e 'cartao alimentacao' so casava numa
+  ['quanto tenho no cartao alimentacao', 'financeiro'],
+  ['Ok quanto eu tenho no cartão alimentação', 'financeiro'],
+  ['quanto tem na mobilidade', 'financeiro'],
+  ['quanto eu gastei essa semana', 'financeiro'],
+  ['qual o saldo do swile', 'financeiro'],
+  // --- turno: o \b antes de 'manha' e o que impede 'amanha' de casar
+  ['essa semana eu trabalho a tarde', 'turno'],
+  ['meu turno essa semana e manha', 'turno'],
+  ['vou trabalhar amanha', 'nao_coberto'],          // ARMADILHA: 'amanha' contem 'manha'
+  ['amanha eu descanso', 'nao_coberto'],
+  // --- insight: gravar tem de ser testado ANTES de pedir
+  ['me da uma ideia', 'insight_pedir'],
+  ['quero ouvir sua ideia', 'insight_pedir'],
+  ['anota essa ideia na wiki', 'insight_gravar'],
+  ['anote isso na Wiki e depois falaremos', 'insight_gravar'],
+  ['anota na wiki que comprei um carro', 'nao_coberto'],   // ARMADILHA: verbo sem referencia a ideia
+  ['boa ideia', 'nao_coberto'],
+  // --- notificacoes
+  ['o que eu perdi', 'notificacoes'],
+  ['me atualiza', 'notificacoes'],
+  // --- rotina composta
+  ['modo cinema', 'rotina:cinema'],
+  ['sair do modo cinema', 'rotina:cinema_off'],
+  ['modo foco', 'rotina:foco'],
+  // --- biblia
+  ['abre a biblia no salmo 23', 'biblia'],
+  ['leia joao 3 versiculo 16', 'biblia'],
+  ['salmo 23:1', 'biblia'],                        // caminho do formato cap:vers
+  // TRAVA DELIBERADA, virada teste: sem a palavra biblia/versiculo e sem 'cap:vers', NAO casa.
+  // Sem essa guarda, qualquer 'palavra + numero' viraria referencia biblica.
+  ['salmo 23', 'nao_coberto'],
+  // --- lembrete condicional
+  ['quando eu chegar em casa me lembre de pagar o boleto', 'lembrete_condicional'],
+  // --- tem de cair fora dos atalhos
+  ['bom dia jarvis', 'nao_coberto'],
+  ['qual a previsao do tempo', 'nao_coberto'],
+  ['obrigado', 'nao_coberto']
+];
+
+/** Roda o golden set. args {casos:[[frase,esperado],...]} substitui o conjunto padrao. */
+function diagGoldenVoz(args) {
+  args = args || {};
+  var casos = Array.isArray(args.casos) && args.casos.length ? args.casos : _GOLDEN_VOZ;
+  var falhas = [], passou = 0;
+  casos.forEach(function (c) {
+    var frase = c[0], esperado = c[1], obtido;
+    try { obtido = _preverRotaDeterministica(frase); } catch (e) { obtido = 'ERRO: ' + e.message; }
+    if (obtido === esperado) passou++;
+    else falhas.push({ frase: frase, esperado: esperado, obtido: obtido });
+  });
+  return { ok: falhas.length === 0, total: casos.length, passou: passou,
+           falhou: falhas.length, falhas: falhas };
+}
+
 /* ===================== AUTO-DIAGNÓSTICO DIÁRIO =====================
  * O Jarvis tem mais de 20 funções de diagnóstico e NENHUMA era executada por ninguém — eram
  * instrumento sem operador. Todo defeito desta semana (ponto mudo, áudio sequestrado, transições
@@ -4875,6 +4966,16 @@ function _autodiagVerificar() {
         texto: 'O celular não reporta há ' + horas + ' horas — presença e cobrança de ponto estão cegas.' });
     }
   } catch (e5) {}
+
+  // 6) REGRESSÃO DOS ATALHOS. Barato (só regex, sem I/O) e pega a classe de bug mais traiçoeira:
+  // atalho que parou de casar. O sintoma — o pedido cair no LLM — parece funcionamento normal.
+  try {
+    var g = diagGoldenVoz({});
+    estado.goldenFalhou = g.falhou;
+    if (g.falhou > 0) achados.push({ chave: 'golden_voz', severidade: 'alta',
+      texto: g.falhou + ' atalho(s) de voz pararam de funcionar: ' +
+             g.falhas.slice(0, 3).map(function (x) { return '"' + x.frase + '"'; }).join(', ') + '.' });
+  } catch (e6) {}
 
   estado.em = agora;
   return { achados: achados, estado: estado, anterior: ant };
@@ -5998,6 +6099,7 @@ function _diagDispatch(body) {
     diagAtalhoInsight:      (typeof diagAtalhoInsight !== 'undefined') ? diagAtalhoInsight : null,
     configurarVozJarvis:    (typeof configurarVozJarvis !== 'undefined') ? configurarVozJarvis : null,
     diagAutoDiagnostico:    (typeof diagAutoDiagnostico !== 'undefined') ? diagAutoDiagnostico : null,
+    diagGoldenVoz:          (typeof diagGoldenVoz !== 'undefined') ? diagGoldenVoz : null,
     jobAutoDiagnostico:     (typeof jobAutoDiagnostico !== 'undefined') ? jobAutoDiagnostico : null,
     configurarAutoDiagnostico: (typeof configurarAutoDiagnostico !== 'undefined') ? configurarAutoDiagnostico : null,
     configurarEvolutionUrl: (typeof configurarEvolutionUrl !== 'undefined') ? configurarEvolutionUrl : null,

@@ -1239,6 +1239,25 @@ function askIA(mensagem, token, historico, anexo, conversaId) {
 
 /* ===================== Vozes (TTS) — comando /voz no chat (owner) ===================== */
 
+/* Catálogo do Gemini TTS. FONTE ÚNICA: alimenta o seletor do botão 🔊 e a validação de quem
+ * grava a preferência. A lista anterior tinha 10 nomes e deixava de fora a Iapetus. */
+var _VOZES_GEMINI = ['Enceladus', 'Iapetus', 'Charon', 'Orus', 'Puck', 'Fenrir', 'Algieba', 'Algenib',
+  'Rasalgethi', 'Achernar', 'Alnilam', 'Schedar', 'Gacrux', 'Umbriel', 'Zubenelgenubi', 'Sulafat',
+  'Kore', 'Aoede', 'Leda', 'Zephyr', 'Callirrhoe', 'Autonoe', 'Despina', 'Erinome', 'Laomedeia',
+  'Pulcherrima', 'Achird', 'Vindemiatrix', 'Sadachbia', 'Sadaltager'];
+
+/* Resolve o nome digitado para a grafia EXATA do catálogo, ou null. Existe por causa de uma
+ * armadilha real: os nomes são luas e estrelas, e "Iapetus" com I maiúsculo é visualmente
+ * idêntico a "lapetus" com L minúsculo em várias fontes. Só a regex de letras deixaria passar
+ * o nome errado, o Gemini recusaria a síntese e a fala cairia calada no fallback. */
+function _resolverVozGemini(nome) {
+  var n = String(nome || '').trim().toLowerCase();
+  for (var i = 0; i < _VOZES_GEMINI.length; i++) {
+    if (_VOZES_GEMINI[i].toLowerCase() === n) return _VOZES_GEMINI[i];
+  }
+  return null;
+}
+
 /** Lista as vozes pt-BR disponíveis, priorizando as famílias premium. */
 function vozesTTS(token) {
   var s = getSessionUser(token); if (!s) return { ok: false, erro: 'Sessão expirada.' };
@@ -1253,10 +1272,40 @@ function vozesTTS(token) {
       engine: (p.getProperty('TTS_ENGINE') || 'cloud').toLowerCase(),
       estilo: p.getProperty('TTS_STYLE') || 'tom caloroso e acolhedor',
       voz: p.getProperty('TTS_VOICE_GEMINI') || 'Enceladus',
-      vozes: ['Enceladus', 'Sulafat', 'Kore', 'Puck', 'Charon', 'Aoede', 'Leda', 'Orus', 'Zephyr', 'Fenrir']
+      vozes: _VOZES_GEMINI
     };
     return { ok: true, atual: atual, vozes: vozes, gemini: gemini };
   } catch (e) { return { ok: false, erro: e.message }; }
+}
+
+/** VOZ DO JARVIS pelo terminal. Sem args = só INSPECIONA. Existe porque o setter da UI
+ *  (definirVozGemini) exige token de sessão, o que impede ajustar e conferir de fora — e a voz
+ *  é justamente o que mais se quer trocar ao vivo, ouvindo o resultado.
+ *  args {voz?, estilo?, engine?}. engine 'gemini' é o que habilita voz e estilo; em 'cloud' os
+ *  dois são ignorados e vale o TTS_VOICE (Chirp3-HD). */
+function configurarVozJarvis(args) {
+  args = args || {};
+  var p = PropertiesService.getScriptProperties();
+  if (args.voz !== undefined) {
+    var v = _resolverVozGemini(args.voz);
+    if (!v) return { ok: false, erro: 'Voz "' + args.voz + '" não existe no catálogo do Gemini TTS.',
+                     vozes: _VOZES_GEMINI };
+    p.setProperty('TTS_VOICE_GEMINI', v);   // grava a grafia canônica, não a digitada
+  }
+  if (args.estilo !== undefined) p.setProperty('TTS_STYLE', String(args.estilo).trim().slice(0, 120));
+  if (args.engine !== undefined) {
+    var e = String(args.engine).toLowerCase().trim();
+    if (e !== 'gemini' && e !== 'cloud') return { ok: false, erro: "engine deve ser 'gemini' ou 'cloud'" };
+    p.setProperty('TTS_ENGINE', e);
+  }
+  var eng = (p.getProperty('TTS_ENGINE') || 'cloud').toLowerCase();
+  return { ok: true, engine: eng,
+           voz: p.getProperty('TTS_VOICE_GEMINI') || 'Enceladus (padrão)',
+           estilo: p.getProperty('TTS_STYLE') || '(sem estilo)',
+           modelo: p.getProperty('TTS_GEMINI_MODEL') || 'gemini-2.5-flash-preview-tts',
+           volumeDb: isFinite(Number(p.getProperty('FALA_VOLUME_DB'))) ? Number(p.getProperty('FALA_VOLUME_DB')) : 6,
+           nota: eng === 'gemini' ? 'Motor Gemini ativo — voz e estilo valem.'
+                                  : 'Motor CLOUD ativo — voz e estilo do Gemini estão sendo IGNORADOS.' };
 }
 
 /** UI: liga/ajusta o GEMINI TTS (estilo natural) no botão 🔊. opts:{engine?, estilo?, voz?}. */
@@ -2012,9 +2061,11 @@ function _validarPrefsUI(p) {
     else erros.push('Motor de voz inválido (use "gemini" ou "cloud").');
   }
   if (p.vozGemini !== undefined) {
-    var v = String(p.vozGemini).trim();
-    if (/^[A-Za-z]{3,24}$/.test(v)) out.TTS_VOICE_GEMINI = v;
-    else erros.push('Nome de voz Gemini inválido (só letras, ex.: Enceladus, Sulafat).');
+    // Confere contra o catálogo, não só o formato: nome bem-formado mas inexistente fazia a
+    // síntese falhar silenciosamente lá na frente, já sem contexto para diagnosticar.
+    var v = (typeof _resolverVozGemini === 'function') ? _resolverVozGemini(p.vozGemini) : null;
+    if (v) out.TTS_VOICE_GEMINI = v;
+    else erros.push('Voz Gemini desconhecida (ex.: Enceladus, Iapetus, Sulafat).');
   }
   if (p.estilo !== undefined) {
     out.TTS_STYLE = String(p.estilo).trim().slice(0, 120); // vazio permitido (sem estilo)
@@ -5747,6 +5798,7 @@ function _diagDispatch(body) {
     diagFsInfo:             (typeof diagFsInfo !== 'undefined') ? diagFsInfo : null,
     diagVoiceParse:         (typeof diagVoiceParse !== 'undefined') ? diagVoiceParse : null,
     diagAtalhoInsight:      (typeof diagAtalhoInsight !== 'undefined') ? diagAtalhoInsight : null,
+    configurarVozJarvis:    (typeof configurarVozJarvis !== 'undefined') ? configurarVozJarvis : null,
     configurarEvolutionUrl: (typeof configurarEvolutionUrl !== 'undefined') ? configurarEvolutionUrl : null,
     diagEventoProativo:     (typeof diagEventoProativo !== 'undefined') ? diagEventoProativo : null,
     diagTemas:              (typeof diagTemas !== 'undefined') ? diagTemas : null,

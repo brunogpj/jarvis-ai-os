@@ -2954,6 +2954,36 @@ function doPost(e) {
         } else {
           respVoz = Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false });
         }
+        // QUAL ROTA ATENDEU. Sem isto não dá para saber, depois, se um pedido caiu num atalho
+        // determinístico ou no LLM — que é exatamente a pergunta que apareceu em toda investigação
+        // de bug de voz até aqui (em 13/08 um "o que eu perdi" não deixou vestígio nenhum).
+        // A ordem espelha a cadeia if/else if acima; ao mexer lá, mexer aqui também.
+        var _viaVoz =
+            (_fin   !== null) ? 'financeiro'
+          : (_trn   !== null) ? 'turno'
+          : (_insV  !== null) ? ('insight_' + _insV.acao)
+          : (_perdi !== null) ? 'notificacoes'
+          : (_voto  !== null) ? 'voto_insight'
+          : (_ofr   !== null) ? 'oferta_insight'
+          : _lembC             ? 'lembrete_condicional'
+          : _rot               ? ('rotina:' + _rot)
+          : _ctl               ? 'controle_nativo'
+          : _bib               ? 'biblia'
+          : _spot              ? 'spotify'
+          : _yt                ? 'youtube'
+          : _gg                ? 'google'
+          : _rota              ? 'navegar'
+          : _pod               ? 'podcast'
+          : _loja              ? 'compras'
+          : _lig               ? 'ligar'
+          : (_appNome && _appSimples && !_acaoComposta) ? 'abrir_app'
+          : 'llm';
+        try {
+          if (typeof Jarvis !== 'undefined' && Jarvis.registrarEvento) Jarvis.registrarEvento({
+            tool: 'voz:' + _viaVoz, ok: true, ms: 0, userEmail: emailUser,
+            resumo: msgVoz.substring(0, 100) + ' → ' + String(respVoz).substring(0, 140)
+          });
+        } catch (eEvV) {}
         var textoLimpo = _prepararTextoFala(respVoz);
         
         // Persiste o turno da conversa por voz no Firestore para manter a continuidade do assunto
@@ -5278,6 +5308,18 @@ function _avaliarEventosProativos(tel, opts) {
       // só consome o lembrete se a fala saiu — senão ele volta na próxima transição.
       if (_falou && !simular) _lembConsumir(_pendLemb);
       disparos.push({ evento: 'fala_unica', texto: _txtUnico, falou: _falou, lembretesConsumidos: _falou ? _pendLemb.length : 0 });
+      // RASTRO. A transição de presença chama _governanca DIRETO (não passa pelo _falarProativo),
+      // então consumia o orçamento diário e FALAVA sem registrar nada. O `disparos` acima só vive
+      // na resposta HTTP do ping de telemetria, que ninguém lê. Sintoma real em 13/08: o contador
+      // marcava 3 interrupções no dia e o agente_eventos tinha 1 — as outras 2 eram estas.
+      if (!simular) {
+        try {
+          if (typeof Jarvis !== 'undefined' && Jarvis.registrarEvento) Jarvis.registrarEvento({
+            tool: 'proativo:presenca', ok: _falou, ms: 0,
+            resumo: (_falou ? '' : 'FALHOU: ') + String(_txtUnico).substring(0, 200)
+          });
+        } catch (eEvP) {}
+      }
     }
   }
 

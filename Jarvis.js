@@ -2265,10 +2265,16 @@ var Jarvis = (function () {
 
   // Sintetiza a fala (Cloud TTS, voz premium) e a coloca SEMPRE no MESMO arquivo do Drive (ID estável).
   // Assim a URL de download é FIXA → a macro do MacroDroid usa uma URL estática (sem magic text frágil).
+  // ETAPAS CRONOMETRADAS. A duração da fala era um número só — 102 s medidos em 13/08 para uma
+  // frase de 15 palavras — e por isso insolúvel. Aqui saem `sintese` e `drive`; a espera de lock e
+  // a serialização são medidas em _controlarDispositivo e juntadas lá. Sem separar, "a API do
+  // Gemini está lenta" e "estou esperando a fala anterior terminar" são indistinguíveis — e o
+  // conserto de cada uma é oposto.
   function _falarNoCelular(texto, voz) {
-    if (typeof Voz === 'undefined' || !Voz.temChave()) return { ok: false, erro: 'Cloud TTS indisponível (service account ausente).' };
+    var _spans = { sintese: 0, drive: 0, engine: null, bytes: 0 };
+    if (typeof Voz === 'undefined' || !Voz.temChave()) return { ok: false, erro: 'Cloud TTS indisponível (service account ausente).', spans: _spans };
     var t = String(texto || '').trim();
-    if (!t) return { ok: false, erro: 'Texto vazio.' };
+    if (!t) return { ok: false, erro: 'Texto vazio.', spans: _spans };
     var props = PropertiesService.getScriptProperties();
     // Ganho de volume na fonte (o stream de Mídia do celular costuma ficar baixo). Ajustável sem deploy
     // via Script Property FALA_VOLUME_DB (padrão +6 dB; Cloud TTS aceita até +16).
@@ -2278,12 +2284,15 @@ var Jarvis = (function () {
     // EM WAV (mesmo formato → a macro do Android toca um único formato). voz opcional (ex.: Sulafat p/ contato f).
     var engine = (props.getProperty('TTS_ENGINE') || 'cloud').toLowerCase();
     var r = null;
+    var _tSint = Date.now();
     if (engine === 'gemini' && Voz.sintetizarGemini && t.length <= 4500) {
       var vg = voz ? String(voz).split('-').pop() : null;   // "pt-BR-Chirp3-HD-Sulafat" → "Sulafat" (voz do Gemini)
-      try { var rg = Voz.sintetizarGemini(t, vg ? { voz: vg } : {}); if (rg.status === 'success') r = rg; } catch (eG) {}
+      try { var rg = Voz.sintetizarGemini(t, vg ? { voz: vg } : {}); if (rg.status === 'success') { r = rg; _spans.engine = 'gemini'; } } catch (eG) {}
     }
-    if (!r) { var optTTS = { formato: 'wav', volume: ganho }; if (voz) optTTS.voz = voz; r = Voz.sintetizar(t, optTTS); }
-    if (r.status !== 'success') return { ok: false, erro: r.erro };
+    if (!r) { var optTTS = { formato: 'wav', volume: ganho }; if (voz) optTTS.voz = voz; r = Voz.sintetizar(t, optTTS); _spans.engine = 'cloud'; }
+    _spans.sintese = Date.now() - _tSint;
+    if (r.status !== 'success') return { ok: false, erro: r.erro, spans: _spans };
+    var _tDrive = Date.now();
     try {
       var bytes = Utilities.base64Decode(r.base64);
       var mime = 'audio/wav', nomeArq = 'jarvis-fala.wav';
@@ -2295,7 +2304,7 @@ var Jarvis = (function () {
       if (id) {
         var code = _sobrescreverArquivoDrive(id, bytes, mime);
         if (!(code >= 200 && code < 300)) { Utilities.sleep(400); code = _sobrescreverArquivoDrive(id, bytes, mime); }
-        if (code >= 200 && code < 300) { props.setProperty('JARVIS_FALA_EXT', 'wav'); return { ok: true, id: id, url: _urlDownloadDrive(id) }; }
+        if (code >= 200 && code < 300) { props.setProperty('JARVIS_FALA_EXT', 'wav'); _spans.drive = Date.now() - _tDrive; _spans.bytes = bytes.length; return { ok: true, id: id, url: _urlDownloadDrive(id), spans: _spans }; }
         id = null;
       }
       // 2) Cria pela 1ª vez (ou recria como .wav) e guarda o ID.
@@ -2309,7 +2318,8 @@ var Jarvis = (function () {
       props.setProperty('JARVIS_FALA_FILE_ID', id);
       props.setProperty('JARVIS_FALA_EXT', 'wav');
       if (idAntigo && idAntigo !== id) { try { _avisarDriftFala(id); } catch (eAd) {} }
-      return { ok: true, id: id, url: _urlDownloadDrive(id) };
+      _spans.drive = Date.now() - _tDrive; _spans.bytes = bytes.length;
+      return { ok: true, id: id, url: _urlDownloadDrive(id), spans: _spans };
     } catch (e) { return { ok: false, erro: e.message }; }
   }
 
@@ -2421,14 +2431,21 @@ var Jarvis = (function () {
             // primeira ainda toca, o arquivo é sobrescrito no meio da reprodução — o áudio sai
             // cortado e emendado (foi o que aconteceu na chegada em casa: lembrete + saudação).
             // Aqui a fala vira exclusiva: espera a anterior terminar antes de gerar a próxima.
+            // As DUAS esperas abaixo somam até 75 s (45 de lock + 30 de serialização) ANTES de a
+            // síntese começar. Elas são medidas: sem isso o total da fala engloba espera e trabalho
+            // no mesmo número, e não dá para saber se o gargalo é a API ou a própria fila interna.
+            var _spansFala = { lock: 0, espera: 0, sintese: 0, drive: 0, engine: null, bytes: 0 };
             var _lockFala = null;
+            var _tLock = Date.now();
             try { _lockFala = LockService.getScriptLock(); _lockFala.waitLock(45000); } catch (eLk) { _lockFala = null; }
+            _spansFala.lock = Date.now() - _tLock;
             try {
               var _pFala = PropertiesService.getScriptProperties();
               var _livreEm = Number(_pFala.getProperty('FALA_LIVRE_EM') || 0);
               var _espera = _livreEm - Date.now();
-              if (_espera > 0) Utilities.sleep(Math.min(_espera, 30000));   // teto: não trava o request
+              if (_espera > 0) { var _tEsp = Date.now(); Utilities.sleep(Math.min(_espera, 30000)); _spansFala.espera = Date.now() - _tEsp; }
               var fala = _falarNoCelular(args.texto, a.voz);
+              if (fala && fala.spans) { _spansFala.sintese = fala.spans.sintese; _spansFala.drive = fala.spans.drive; _spansFala.engine = fala.spans.engine; _spansFala.bytes = fala.spans.bytes; }
               if (!fala.ok) { if (_lockFala) _lockFala.releaseLock(); return { status: 'error', erro: 'Falha ao gerar a voz na nuvem: ' + fala.erro }; }
               // Duração estimada: ~14 caracteres/s em pt-BR, + 4 s de download e partida do player.
               var _dur = Math.ceil(String(args.texto || '').length / 14) * 1000 + 4000;
@@ -2540,7 +2557,7 @@ var Jarvis = (function () {
           if (code >= 200 && code < 300) {
             // marca que a fala já saiu NESTA execução → o pós-passo do handler não toca de novo (evita áudio dobrado).
             if (acao === 'falar') { try { _FALA_FEITA = true; } catch (eFl) {} }
-            return { status: 'success', via: 'macrodroid', acao: acao, args: args, evento: alvo.slice(alvo.lastIndexOf('/') + 1), nota: 'Comando "' + acao + '" enviado AGORA ao celular (MacroDroid).' };
+            return { status: 'success', via: 'macrodroid', acao: acao, args: args, evento: alvo.slice(alvo.lastIndexOf('/') + 1), spans: (typeof _spansFala !== 'undefined' ? _spansFala : null), nota: 'Comando "' + acao + '" enviado AGORA ao celular (MacroDroid).' };
           }
           // se o push falhar (HTTP ruim), cai para a fila abaixo como segurança
         } catch (ePush) { /* segue para a fila */ }
@@ -2762,7 +2779,11 @@ var Jarvis = (function () {
         resumo: String(ev.resumo || '').substring(0, 280),
         userEmail: ev.userEmail || null,
         interativo: ev.interativo === true,
-        turnId: ev.turnId || null  // REPLAY-1: sempre grava (curto, sem dados privados)
+        turnId: ev.turnId || null, // REPLAY-1: sempre grava (curto, sem dados privados)
+        // ETAPAS da fala (lock/espera/sintese/drive). Campo opcional: só quem mede preenche.
+        // Sem ele, a duração total nao diz ONDE o tempo foi — foi o que travou o diagnostico
+        // dos 102 s de 13/08.
+        spans: ev.spans ? JSON.stringify(ev.spans).substring(0, 200) : null
       };
       // REPLAY-1: só grava args se REPLAY_ON=true (opt-in — privacidade/armazenamento)
       if (ev.args !== undefined && _prop('REPLAY_ON') === 'true') {

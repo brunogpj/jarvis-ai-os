@@ -4776,6 +4776,162 @@ function configurarRegraNotificacao(args) {
   return { ok: true, total: regras.length, regras: regras };
 }
 
+/* ===================== AUTO-DIAGNÓSTICO DIÁRIO =====================
+ * O Jarvis tem mais de 20 funções de diagnóstico e NENHUMA era executada por ninguém — eram
+ * instrumento sem operador. Todo defeito desta semana (ponto mudo, áudio sequestrado, transições
+ * invisíveis) precisou de uma sessão forense para aparecer. O que denunciou o último foi uma conta
+ * simples: o contador de proatividade dizia 3 e o log tinha 1.
+ *
+ * Este job faz essa conferência sozinho, todo dia, e SÓ FALA QUANDO ALGO ESTÁ ERRADO. Silêncio é
+ * o resultado esperado — um relatório diário que sempre fala vira ruído e deixa de ser lido.
+ *
+ * Regras de projeto:
+ *  · Somente leitura. Nenhuma verificação altera estado (senão o diagnóstico vira efeito colateral).
+ *  · Compara com o dia anterior: o que interessa é MUDANÇA, não estado. "Sisponto mudo" é normal
+ *    desde sempre; "Bradesco parou de chegar" é novidade e merece aviso.
+ *  · Cada achado tem severidade. Só `alta` fala em voz alta; o resto fica no relatório.
+ *  · Passa pela governança proativa (cooldown/silêncio/teto) como qualquer outra interrupção.
+ */
+var _AUTODIAG_KEY = 'AUTODIAG_SNAPSHOT';
+
+function _autodiagLerSnapshot() {
+  try { return JSON.parse(PropertiesService.getScriptProperties().getProperty(_AUTODIAG_KEY) || 'null'); }
+  catch (e) { return null; }
+}
+
+/** Roda as verificações. Devolve {achados:[{chave,severidade,texto}], estado:{...}}. NÃO fala. */
+function _autodiagVerificar() {
+  var achados = [], estado = {};
+  var ant = _autodiagLerSnapshot() || {};
+  var agora = Date.now();
+
+  // 1) NOTIFICAÇÕES — app que CHEGAVA e parou é o sinal mais valioso (macro quebrada, app deslogado).
+  try {
+    var an = diagAppsNotificacao({});
+    estado.apps = (an.apps || []).map(function (x) { return x.app; });
+    estado.semTrafego = (an.regrasSemTrafego || []).map(function (x) { return x.regra; });
+    estado.pontoArmado = !!(an.ponto && an.ponto.armado);
+    if (ant.apps && ant.apps.length) {
+      var sumiram = ant.apps.filter(function (x) { return estado.apps.indexOf(x) === -1; });
+      if (sumiram.length) achados.push({ chave: 'app_sumiu', severidade: 'alta',
+        texto: 'Parei de receber notificações de ' + sumiram.join(', ') + '.' });
+    }
+    var novasSem = estado.semTrafego.filter(function (x) { return (ant.semTrafego || []).indexOf(x) === -1; });
+    if (novasSem.length) achados.push({ chave: 'regra_sem_trafego', severidade: 'media',
+      texto: 'Regra sem tráfego nova: ' + novasSem.join(', ') + '.' });
+  } catch (e1) { achados.push({ chave: 'erro_notif', severidade: 'media', texto: 'Falha ao checar notificações: ' + e1.message }); }
+
+  // 2) ALERTAS DE VOZ — falha registrada, ou alerta que não dispara há dias (dia útil).
+  try {
+    var alertas = (typeof AlertasVoz !== 'undefined') ? AlertasVoz.listar() : [];
+    var falhos = alertas.filter(function (a) { return a.ultResultado && a.ultResultado.ok === false; });
+    if (falhos.length) achados.push({ chave: 'alerta_falhou', severidade: 'alta',
+      texto: falhos.length + ' alerta(s) de voz falharam: ' + falhos.map(function (a) { return _hhmmSimples(a); }).join(', ') + '.' });
+    estado.alertas = alertas.length;
+  } catch (e2) {}
+
+  // 3) LATÊNCIA DA FALA — usa os spans; sem eles não dá para dizer ONDE está lento, só QUE está.
+  try {
+    var evs = Firestore.listDocs('agente_eventos', 120) || [];
+    var falas = [], erros = 0, corte24 = agora - 86400000;
+    evs.forEach(function (x) {
+      var d = x.dados || {}; var t = d.ts ? new Date(d.ts).getTime() : 0;
+      if (t < corte24) return;
+      if (d.ok === false) erros++;
+      if (String(d.tool || '').indexOf('alertaVoz:') === 0 && Number(d.ms) > 0) falas.push(Number(d.ms));
+    });
+    if (erros > 0) achados.push({ chave: 'eventos_erro', severidade: 'alta',
+      texto: erros + ' evento(s) com falha nas últimas 24 horas.' });
+    if (falas.length) {
+      var media = Math.round(falas.reduce(function (a, b) { return a + b; }, 0) / falas.length);
+      estado.falaMediaMs = media;
+      if (ant.falaMediaMs && media > ant.falaMediaMs * 3 && media > 30000) {
+        achados.push({ chave: 'fala_lenta', severidade: 'media',
+          texto: 'A fala está levando ' + Math.round(media / 1000) + ' segundos, contra ' + Math.round(ant.falaMediaMs / 1000) + ' ontem.' });
+      }
+    }
+  } catch (e3) {}
+
+  // 4) INDEXAÇÃO DA WIKI — página escrita e não indexada é página invisível para a busca.
+  try {
+    var ix = diagIndexacao({});
+    estado.wikiTotal = Number(ix.totalNaWiki || 0);
+    if (Number(ix.mudados || 0) > 5) achados.push({ chave: 'wiki_desatualizada', severidade: 'baixa',
+      texto: ix.mudados + ' páginas da wiki aguardando indexação.' });
+  } catch (e4) {}
+
+  // 5) TELEMETRIA — se o celular parou de reportar, TUDO que depende de presença morre em silêncio.
+  try {
+    var tel = Firestore.listDocs('telemetria_dispositivo', 5) || [];
+    var maisNova = 0;
+    tel.forEach(function (x) {
+      var r = (x.dados || {}).recebidoEm; var t = r ? new Date(r).getTime() : 0;
+      if (t > maisNova) maisNova = t;
+    });
+    if (maisNova) {
+      var horas = Math.round((agora - maisNova) / 3600000);
+      estado.telemetriaHoras = horas;
+      if (horas >= 3) achados.push({ chave: 'telemetria_parada', severidade: 'alta',
+        texto: 'O celular não reporta há ' + horas + ' horas — presença e cobrança de ponto estão cegas.' });
+    }
+  } catch (e5) {}
+
+  estado.em = agora;
+  return { achados: achados, estado: estado, anterior: ant };
+}
+
+/** hh:mm de um alerta, para o texto do achado. */
+function _hhmmSimples(a) {
+  return ('0' + Number(a.hora)).slice(-2) + ':' + ('0' + Number(a.minuto || 0)).slice(-2);
+}
+
+/** JOB diário. args {simular:true} não fala nem grava snapshot. */
+function jobAutoDiagnostico(args) {
+  args = args || {};
+  var simular = args.simular === true;
+  var r = _autodiagVerificar();
+  var altas = r.achados.filter(function (a) { return a.severidade === 'alta'; });
+
+  // Só fala se houver achado de severidade alta. Relatório que fala todo dia vira ruído.
+  var falou = null;
+  if (altas.length && !simular) {
+    var txt = 'Bruno, diagnóstico do dia. ' + altas.map(function (a) { return a.texto; }).join(' ');
+    try { falou = _falarProativo('autodiag', txt, { cooldownMin: 720, simular: false }); } catch (eF) {}
+  }
+
+  if (!simular) {
+    try { PropertiesService.getScriptProperties().setProperty(_AUTODIAG_KEY, JSON.stringify(r.estado)); } catch (eS) {}
+    try {
+      if (typeof Jarvis !== 'undefined' && Jarvis.registrarEvento) Jarvis.registrarEvento({
+        tool: 'autodiag', ok: true, ms: 0,
+        resumo: r.achados.length ? r.achados.map(function (a) { return a.severidade[0] + ':' + a.chave; }).join(' ') : 'tudo em ordem'
+      });
+    } catch (eE) {}
+  }
+
+  return { ok: true, simulado: simular, achados: r.achados, altas: altas.length,
+           falou: falou ? falou.falou : false, estado: r.estado, anterior: r.anterior };
+}
+
+/** Instala o gatilho diário do auto-diagnóstico. args {hora:8} · {desligar:true}. */
+function configurarAutoDiagnostico(args) {
+  args = args || {};
+  var achou = 0;
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'jobAutoDiagnostico') { ScriptApp.deleteTrigger(t); achou++; }
+  });
+  if (args.desligar === true) return { ok: true, removidos: achou, instalado: false };
+  var hora = Number(args.hora); if (!isFinite(hora) || hora < 0 || hora > 23) hora = 8;
+  ScriptApp.newTrigger('jobAutoDiagnostico').timeBased().everyDays(1).atHour(hora).create();
+  return { ok: true, removidos: achou, instalado: true, hora: hora };
+}
+
+/** Diag sob demanda: roda tudo SEM falar e sem gravar snapshot. */
+function diagAutoDiagnostico(args) {
+  args = args || {};
+  return jobAutoDiagnostico({ simular: args.executar !== true });
+}
+
 /** QUAIS APPS O JARVIS RECEBE DE FATO. Responde a pergunta que não dava para responder de fora:
  *  o filtro de verdade mora na macro do MacroDroid (no aparelho), e daqui só dá para ver o que
  *  CHEGOU. Então o relatório é por evidência: app que apareceu, quando, e qual regra o pegaria.
@@ -5841,6 +5997,9 @@ function _diagDispatch(body) {
     diagVoiceParse:         (typeof diagVoiceParse !== 'undefined') ? diagVoiceParse : null,
     diagAtalhoInsight:      (typeof diagAtalhoInsight !== 'undefined') ? diagAtalhoInsight : null,
     configurarVozJarvis:    (typeof configurarVozJarvis !== 'undefined') ? configurarVozJarvis : null,
+    diagAutoDiagnostico:    (typeof diagAutoDiagnostico !== 'undefined') ? diagAutoDiagnostico : null,
+    jobAutoDiagnostico:     (typeof jobAutoDiagnostico !== 'undefined') ? jobAutoDiagnostico : null,
+    configurarAutoDiagnostico: (typeof configurarAutoDiagnostico !== 'undefined') ? configurarAutoDiagnostico : null,
     configurarEvolutionUrl: (typeof configurarEvolutionUrl !== 'undefined') ? configurarEvolutionUrl : null,
     diagEventoProativo:     (typeof diagEventoProativo !== 'undefined') ? diagEventoProativo : null,
     diagTemas:              (typeof diagTemas !== 'undefined') ? diagTemas : null,

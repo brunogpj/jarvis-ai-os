@@ -146,6 +146,7 @@ var AlertasVoz = (function () {
           if (Jarvis.registrarEvento) Jarvis.registrarEvento({
             tool: 'alertaVoz:' + (a.tag || (a.dinamico ? 'dinamico' : 'fixo')),
             ok: _ok, ms: Date.now() - _t0, userEmail: _owner(),
+            spans: (_res && _res.spans) || null,   // onde o tempo foi: lock, espera, sintese, drive
             resumo: _ok ? fala : ('FALHOU: ' + _erro)
           });
         } catch (eEv) {}

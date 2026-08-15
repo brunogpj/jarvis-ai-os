@@ -1287,8 +1287,14 @@ function configurarEntregaVoz(args) {
     if (['nuvem', 'auto', 'local'].indexOf(m) === -1) return { ok: false, erro: "modo deve ser 'nuvem', 'auto' ou 'local'" };
     p.setProperty('MODO_FALA_VOZ', m);
   }
+  if (args.rotasLocais !== undefined) {
+    p.setProperty('FALA_LOCAL_ROTAS', String(args.rotasLocais));
+  }
   var atual = String(p.getProperty('MODO_FALA_VOZ') || 'nuvem').toLowerCase();
+  var _padrao = 'financeiro,turno,rotina,controle_nativo,abrir_app,spotify,youtube,google,navegar,compras,ligar,biblia,insight_gravar,voto_insight';
   return { ok: true, modo: atual,
+    rotasLocais: String(p.getProperty('FALA_LOCAL_ROTAS') || _padrao).split(',').map(function (x) { return x.trim(); }),
+    naNuvem: ['llm', 'insight_pedir', 'notificacoes', 'lembrete_condicional', 'podcast'],
     significado: atual === 'nuvem' ? 'Tudo pela nuvem (voz Iapetus). ~8-10 s por resposta.'
       : atual === 'auto' ? 'Atalho determinístico fala no aparelho (instantâneo); LLM pela nuvem.'
       : 'Tudo no aparelho. Rápido, mas sem a voz Iapetus.',
@@ -3048,11 +3054,30 @@ function doPost(e) {
         var _modoCfg = String(PropertiesService.getScriptProperties().getProperty('MODO_FALA_VOZ') || 'nuvem').toLowerCase();
         if (modoFalaVc === 'local' || modoFalaVc === 'nao') _modoCfg = modoFalaVc;   // a macro manda mais que a config
 
-        // Determinístico E curto. O teto de 240 caracteres existe porque o TTS do Android lê
-        // texto longo pior que a voz premium — perde a pena trocar qualidade por velocidade ali.
-        var _determinado = (typeof _viaVoz !== 'undefined') && _viaVoz !== 'llm';
+        /* QUAL ROTA FALA NO APARELHO — por NATUREZA da resposta, não por tamanho.
+         * O critério anterior era "determinístico e curto", e estava no eixo errado: mandava o
+         * INSIGHT (determinístico, 139 car.) para o TTS local, quando é exatamente o tipo de
+         * resposta que o Bruno para para ouvir e quer na voz boa.
+         *
+         * O que decide é o papel da fala:
+         *  · CONFIRMAÇÃO DE AÇÃO ('Abrindo o WhatsApp', 'Tocando X', 'Traçando a rota') — a nuvem
+         *    não chega só atrasada, chega FORA DE SINCRONIA: o app já abriu há 8 s quando a voz
+         *    avisa que vai abrir. Confirmação atrasada não confirma nada. Local é melhor, não
+         *    apenas mais rápido.
+         *  · DADO PONTUAL (saldo) — número curto, ele pergunta e segue. Velocidade vale mais.
+         *  · CONTEÚDO (insight, resumo do que perdeu, resposta do modelo) — ele para e escuta.
+         *    Aqui a Iapetus ganha de longe e os segundos não incomodam.
+         *
+         * Ajustável sem deploy pela property FALA_LOCAL_ROTAS (lista separada por vírgula).
+         * O teto de caracteres continua como rede de segurança: resposta de ação que venha longa
+         * (um extrato inteiro, por exemplo) volta para a nuvem. */
+        var _ROTAS_LOCAIS_PADRAO = 'financeiro,turno,rotina,controle_nativo,abrir_app,spotify,youtube,google,navegar,compras,ligar,biblia,insight_gravar,voto_insight';
+        var _rotasLocais = String(PropertiesService.getScriptProperties().getProperty('FALA_LOCAL_ROTAS') || _ROTAS_LOCAIS_PADRAO)
+          .split(',').map(function (x) { return x.trim(); }).filter(function (x) { return x; });
+        var _viaBase = String((typeof _viaVoz !== 'undefined') ? _viaVoz : '').split(':')[0];
+        var _rotaEhLocal = _rotasLocais.indexOf(_viaBase) !== -1;
         var _curto = String(textoLimpo || '').length <= 240;
-        var _falarLocal = (_modoCfg === 'local') || (_modoCfg === 'auto' && _determinado && _curto);
+        var _falarLocal = (_modoCfg === 'local') || (_modoCfg === 'auto' && _rotaEhLocal && _curto);
         var _falarNuvem = (_modoCfg !== 'local' && _modoCfg !== 'nao' && !_falarLocal);
 
         if (_falarNuvem && typeof Jarvis !== 'undefined' && Jarvis.controlarDispositivo) {

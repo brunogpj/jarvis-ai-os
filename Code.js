@@ -1278,6 +1278,25 @@ function vozesTTS(token) {
   } catch (e) { return { ok: false, erro: e.message }; }
 }
 
+/** Onde a resposta de voz é falada. Sem args = inspeciona. args {modo:'nuvem'|'auto'|'local'}. */
+function configurarEntregaVoz(args) {
+  args = args || {};
+  var p = PropertiesService.getScriptProperties();
+  if (args.modo !== undefined) {
+    var m = String(args.modo).toLowerCase().trim();
+    if (['nuvem', 'auto', 'local'].indexOf(m) === -1) return { ok: false, erro: "modo deve ser 'nuvem', 'auto' ou 'local'" };
+    p.setProperty('MODO_FALA_VOZ', m);
+  }
+  var atual = String(p.getProperty('MODO_FALA_VOZ') || 'nuvem').toLowerCase();
+  return { ok: true, modo: atual,
+    significado: atual === 'nuvem' ? 'Tudo pela nuvem (voz Iapetus). ~8-10 s por resposta.'
+      : atual === 'auto' ? 'Atalho determinístico fala no aparelho (instantâneo); LLM pela nuvem.'
+      : 'Tudo no aparelho. Rápido, mas sem a voz Iapetus.',
+    exigeMacro: atual !== 'nuvem'
+      ? 'A macro de conversa PRECISA falar o corpo da resposta pelo TTS do Android, senão a resposta determinística sai muda.'
+      : null };
+}
+
 /** VOZ DO JARVIS pelo terminal. Sem args = só INSPECIONA. Existe porque o setter da UI
  *  (definirVozGemini) exige token de sessão, o que impede ajustar e conferir de fora — e a voz
  *  é justamente o que mais se quer trocar ao vivo, ouvindo o resultado.
@@ -3008,7 +3027,35 @@ function doPost(e) {
         // body.falar='local' → a PRÓPRIA MACRO fala o texto via TTS do Android (resposta imediata);
         // nesse caso NÃO disparamos a voz premium (jarvis_falar), senão o celular fala DUAS vezes.
         var modoFalaVc = String(body.falar || '').toLowerCase();
-        if (modoFalaVc !== 'local' && modoFalaVc !== 'nao' && typeof Jarvis !== 'undefined' && Jarvis.controlarDispositivo) {
+
+        /* ONDE A RESPOSTA É FALADA — nuvem ou aparelho.
+         * O caminho da nuvem custa 8–10 s: sintetizar (Gemini TTS), subir ~250 KB ao Drive, o
+         * MacroDroid baixar e tocar. Vale a pena quando a resposta é do modelo — voz Iapetus,
+         * texto longo. NÃO vale quando a resposta veio de um atalho determinístico: o texto já
+         * estava pronto em milissegundos e o áudio é o único motivo da espera.
+         *
+         * MODO_FALA_VOZ (Script Property):
+         *   nuvem (padrão) — sempre nuvem. Comportamento histórico, nada muda.
+         *   auto           — atalho determinístico fala LOCAL (instantâneo); LLM vai pela nuvem.
+         *   local          — nunca sintetiza; o aparelho fala tudo.
+         *
+         * PROTOCOLO com a macro: o corpo da resposta é O QUE O APARELHO DEVE FALAR.
+         * Vazio = não fale nada (a nuvem já está cuidando). Assim a macro não precisa interpretar
+         * cabeçalho nem marcador — só manda o corpo para o TTS do Android. Um texto que chega e um
+         * áudio que toca ao mesmo tempo seria fala dobrada, e é isso que o vazio evita.
+         * O padrão é `nuvem` de propósito: mudar para `auto` sem a macro falar localmente deixaria
+         * as respostas determinísticas MUDAS. Os dois lados viram a chave juntos. */
+        var _modoCfg = String(PropertiesService.getScriptProperties().getProperty('MODO_FALA_VOZ') || 'nuvem').toLowerCase();
+        if (modoFalaVc === 'local' || modoFalaVc === 'nao') _modoCfg = modoFalaVc;   // a macro manda mais que a config
+
+        // Determinístico E curto. O teto de 240 caracteres existe porque o TTS do Android lê
+        // texto longo pior que a voz premium — perde a pena trocar qualidade por velocidade ali.
+        var _determinado = (typeof _viaVoz !== 'undefined') && _viaVoz !== 'llm';
+        var _curto = String(textoLimpo || '').length <= 240;
+        var _falarLocal = (_modoCfg === 'local') || (_modoCfg === 'auto' && _determinado && _curto);
+        var _falarNuvem = (_modoCfg !== 'local' && _modoCfg !== 'nao' && !_falarLocal);
+
+        if (_falarNuvem && typeof Jarvis !== 'undefined' && Jarvis.controlarDispositivo) {
           try {
             Jarvis.controlarDispositivo({ acao: 'falar', texto: textoLimpo });
           } catch (eCtrl) {
@@ -3016,7 +3063,17 @@ function doPost(e) {
           }
         }
 
-        return ContentService.createTextOutput(textoLimpo).setMimeType(ContentService.MimeType.TEXT);
+        try {
+          if (typeof Jarvis !== 'undefined' && Jarvis.registrarEvento) Jarvis.registrarEvento({
+            tool: 'voz:entrega:' + (_falarLocal ? 'local' : (_falarNuvem ? 'nuvem' : 'nenhuma')),
+            ok: true, ms: 0, resumo: (typeof _viaVoz !== 'undefined' ? _viaVoz : '?') + ' · ' + String(textoLimpo).length + ' car.'
+          });
+        } catch (eEnt) {}
+
+        // Em modo nuvem devolve o texto (histórico: a macro usa para exibir). Em auto/local o corpo
+        // É a fala — então vazio quando quem fala é a nuvem.
+        var _corpo = (_modoCfg === 'nuvem') ? textoLimpo : (_falarLocal ? textoLimpo : '');
+        return ContentService.createTextOutput(_corpo).setMimeType(ContentService.MimeType.TEXT);
       } catch (evError) {
         return ContentService.createTextOutput("Erro: " + evError.message).setMimeType(ContentService.MimeType.TEXT);
       }
@@ -6339,6 +6396,7 @@ function _diagDispatch(body) {
     diagVoiceParse:         (typeof diagVoiceParse !== 'undefined') ? diagVoiceParse : null,
     diagAtalhoInsight:      (typeof diagAtalhoInsight !== 'undefined') ? diagAtalhoInsight : null,
     configurarVozJarvis:    (typeof configurarVozJarvis !== 'undefined') ? configurarVozJarvis : null,
+    configurarEntregaVoz:   (typeof configurarEntregaVoz !== 'undefined') ? configurarEntregaVoz : null,
     diagAutoDiagnostico:    (typeof diagAutoDiagnostico !== 'undefined') ? diagAutoDiagnostico : null,
     diagGoldenVoz:          (typeof diagGoldenVoz !== 'undefined') ? diagGoldenVoz : null,
     diagMemoriaConversas:   (typeof diagMemoriaConversas !== 'undefined') ? diagMemoriaConversas : null,

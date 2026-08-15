@@ -2442,6 +2442,19 @@ function doPost(e) {
       } catch (eTel) { return json({ ok: false, erro: eTel.message }); }
     }
 
+    // VIAGEM: a macro "Jarvis Viagem" manda velocidade/ETA e recebe de volta o que falar.
+    // Texto puro na resposta, para a macro falar direto pelo TTS do Android (sem round-trip de áudio).
+    if (body && body.action === 'viagem') {
+      var tokVg = body.token || '';
+      if (!tokVg || tokVg !== PropertiesService.getScriptProperties().getProperty('VOICE_API_TOKEN')) {
+        return ContentService.createTextOutput('').setMimeType(ContentService.MimeType.TEXT);
+      }
+      try {
+        var rVg = registrarViagem(body);
+        return ContentService.createTextOutput(String(rVg.falar || '')).setMimeType(ContentService.MimeType.TEXT);
+      } catch (eVg) { return ContentService.createTextOutput('').setMimeType(ContentService.MimeType.TEXT); }
+    }
+
     // NOTIFICAÇÕES DO CELULAR: a macro "Jarvis Notificações Premium" manda o que chegou.
     // Aceita GET ou POST (os parâmetros da query já foram mesclados no body acima).
     if (body && body.action === "notificacao") {
@@ -4772,6 +4785,134 @@ function configurarRegraNotificacao(args) {
   return { ok: true, total: regras.length, regras: regras };
 }
 
+/* ===================== VIAGEM / DIREÇÃO =====================
+ * Recebe telemetria de deslocamento do MacroDroid e devolve, quando vale a pena, UMA frase para
+ * o aparelho falar. A divisão é a mesma que já se provou no resto do projeto:
+ *
+ *   REFLEXO fica no aparelho — excesso de velocidade é conferido localmente a cada poucos
+ *   segundos, sem rede, e falado pelo TTS nativo. Alerta de velocidade que depende de round-trip
+ *   para a nuvem chega tarde demais para servir.
+ *
+ *   JULGAMENTO fica aqui — a cada ~60 s o aparelho manda um resumo e este módulo decide o que
+ *   merece ser dito: fadiga, chegada, retomada de excesso. Estado de viagem em cache.
+ *
+ * O QUE ESTE MÓDULO NÃO FAZ, e é importante estar escrito para ninguém prometer depois:
+ *  · limite de velocidade REAL da via — exige a Roads API do Google, que é paga e de acesso
+ *    restrito. Aqui o limite é o que o Bruno configurar (urbano/rodovia), escolhido por ele.
+ *  · radares — não há fonte pública gratuita e confiável.
+ *  · trânsito/acidentes em tempo real — exige Directions API com faturamento.
+ * Prometer qualquer um dos três sem a fonte de dados seria inventar aviso, que em direção é pior
+ * do que não avisar.
+ */
+var _VIAGEM_KEY = 'VIAGEM_ESTADO';
+var _VIAGEM_TTL = 3 * 60 * 60;   // 3 h de cache: viagem que passa disso já não é a mesma sessão
+
+function _viagemLer() {
+  try { return JSON.parse(CacheService.getScriptCache().get(_VIAGEM_KEY) || 'null'); } catch (e) { return null; }
+}
+function _viagemSalvar(v) {
+  try { CacheService.getScriptCache().put(_VIAGEM_KEY, JSON.stringify(v), _VIAGEM_TTL); } catch (e) {}
+}
+
+/** Config do dono. Limites são ESCOLHA dele, não leitura da via. */
+function _viagemCfg() {
+  var p = PropertiesService.getScriptProperties();
+  return {
+    limiteUrbano:  Number(p.getProperty('VIAGEM_LIMITE_URBANO')  || 60),
+    limiteRodovia: Number(p.getProperty('VIAGEM_LIMITE_RODOVIA') || 110),
+    // acima disto assume rodovia (heurística simples, e assumida como tal)
+    corteRodovia:  Number(p.getProperty('VIAGEM_CORTE_RODOVIA')  || 80),
+    fadigaMin:     Number(p.getProperty('VIAGEM_FADIGA_MIN')     || 120),
+    toleranciaKmh: Number(p.getProperty('VIAGEM_TOLERANCIA')     || 7)
+  };
+}
+
+/** O dono está dirigindo agora? Usado para calar a proatividade não urgente. */
+function _viagemAtiva() {
+  var v = _viagemLer();
+  if (!v || !v.em) return false;
+  return (Date.now() - v.em) < 5 * 60000;   // sem sinal há 5 min = viagem acabou
+}
+
+/** ENDPOINT de viagem. Recebe {velocidade, lat, lon, eta, km, encerrar} e devolve {falar}. */
+function registrarViagem(d) {
+  d = d || {};
+  var cfg = _viagemCfg();
+  var agora = Date.now();
+  var vel = Number(String(d.velocidade || d.speed || '').replace(/[^\d.]/g, '')) || 0;
+  var km  = String(d.km || '').trim();
+  var eta = String(d.eta || '').trim();
+
+  var v = _viagemLer();
+  if (d.encerrar === true || String(d.encerrar) === 'true') {
+    if (!v) return { ok: true, falar: '' };
+    var minTot = Math.round((agora - v.inicio) / 60000);
+    try { CacheService.getScriptCache().remove(_VIAGEM_KEY); } catch (e) {}
+    try { if (typeof Jarvis !== 'undefined' && Jarvis.registrarEvento) Jarvis.registrarEvento({
+      tool: 'viagem:fim', ok: true, ms: 0,
+      resumo: 'duracao=' + minTot + 'min maxKmh=' + v.maxVel + ' avisos=' + (v.avisos || 0) }); } catch (e2) {}
+    return { ok: true, encerrada: true, minutos: minTot, maxVelocidade: v.maxVel,
+             falar: 'Viagem encerrada. ' + minTot + ' minutos, velocidade máxima de ' + v.maxVel + ' quilômetros por hora.' };
+  }
+
+  if (!v) v = { inicio: agora, em: agora, maxVel: 0, avisos: 0, ultFadiga: 0, ultExcesso: 0, ultChegada: 0 };
+  v.em = agora;
+  if (vel > v.maxVel) v.maxVel = vel;
+
+  // LIMITE DA VIA lido do SELO que o proprio Google Maps desenha na tela (text_badge_label).
+  // Isso dispensa a Roads API paga — mas so vale quando o Maps esta navegando E mostrando o selo.
+  // Sem ele, cai no limite que o Bruno configurou. Faixa sanitaria 20..130 para nao aceitar lixo
+  // de leitura de tela (um "200" vindo de outro campo viraria licenca para qualquer velocidade).
+  var limiteTela = Number(String(d.limiteTela || d.limite_tela || '').replace(/[^\d]/g, ''));
+  var limiteDaVia = (isFinite(limiteTela) && limiteTela >= 20 && limiteTela <= 130) ? limiteTela : 0;
+  var limite = limiteDaVia || ((vel >= cfg.corteRodovia) ? cfg.limiteRodovia : cfg.limiteUrbano);
+  var origemLimite = limiteDaVia ? 'placa' : 'configurado';
+  var falas = [];
+
+  // EXCESSO — rede de segurança. O aviso rápido é do aparelho; aqui só entra se ele persistir,
+  // com cooldown de 3 min para não virar ladainha num trecho inteiro acima do limite.
+  if (vel > limite + cfg.toleranciaKmh && (agora - v.ultExcesso) > 180000) {
+    falas.push('Bruno, ' + vel + ' quilômetros por hora. ' + (origemLimite === 'placa' ? 'A via é ' : 'Seu limite aqui é ') + limite + '.');
+    v.ultExcesso = agora; v.avisos = (v.avisos || 0) + 1;
+  }
+
+  // FADIGA — tempo ao volante. Regra de trânsito, não invenção: parada a cada 2 h é recomendação
+  // consolidada. Cooldown de 30 min depois do primeiro aviso.
+  var minDirigindo = Math.round((agora - v.inicio) / 60000);
+  if (minDirigindo >= cfg.fadigaMin && (agora - v.ultFadiga) > 1800000) {
+    falas.push('Você está dirigindo há ' + Math.round(minDirigindo / 60) + ' horas. Vale parar para descansar.');
+    v.ultFadiga = agora;
+  }
+
+  // CHEGADA — lida da tela do Maps. Uma vez só.
+  var kmNum = Number(String(km).replace(',', '.').replace(/[^\d.]/g, ''));
+  if (isFinite(kmNum) && kmNum > 0 && kmNum <= 2 && !v.ultChegada) {
+    falas.push('Chegando' + (eta ? ', ' + eta : '') + '.');
+    v.ultChegada = agora;
+  }
+
+  _viagemSalvar(v);
+  return { ok: true, falar: falas.join(' '), velocidade: vel, limite: limite, origemLimite: origemLimite,
+           minutos: minDirigindo, maxVelocidade: v.maxVel };
+}
+
+/** Diag/config da viagem. args {limiteUrbano, limiteRodovia, fadigaMin, tolerancia} para ajustar. */
+function diagViagem(args) {
+  args = args || {};
+  var p = PropertiesService.getScriptProperties();
+  if (args.limiteUrbano  !== undefined) p.setProperty('VIAGEM_LIMITE_URBANO',  String(Number(args.limiteUrbano)));
+  if (args.limiteRodovia !== undefined) p.setProperty('VIAGEM_LIMITE_RODOVIA', String(Number(args.limiteRodovia)));
+  if (args.corteRodovia  !== undefined) p.setProperty('VIAGEM_CORTE_RODOVIA',  String(Number(args.corteRodovia)));
+  if (args.fadigaMin     !== undefined) p.setProperty('VIAGEM_FADIGA_MIN',     String(Number(args.fadigaMin)));
+  if (args.tolerancia    !== undefined) p.setProperty('VIAGEM_TOLERANCIA',     String(Number(args.tolerancia)));
+  if (args.encerrar === true) return registrarViagem({ encerrar: true });
+  var v = _viagemLer();
+  return { ok: true, config: _viagemCfg(), dirigindo: _viagemAtiva(),
+           viagem: v ? { minutos: Math.round((Date.now() - v.inicio) / 60000), maxVelocidade: v.maxVel,
+                         avisos: v.avisos, ultimoSinalHaSeg: Math.round((Date.now() - v.em) / 1000) } : null,
+           nota: 'Os limites são ESCOLHA sua — o Jarvis não lê a placa da via. Roads API do Google é paga.' };
+}
+
 /* ===================== MEMÓRIA DE CONVERSAS — INDEXAÇÃO E PODA =====================
  * O `MemoriaConversas.js` estava escrito e a ferramenta de recall JÁ estava ligada no Jarvis.js,
  * mas a coleção `conversa_vetores` tinha ZERO documentos: ninguém nunca rodou a indexação. O
@@ -5504,6 +5645,15 @@ function _minutosAtePonto() {
 
 /** GOVERNANÇA: decide se o Jarvis PODE interromper agora. Registra o consumo quando permite. */
 function _governanca(chave, opts) {
+  // DIRIGINDO: cala o que não é urgente. Interromper quem está ao volante com oferta de insight
+  // ou aviso de bateria é pior do que inútil. Crítico e o que ele mesmo pediu continuam passando.
+  try {
+    if (typeof _viagemAtiva === 'function' && _viagemAtiva() &&
+        (opts || {}).prioridade !== 'critica' && String(chave).indexOf('viagem') !== 0 &&
+        ['insight_oferta', 'autodiag', 'bateria_baixa'].indexOf(String(chave)) !== -1) {
+      return { permitido: false, motivo: 'dirigindo — adiado' };
+    }
+  } catch (eVgG) {}
   opts = opts || {};
   var p = PropertiesService.getScriptProperties();
   var critica = opts.prioridade === 'critica';
@@ -6192,6 +6342,7 @@ function _diagDispatch(body) {
     diagAutoDiagnostico:    (typeof diagAutoDiagnostico !== 'undefined') ? diagAutoDiagnostico : null,
     diagGoldenVoz:          (typeof diagGoldenVoz !== 'undefined') ? diagGoldenVoz : null,
     diagMemoriaConversas:   (typeof diagMemoriaConversas !== 'undefined') ? diagMemoriaConversas : null,
+    diagViagem:             (typeof diagViagem !== 'undefined') ? diagViagem : null,
     jobMemoriaConversas:    (typeof jobMemoriaConversas !== 'undefined') ? jobMemoriaConversas : null,
     configurarMemoriaConversas: (typeof configurarMemoriaConversas !== 'undefined') ? configurarMemoriaConversas : null,
     jobAutoDiagnostico:     (typeof jobAutoDiagnostico !== 'undefined') ? jobAutoDiagnostico : null,

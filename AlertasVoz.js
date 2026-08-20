@@ -103,8 +103,19 @@ var AlertasVoz = (function () {
       var dia = Utilities.formatDate(agora, TZ, 'yyyy-MM-dd');
       var minutosAgora = h * 60 + m;
       var arr = _ler(), mudou = false;
+      // PAUSA DE PONTO (ferias, folga, atestado). Ate agora o unico jeito de calar os lembretes
+      // era APAGAR os alertas — e ai voltar do periodo exigia recria-los na mao, ou lembrar de
+      // redefinir o turno. Em 20/08 o Bruno estava de ferias desde 17/08 e continuou sendo
+      // cobrado de manha E de tarde. A pausa tem DATA DE FIM: acaba sozinha, sem depender de
+      // ele lembrar. Vale so para ponto — briefing e demais alertas seguem normais, porque
+      // ferias nao e motivo para deixar de receber as noticias do dia.
+      var _pausaAte = String(PropertiesService.getScriptProperties().getProperty('PONTO_PAUSA_ATE') || '');
+      var _pontoPausado = !!_pausaAte && (dia <= _pausaAte);
       arr.forEach(function (a) {
         if (a.ativo === false) return;
+        // Reconhece ponto pela tag OU pelo texto: o conjunto da manha de 20/08 tinha sido criado
+        // pelo LLM sem tag nenhuma, e por isso escapava de toda limpeza que so olhava a tag.
+        if (_pontoPausado && (a.tag === 'ponto' || /marcar (o )?ponto/i.test(String(a.texto || '')))) return;
         var alvo = Number(a.hora) * 60 + Number(a.minuto || 0);
         var atraso = minutosAgora - alvo;
         if (atraso < 0 || atraso > TOLERANCIA_MIN) return;   // ainda não deu a hora, ou passou demais

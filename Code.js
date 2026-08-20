@@ -4867,6 +4867,39 @@ function configurarRegraNotificacao(args) {
   return { ok: true, total: regras.length, regras: regras };
 }
 
+/* ===================== PAUSA DE PONTO (ferias / folga) =====================
+ * Suspende SO os lembretes de ponto ate uma data, sem apagar nada. Quando a data passa, os
+ * alertas voltam sozinhos — que e a diferenca entre isto e simplesmente cancelar os alertas.
+ * A cobranca de ausencia tambem cala junto: cobrar ponto de quem esta de ferias e pior que
+ * o lembrete, porque insiste. */
+function configurarPausaPonto(args) {
+  args = args || {};
+  var p = PropertiesService.getScriptProperties();
+  var TZ = 'America/Sao_Paulo';
+  if (args.retomar === true) {
+    p.deleteProperty('PONTO_PAUSA_ATE'); p.deleteProperty('PONTO_PAUSA_MOTIVO');
+    return { ok: true, pausado: false, info: 'Lembretes de ponto retomados.' };
+  }
+  if (args.ate !== undefined || args.dias !== undefined) {
+    var ate;
+    if (args.ate) {
+      ate = String(args.ate).trim();
+      if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(ate)) return { ok: false, erro: 'Use ate no formato AAAA-MM-DD.' };
+    } else {
+      var d = new Date(Date.now() + Number(args.dias) * 86400000);
+      ate = Utilities.formatDate(d, TZ, 'yyyy-MM-dd');
+    }
+    p.setProperty('PONTO_PAUSA_ATE', ate);
+    if (args.motivo) p.setProperty('PONTO_PAUSA_MOTIVO', String(args.motivo).substring(0, 60));
+  }
+  var atual = p.getProperty('PONTO_PAUSA_ATE') || '';
+  var hoje = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+  return { ok: true, pausadoAte: atual || null, motivo: p.getProperty('PONTO_PAUSA_MOTIVO') || null,
+           pausadoAgora: !!atual && hoje <= atual, hoje: hoje,
+           info: atual ? ('Ponto silenciado ate ' + atual + ' (inclusive). Volta sozinho no dia seguinte.')
+                       : 'Sem pausa — lembretes de ponto ativos.' };
+}
+
 /* ===================== VIAGEM / DIREÇÃO =====================
  * Recebe telemetria de deslocamento do MacroDroid e devolve, quando vale a pena, UMA frase para
  * o aparelho falar. A divisão é a mesma que já se provou no resto do projeto:
@@ -5439,6 +5472,12 @@ function verificarPontoBatido(opts) {
   // TRAVA DE ARMAÇÃO: só cobra se o app de ponto JÁ enviou alguma notificação alguma vez. Sem isso,
   // enquanto o Sisponto não estiver no filtro da macro, o Jarvis cobraria o ponto todo santo dia —
   // ausência de notificação por falta de integração não é ausência de registro.
+  // Ferias/folga calam a cobranca junto com o lembrete. Cobrar ponto de quem esta de ferias
+  // e pior que o lembrete: o lembrete fala uma vez, a cobranca insiste.
+  var _pAte = p.getProperty('PONTO_PAUSA_ATE') || '';
+  if (_pAte && Utilities.formatDate(agora, 'America/Sao_Paulo', 'yyyy-MM-dd') <= _pAte) {
+    return { ok: true, pausado: true, ate: _pAte, motivo: p.getProperty('PONTO_PAUSA_MOTIVO') || 'pausa' };
+  }
   if (!p.getProperty('PONTO_APP_VISTO')) {
     return { ok: true, desarmado: true, motivo: 'nunca chegou notificação do ' + appPonto +
              ' — adicione-o ao filtro da macro para armar a cobrança' };
@@ -6426,6 +6465,7 @@ function _diagDispatch(body) {
     diagGoldenVoz:          (typeof diagGoldenVoz !== 'undefined') ? diagGoldenVoz : null,
     diagMemoriaConversas:   (typeof diagMemoriaConversas !== 'undefined') ? diagMemoriaConversas : null,
     diagViagem:             (typeof diagViagem !== 'undefined') ? diagViagem : null,
+    configurarPausaPonto:   (typeof configurarPausaPonto !== 'undefined') ? configurarPausaPonto : null,
     jobMemoriaConversas:    (typeof jobMemoriaConversas !== 'undefined') ? jobMemoriaConversas : null,
     configurarMemoriaConversas: (typeof configurarMemoriaConversas !== 'undefined') ? configurarMemoriaConversas : null,
     jobAutoDiagnostico:     (typeof jobAutoDiagnostico !== 'undefined') ? jobAutoDiagnostico : null,

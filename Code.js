@@ -5812,6 +5812,26 @@ function _governanca(chave, opts) {
   var critica = opts.prioridade === 'critica';
   var agora = new Date();
 
+  /* SECAO CRITICA. O que vem abaixo LE o cooldown e o contador do dia e ESCREVE os dois.
+   * Script Properties nao tem leitura-e-escrita atomica entre execucoes, e a telemetria chega
+   * em rajada: em 17/08 quatro pings cairam no mesmo minuto, as quatro execucoes leram 'ainda
+   * nao avisei' antes de qualquer uma gravar, e o aviso de bateria saiu QUATRO vezes seguidas
+   * com 13%. Pior que o incomodo: cada disparo consome o orcamento diario, entao as 5
+   * interrupcoes do dia acabaram as 14:53 e tudo depois foi silenciado sem ninguem saber.
+   *
+   * O lock cobre so a DECISAO, nunca a fala -- a fala leva 5-10 s e segurar o lock nela
+   * serializaria o agente inteiro. Quem nao consegue o lock DESISTE em vez de esperar: se
+   * outra execucao esta decidindo o mesmo evento agora, esta aqui e duplicata.
+   * `simular` fica de fora: diagnostico nao pode disputar lock com o caminho real. */
+  var _lkGov = null;
+  if (!opts.simular) {
+    try {
+      _lkGov = LockService.getScriptLock();
+      if (!_lkGov.tryLock(2000)) return { permitido: false, motivo: 'disparo simultaneo do mesmo evento' };
+    } catch (eLkG) { _lkGov = null; }
+  }
+  try {
+
   // Cooldown por evento (anti-repetição), vale até para crítica.
   var cdMin = Number(opts.cooldownMin || 120);
   var ultimo = Number(p.getProperty('PROATIVO_CD_' + chave) || 0);
@@ -5837,6 +5857,7 @@ function _governanca(chave, opts) {
   }
   if (!opts.simular) p.setProperty('PROATIVO_CD_' + chave, String(agora.getTime()));
   return { permitido: true };
+  } finally { if (_lkGov) { try { _lkGov.releaseLock(); } catch (eRlG) {} } }
 }
 
 /** Fala no celular respeitando a governança. @return {falou, motivo} */
@@ -5984,9 +6005,13 @@ function _avaliarEventosProativos(tel, opts) {
       var critica = nivel <= 10;
       var txtBat = 'Bruno, atenção: a bateria do celular está em ' + nivel +
                    ' por cento e não está carregando. Melhor colocar no carregador.';
+      // MARCA ANTES DE FALAR. Gravar so depois deixava uma janela do tamanho da sintese (5-10 s)
+      // em que outra execucao ainda lia 'ainda nao avisei'. O lock acima ja fecha a corrida;
+      // marcar antes torna a janela inexistente mesmo se o lock falhar. Custo assumido: se a
+      // fala falhar, o aviso nao se repete neste ciclo de carga -- preferivel a avisar 4 vezes.
+      if (!simular) p.setProperty('PROATIVO_BAT_AVISADO', '1');
       var rBat = _falarProativo('bateria_baixa', txtBat,
         { cooldownMin: 60, prioridade: critica ? 'critica' : 'normal', simular: simular });
-      if (rBat.falou === true) p.setProperty('PROATIVO_BAT_AVISADO', '1');
       disparos.push({ evento: 'bateria_baixa', nivel: nivel, limite: limite, critica: critica, resultado: rBat });
     }
   }

@@ -36,7 +36,10 @@ var AlertasVoz = (function () {
     var texto = String(o.texto || '').trim();
     if (!texto) return { ok: false, erro: 'Informe o texto do alerta.' };
     var dias = Array.isArray(o.dias) ? o.dias.map(Number).filter(function (x) { return x >= 0 && x <= 6; }) : [];
+    // A tag identifica o PAPEL do alerta e e o que permite trata-los diferente depois:
+    // 'ponto' entra na pausa de ferias, 'briefing' acompanha o turno, os demais ficam fixos.
     var item = { id: Utilities.getUuid().slice(0, 8), hora: h, minuto: m, dias: dias, texto: texto, dinamico: !!o.dinamico, ativo: true, ult: '' };
+    if (o.tag) item.tag = String(o.tag);
     var arr = _ler(); arr.push(item); _salvar(arr); _garantirTick();
     return { ok: true, alerta: item, info: 'Alerta de voz às ' + _hhmm(h, m) + (dias.length ? (' (' + dias.map(_nomeDia).join(',') + ')') : ' (todos os dias)') + ' criado.' };
   }
@@ -250,7 +253,11 @@ var AlertasVoz = (function () {
     var h = Math.floor(tot / 60), m = tot % 60;
     var arr = _ler(), movidos = [];
     arr.forEach(function (a) {
-      if (a.dinamico === true || a.tag === 'briefing') {
+      // SO o briefing atrelado ao turno se move. Antes o filtro pegava QUALQUER alerta
+      // dinamico -- com tres briefings no dia (manha, tarde, noite) os tres seriam
+      // arrastados para o mesmo horario na primeira troca de turno. Os de horario fixo
+      // usam tag briefing_manha / briefing_noite e ficam onde estao.
+      if (a.tag === 'briefing') {
         a.hora = h; a.minuto = m; a.tag = 'briefing';          // marca p/ achar com precisão depois
         movidos.push({ id: a.id, hora: _hhmm(h, m), texto: String(a.texto || '').substring(0, 60) });
       }
@@ -278,7 +285,11 @@ var AlertasVoz = (function () {
     var h = Math.floor(tot / 60), m = tot % 60;
     var arr = _ler(), movidos = [];
     arr.forEach(function (a) {
-      if (a.dinamico === true || a.tag === 'briefing') {
+      // SO o briefing atrelado ao turno se move. Antes o filtro pegava QUALQUER alerta
+      // dinamico -- com tres briefings no dia (manha, tarde, noite) os tres seriam
+      // arrastados para o mesmo horario na primeira troca de turno. Os de horario fixo
+      // usam tag briefing_manha / briefing_noite e ficam onde estao.
+      if (a.tag === 'briefing') {
         movidos.push({ id: a.id, de: _hhmm(a.hora, a.minuto || 0), para: _hhmm(h, m) });
         a.hora = h; a.minuto = m; a.tag = 'briefing';         // tag p/ achar com precisão nas próximas vezes
       }

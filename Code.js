@@ -328,7 +328,7 @@ function reposicionarBriefing(args) {
 }
 
 /** Cria/lista/cancela ALERTAS DE VOZ no celular (pelo dispatcher). */
-function criarAlertaVoz(args)    { return (typeof AlertasVoz !== 'undefined') ? AlertasVoz.criar(args || {}) : { ok: false, erro: 'AlertasVoz indisponível.' }; }
+function criarAlertaVoz(args)    { return (typeof AlertasVoz !== 'undefined') ? AlertasVoz.criar(args || {}) : { ok: false, erro: 'AlertasVoz indisponível.' }; }   // args.tag define o papel (ponto/briefing/briefing_manha/briefing_noite)
 function listarAlertasVoz()      { return (typeof AlertasVoz !== 'undefined') ? AlertasVoz.listar() : []; }
 function cancelarAlertaVoz(args) { return (typeof AlertasVoz !== 'undefined') ? AlertasVoz.cancelar(args && (args.alerta || args.id || args)) : { ok: false }; }
 /** Define o turno (manha|tarde): limpa os alertas de ponto antigos e cria os 4 do turno. */

@@ -4867,6 +4867,38 @@ function configurarRegraNotificacao(args) {
   return { ok: true, total: regras.length, regras: regras };
 }
 
+/* ===================== TAREFAS AGENDADAS (diagnostico) =====================
+ * As tarefas do Agenda.js rodam a cada 15 min mandando a `descricao` para o Jarvis.ask -- ou
+ * seja, para o LLM, COM ferramentas. Isso nao aparecia em lugar nenhum: nao havia como listar
+ * nem cancelar de fora, e o efeito colateral so era visivel no resultado.
+ *
+ * O caso que motivou isto: uma tarefa diaria as 8h com a descricao 'Marcar ponto digital para
+ * inicio do trabalho.' A frase NAO e uma acao que o agente possa executar -- ele nao bate ponto
+ * por ninguem. Entao o modelo improvisava, e improviso com ferramenta na mao vira efeito
+ * colateral: todo dia util as 8h ele CRIAVA quatro alertas de ponto do turno da manha. O Bruno
+ * passou dias sendo cobrado nos dois turnos e a causa estava invisivel.
+ *
+ * LICAO, valida para qualquer tarefa agendada: a descricao tem de ser algo que o agente
+ * CONSIGA fazer e que seja seguro repetir. Frase que so descreve uma intencao humana faz o
+ * modelo inventar o meio. */
+function diagTarefasAgendadas(args) {
+  args = args || {};
+  if (typeof Agenda === 'undefined') return { ok: false, erro: 'Agenda indisponivel.' };
+  if (args.cancelar) {
+    var r = Agenda.cancelar(String(args.cancelar));
+    return { ok: true, removidas: (r && r.removidas) || 0 };
+  }
+  var docs = [];
+  try { docs = Firestore.listDocs('tarefas', 100) || []; } catch (e) { return { ok: false, erro: e.message }; }
+  return { ok: true, total: docs.length, tarefas: docs.map(function (t) {
+    var d = t.dados || {};
+    return { id: t.id, ativo: d.ativo !== false, hora: d.hora, frequencia: d.frequencia,
+             diasSemana: d.diasSemana, descricao: d.descricao,
+             ultimaExecucao: d.ultimaExecucao || null,
+             ultimoResultado: String(d.ultimoResultado || '').substring(0, 160) };
+  }) };
+}
+
 /* ===================== PAUSA DE PONTO (ferias / folga) =====================
  * Suspende SO os lembretes de ponto ate uma data, sem apagar nada. Quando a data passa, os
  * alertas voltam sozinhos — que e a diferenca entre isto e simplesmente cancelar os alertas.
@@ -6466,6 +6498,7 @@ function _diagDispatch(body) {
     diagMemoriaConversas:   (typeof diagMemoriaConversas !== 'undefined') ? diagMemoriaConversas : null,
     diagViagem:             (typeof diagViagem !== 'undefined') ? diagViagem : null,
     configurarPausaPonto:   (typeof configurarPausaPonto !== 'undefined') ? configurarPausaPonto : null,
+    diagTarefasAgendadas:   (typeof diagTarefasAgendadas !== 'undefined') ? diagTarefasAgendadas : null,
     jobMemoriaConversas:    (typeof jobMemoriaConversas !== 'undefined') ? jobMemoriaConversas : null,
     configurarMemoriaConversas: (typeof configurarMemoriaConversas !== 'undefined') ? configurarMemoriaConversas : null,
     jobAutoDiagnostico:     (typeof jobAutoDiagnostico !== 'undefined') ? jobAutoDiagnostico : null,

@@ -4899,6 +4899,59 @@ function diagTarefasAgendadas(args) {
   }) };
 }
 
+/* ===================== GATILHOS (diagnostico e reparo) =====================
+ * O Jarvis ficou 7 dias mudo (31/08 a 07/09) e nao havia como VER por que: os gatilhos de
+ * tempo sao o coracao do agente -- tick de alerta a cada minuto, ping de telemetria, jobs
+ * diarios -- e nao existia nenhuma forma de listar quais estavam vivos sem abrir o editor.
+ * O Apps Script DESATIVA gatilho que falha repetidamente, e quando isso acontece o agente
+ * simplesmente para, em silencio, sem nada no log (porque o que escreveria no log era o
+ * proprio gatilho). Diagnostico que depende do sistema que quebrou nao serve.
+ */
+function diagGatilhos(args) {
+  args = args || {};
+  var esperados = {
+    tickAlertasVoz:            'alertas falados (a cada 1 min)',
+    pingTelemetria:            'telemetria do celular (a cada 15 min)',
+    jobAutoDiagnostico:        'auto-diagnostico diario',
+    jobMemoriaConversas:       'indexacao da memoria (diario)',
+    jobInsightDiario:          'insight do dia',
+    executarTarefasAgendadas:  'tarefas agendadas (a cada 15 min)'
+  };
+  var vivos = {}, lista = [];
+  try {
+    ScriptApp.getProjectTriggers().forEach(function (t) {
+      var h = t.getHandlerFunction();
+      vivos[h] = (vivos[h] || 0) + 1;
+      lista.push({ handler: h, tipo: String(t.getEventType()), id: t.getUniqueId() });
+    });
+  } catch (e) { return { ok: false, erro: e.message }; }
+
+  var faltando = Object.keys(esperados).filter(function (k) { return !vivos[k]; });
+  var duplicados = Object.keys(vivos).filter(function (k) { return vivos[k] > 1; });
+
+  // REPARO: reinstala os que sumiram. So com args.reparar === true -- criar gatilho e efeito
+  // colateral, nao diagnostico.
+  var reinstalados = [];
+  if (args.reparar === true) {
+    faltando.forEach(function (k) {
+      try {
+        if (k === 'tickAlertasVoz') { ScriptApp.newTrigger(k).timeBased().everyMinutes(1).create(); reinstalados.push(k); }
+        else if (k === 'pingTelemetria') { ScriptApp.newTrigger(k).timeBased().everyMinutes(15).create(); reinstalados.push(k); }
+        else if (k === 'executarTarefasAgendadas') { ScriptApp.newTrigger(k).timeBased().everyMinutes(15).create(); reinstalados.push(k); }
+        else if (k === 'jobAutoDiagnostico') { ScriptApp.newTrigger(k).timeBased().everyDays(1).atHour(8).create(); reinstalados.push(k); }
+        else if (k === 'jobMemoriaConversas') { ScriptApp.newTrigger(k).timeBased().everyDays(1).atHour(3).create(); reinstalados.push(k); }
+        else if (k === 'jobInsightDiario') { ScriptApp.newTrigger(k).timeBased().everyDays(1).atHour(7).create(); reinstalados.push(k); }
+      } catch (eR) {}
+    });
+  }
+
+  return { ok: true, total: lista.length, vivos: vivos, gatilhos: lista,
+           faltando: faltando.map(function (k) { return { handler: k, papel: esperados[k] }; }),
+           duplicados: duplicados, reinstalados: reinstalados,
+           nota: faltando.length ? 'Gatilho ausente = essa parte do agente esta MUDA. Rode com {reparar:true}.'
+                                 : 'Todos os gatilhos esperados estao instalados.' };
+}
+
 /* ===================== PAUSA DE PONTO (ferias / folga) =====================
  * Suspende SO os lembretes de ponto ate uma data, sem apagar nada. Quando a data passa, os
  * alertas voltam sozinhos — que e a diferenca entre isto e simplesmente cancelar os alertas.
@@ -6523,6 +6576,7 @@ function _diagDispatch(body) {
     diagMemoriaConversas:   (typeof diagMemoriaConversas !== 'undefined') ? diagMemoriaConversas : null,
     diagViagem:             (typeof diagViagem !== 'undefined') ? diagViagem : null,
     configurarPausaPonto:   (typeof configurarPausaPonto !== 'undefined') ? configurarPausaPonto : null,
+    diagGatilhos:           (typeof diagGatilhos !== 'undefined') ? diagGatilhos : null,
     diagTarefasAgendadas:   (typeof diagTarefasAgendadas !== 'undefined') ? diagTarefasAgendadas : null,
     jobMemoriaConversas:    (typeof jobMemoriaConversas !== 'undefined') ? jobMemoriaConversas : null,
     configurarMemoriaConversas: (typeof configurarMemoriaConversas !== 'undefined') ? configurarMemoriaConversas : null,

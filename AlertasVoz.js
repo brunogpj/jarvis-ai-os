@@ -258,8 +258,18 @@ var AlertasVoz = (function () {
       // arrastados para o mesmo horario na primeira troca de turno. Os de horario fixo
       // usam tag briefing_manha / briefing_noite e ficam onde estao.
       if (a.tag === 'briefing') {
+        // ANTI-COLISAO: o briefing do turno segue o ponto de entrada, e o destino pode ja estar
+        // ocupado por um briefing de horario fixo. Em 14/09 o turno virou TARDE, este alerta foi
+        // para 13:30 e caiu em cima do briefing_tarde -- dois briefings completos em 43 segundos,
+        // com conteudo quase igual. Desloca 15 min quando o horario ja tem outro briefing.
+        var _ocupado = arr.some(function (o) {
+          return o.id !== a.id && o.ativo !== false &&
+                 Number(o.hora) === h && Number(o.minuto || 0) === m &&
+                 String(o.tag || '').indexOf('briefing') === 0;
+        });
+        if (_ocupado) { m = m + 15; if (m >= 60) { m -= 60; h = (h + 1) % 24; } }
         a.hora = h; a.minuto = m; a.tag = 'briefing';          // marca p/ achar com precisão depois
-        movidos.push({ id: a.id, hora: _hhmm(h, m), texto: String(a.texto || '').substring(0, 60) });
+        movidos.push({ id: a.id, hora: _hhmm(h, m), texto: String(a.texto || '').substring(0, 60), deslocado: _ocupado });
       }
     });
     if (!movidos.length) return { ok: false, erro: 'Nenhum alerta dinâmico/briefing encontrado para mover.', turno: t };

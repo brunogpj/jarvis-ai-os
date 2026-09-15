@@ -793,7 +793,8 @@ var Jarvis = (function () {
             minuto: { type: 'NUMBER', description: 'Minuto 0-59 (padrão 0).' },
             dias: { type: 'ARRAY', items: { type: 'NUMBER' }, description: 'Dias: 0=Dom..6=Sáb. Vazio=todos. Dias úteis=[1,2,3,4,5].' },
             texto: { type: 'STRING', description: 'O que falar. Se for conteúdo a GERAR (ex.: "minha agenda de hoje"), marque dinamico=true.' },
-            dinamico: { type: 'BOOLEAN', description: 'true = trata "texto" como pedido e fala a RESPOSTA gerada no disparo (ex.: agenda/clima). false (padrão) = fala o texto literal.' }
+            dinamico: { type: 'BOOLEAN', description: 'true = trata "texto" como pedido e fala a RESPOSTA gerada no disparo (ex.: agenda/clima). false (padrão) = fala o texto literal.' },
+            tag: { type: 'STRING', description: 'PAPEL do alerta, para ele poder ser gerenciado depois: "ponto" (lembrete de marcar ponto — entra na pausa de férias), "briefing" (acompanha o turno de trabalho) ou "avulso" (padrão). Se omitir, o servidor infere pelo texto.' }
           },
           required: ['hora', 'texto']
         }

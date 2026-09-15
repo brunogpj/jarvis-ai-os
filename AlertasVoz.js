@@ -36,10 +36,38 @@ var AlertasVoz = (function () {
     var texto = String(o.texto || '').trim();
     if (!texto) return { ok: false, erro: 'Informe o texto do alerta.' };
     var dias = Array.isArray(o.dias) ? o.dias.map(Number).filter(function (x) { return x >= 0 && x <= 6; }) : [];
-    // A tag identifica o PAPEL do alerta e e o que permite trata-los diferente depois:
-    // 'ponto' entra na pausa de ferias, 'briefing' acompanha o turno, os demais ficam fixos.
-    var item = { id: Utilities.getUuid().slice(0, 8), hora: h, minuto: m, dias: dias, texto: texto, dinamico: !!o.dinamico, ativo: true, ult: '' };
-    if (o.tag) item.tag = String(o.tag);
+    /* TEXTO FIXO NAO PODE CONGELAR O TEMPO.
+     * Tres alertas orfaos ja nasceram assim, todos criados pelo modelo: 'Que alegria te acordar
+     * nesta quinta-feira, 27 de agosto' e 'Sao 06:00 da manha de uma...'. O modelo gera a
+     * saudacao UMA vez, ela vira texto literal, e o alerta repete a data velha todo dia.
+     * A correcao nao e proibir: e converter para dinamico, que e o que o dono queria de fato --
+     * uma saudacao gerada na hora. So se aplica a texto FIXO; dinamico ja resolve isso sozinho.
+     * Datas no texto de um alerta dinamico sao instrucao, nao conteudo, e ficam intactas. */
+    var _dinamico = !!o.dinamico;
+    if (!_dinamico) {
+      var _sT = String(texto).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      var _temDiaSemana = /(segunda|terca|quarta|quinta|sexta|sabado|domingo)-?(feira)?/.test(_sT);
+      var _temMes = /(janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)/.test(_sT);
+      var _temHoraEscrita = /[0-9]{1,2}s*:s*[0-9]{2}|[0-9]{1,2}s*(horas?|h)\b/.test(_sT);
+      if (_temDiaSemana || _temMes || _temHoraEscrita) _dinamico = true;
+    }
+
+    /* TAG OBRIGATORIA, inferida quando nao vier.
+     * A tag e o que permite tratar cada alerta pelo PAPEL: 'ponto' entra na pausa de ferias,
+     * 'briefing' acompanha o turno, os demais ficam fixos. A tool do modelo nao expunha `tag`,
+     * entao TODO alerta que ele criava nascia sem papel -- e escapava de toda limpeza, porque
+     * as rotinas filtram por tag. Foi assim que os 4 pontos da manha sobreviveram a uma troca
+     * de turno e o Bruno foi cobrado nos dois turnos ao mesmo tempo.
+     * Inferir pelo texto e melhor que exigir do modelo: funciona mesmo quando ele esquece. */
+    var _tag = o.tag ? String(o.tag) : '';
+    if (!_tag) {
+      var _sG = String(texto).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      if (/marcar (o )?ponto|ponto de (inicio|retorno|fim)|bater (o )?ponto/.test(_sG)) _tag = 'ponto';
+      else if (/noticias|manchetes|briefing|panorama|resumo do dia|fechamento do dia/.test(_sG)) _tag = 'briefing_extra';
+      else _tag = 'avulso';
+    }
+
+    var item = { id: Utilities.getUuid().slice(0, 8), hora: h, minuto: m, dias: dias, texto: texto, dinamico: _dinamico, ativo: true, ult: '', tag: _tag };
     var arr = _ler(); arr.push(item); _salvar(arr); _garantirTick();
     return { ok: true, alerta: item, info: 'Alerta de voz às ' + _hhmm(h, m) + (dias.length ? (' (' + dias.map(_nomeDia).join(',') + ')') : ' (todos os dias)') + ' criado.' };
   }

@@ -117,8 +117,19 @@ var AlertasVoz = (function () {
 
   // Handler do tick (1 min): dispara os alertas cujo HH:MM (e dia) batem agora.
   function tick() {
-    var lock = LockService.getScriptLock();
-    if (!lock.tryLock(1500)) return;
+    /* O LOCK AQUI E CONVENIENCIA, NAO CORRETUDE -- e por isso NAO pode abortar o tick.
+     * Era `if (!tryLock(1500)) return;`: o tick desistia calado quando o lock global estava
+     * ocupado. Isso foi inofensivo por meses, ate 20/08, quando _governanca passou a pegar o
+     * MESMO lock global para fechar a corrida do aviso de bateria. Com pingTelemetria a cada
+     * 15 min, doPost e jobs concorrendo, o lock passou a viver ocupado e o tick simplesmente
+     * parou de disparar alertas -- sem UMA linha de erro, porque desistir nao e falhar.
+     * Em 15/09 nenhum alerta saiu o dia inteiro enquanto a pagina de execucoes mostrava
+     * tickAlertasVoz 'Concluido' a cada minuto.
+     * Agora espera mais e, se ainda assim nao conseguir, SEGUE. O que garante que o alerta nao
+     * sai duas vezes e o dedup por dia (a.ult) mais a guarda atomica do CacheService la embaixo
+     * -- os dois independem deste lock. */
+    var lock = null;
+    try { lock = LockService.getScriptLock(); if (!lock.tryLock(8000)) lock = null; } catch (eLk) { lock = null; }
     try {
       var agora = new Date();
       var h = Number(Utilities.formatDate(agora, TZ, 'H'));
@@ -202,7 +213,7 @@ var AlertasVoz = (function () {
       if (!arr.some(function (a) { return a.ativo !== false; })) {
         try { ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === TICK) ScriptApp.deleteTrigger(t); }); } catch (e) {}
       }
-    } finally { lock.releaseLock(); }
+    } finally { if (lock) { try { lock.releaseLock(); } catch (eRl) {} } }   // lock pode ser null: o tick segue sem ele
   }
 
   function _hhmm(h, m) { return (h < 10 ? '0' + h : h) + ':' + (m < 10 ? '0' + m : m); }
@@ -246,10 +257,12 @@ var AlertasVoz = (function () {
     _salvar(arr); _garantirTick();
     var horarios = def.pontos.map(function (p) { return _hhmm(p[0], p[1]); }).join(', ');
     try { PropertiesService.getScriptProperties().setProperty('TURNO_TRABALHO_ATUAL', t); } catch (e) {}
-    // O briefing SEGUE o turno: reposiciona p/ X min antes do novo ponto de entrada.
-    var _brf = null;
-    try { _brf = reposicionarBriefing(t); } catch (eB) {}
     // O briefing ACOMPANHA o turno: sempre X min antes do ponto de entrada (nunca mais fixo às 08:20).
+    // UMA chamada só. Havia duas aqui, com `var _brf` declarado duas vezes -- resquício de edição
+    // antiga que passou despercebido enquanto era inofensivo. Deixou de ser quando a anti-colisão
+    // entrou: a segunda passada via o horário já ocupado pelo briefing que a PRIMEIRA acabou de
+    // mover, e o deslocava mais 15 min. Duas trocas de turno seguidas empurravam o briefing meia
+    // hora para frente sem ninguém pedir.
     var _brf = null;
     try { _brf = reposicionarBriefing(t); } catch (eB) { Logger.log('[Briefing] ' + eB.message); }
     // Memória de longo prazo: registra a decisão na wiki (o Jarvis "aprende" a rotina do dono).

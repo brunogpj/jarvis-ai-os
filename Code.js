@@ -4899,6 +4899,32 @@ function diagTarefasAgendadas(args) {
   }) };
 }
 
+/* Gera o texto de um alerta DINAMICO pelo caminho REAL (Jarvis.ask, interativo:false) SEM falar
+ * no celular. Existe porque diagChat nao serve para isto: ele passa por _rotaDireta, que
+ * intercepta 'agenda' antes do modelo e devolve a resposta pronta -- ou seja, testa outro
+ * caminho. O briefing so passa pelo modelo, e e la que ele inventava compromisso.
+ * args {tag} ou {id}. */
+function diagBriefingTexto(args) {
+  args = args || {};
+  if (typeof AlertasVoz === 'undefined') return { ok: false, erro: 'AlertasVoz indisponivel.' };
+  var lista = AlertasVoz.listar() || [];
+  var a = null;
+  for (var i = 0; i < lista.length; i++) {
+    if ((args.id && lista[i].id === args.id) || (args.tag && lista[i].tag === args.tag)) { a = lista[i]; break; }
+  }
+  if (!a) return { ok: false, erro: 'alerta nao encontrado (tag/id)' };
+  if (!a.dinamico) return { ok: false, erro: 'alerta nao e dinamico' };
+  var t0 = Date.now(), texto = '', erro = null;
+  try {
+    var owner = PropertiesService.getScriptProperties().getProperty('OWNER_EMAIL') || 'owner';
+    texto = String(Jarvis.ask(owner, a.texto, [], null, { interativo: false }) || '');
+  } catch (e) { erro = e.message; }
+  var limpo = '';
+  try { limpo = (typeof _prepararTextoFala === 'function') ? _prepararTextoFala(texto) : texto; } catch (eL) { limpo = texto; }
+  return { ok: !erro, id: a.id, tag: a.tag, ms: Date.now() - t0, erro: erro,
+           caracteres: limpo.length, texto: limpo.substring(0, 1200) };
+}
+
 /* ===================== GATILHOS (diagnostico e reparo) =====================
  * O Jarvis ficou 7 dias mudo (31/08 a 07/09) e nao havia como VER por que: os gatilhos de
  * tempo sao o coracao do agente -- tick de alerta a cada minuto, ping de telemetria, jobs
@@ -6577,6 +6603,7 @@ function _diagDispatch(body) {
     diagViagem:             (typeof diagViagem !== 'undefined') ? diagViagem : null,
     configurarPausaPonto:   (typeof configurarPausaPonto !== 'undefined') ? configurarPausaPonto : null,
     diagGatilhos:           (typeof diagGatilhos !== 'undefined') ? diagGatilhos : null,
+    diagBriefingTexto:      (typeof diagBriefingTexto !== 'undefined') ? diagBriefingTexto : null,
     diagTarefasAgendadas:   (typeof diagTarefasAgendadas !== 'undefined') ? diagTarefasAgendadas : null,
     jobMemoriaConversas:    (typeof jobMemoriaConversas !== 'undefined') ? jobMemoriaConversas : null,
     configurarMemoriaConversas: (typeof configurarMemoriaConversas !== 'undefined') ? configurarMemoriaConversas : null,

@@ -48,7 +48,7 @@ var AlertasVoz = (function () {
       var _sT = String(texto).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
       var _temDiaSemana = /(segunda|terca|quarta|quinta|sexta|sabado|domingo)-?(feira)?/.test(_sT);
       var _temMes = /(janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)/.test(_sT);
-      var _temHoraEscrita = /[0-9]{1,2}s*:s*[0-9]{2}|[0-9]{1,2}s*(horas?|h)\b/.test(_sT);
+      var _temHoraEscrita = /[0-9]{1,2}[ ]*:[ ]*[0-9]{2}|[0-9]{1,2}[ ]*(horas|hora)([^a-z]|$)/.test(_sT);
       if (_temDiaSemana || _temMes || _temHoraEscrita) _dinamico = true;
     }
 
@@ -169,7 +169,16 @@ var AlertasVoz = (function () {
         // que falhasse ficava bloqueada para o resto da janela de tolerância e o alerta simplesmente
         // não acontecia naquele dia. Quem garante "uma vez por dia" é o a.ult abaixo, e ele agora só
         // é gravado quando a fala DEU CERTO — então falha vira retentativa no minuto seguinte.
-        try { var _ck = CacheService.getScriptCache(), _ckk = 'av_' + a.id + '_' + carimbo; if (_ck.get(_ckk)) return; _ck.put(_ckk, '1', 90); } catch (eAv) {}
+        /* GUARDA ATOMICA -- e a UNICA protecao contra fala dupla desde que o tick deixou de
+         * abortar por lock (6338088). O TTL precisa cobrir a SINTESE INTEIRA, nao a media:
+         * enquanto o alerta sintetiza, `a.ult` ainda nao foi gravado e o proximo tick ve tudo
+         * livre. Com 90 s, o briefing de 15/09 21:05 (232 s de sintese) teve a guarda expirada
+         * no meio do caminho e saiu DUAS vezes, com 77 s de intervalo.
+         * 600 s cobre com folga o pior caso ja medido (248 s) e ainda cabe na janela de
+         * tolerancia de 10 min -- passou disso, o alerta perdeu o horario de qualquer forma.
+         * A guarda e escrita ANTES da fala de proposito: e o unico ponto em que a decisao de
+         * falar fica visivel para outras execucoes antes de o trabalho lento comecar. */
+        try { var _ck = CacheService.getScriptCache(), _ckk = 'av_' + a.id + '_' + carimbo; if (_ck.get(_ckk)) return; _ck.put(_ckk, '1', 600); } catch (eAv) {}
         var fala = a.texto;
         if (a.dinamico) {
           // Em alerta dinâmico o a.texto é a INSTRUÇÃO ("me dê as notícias do dia"), não a fala.
@@ -205,7 +214,10 @@ var AlertasVoz = (function () {
         } catch (eEv) {}
         // SÓ marca o dia como resolvido se falou. Falhou → o próximo tick tenta de novo, dentro da
         // janela de tolerância. É a diferença entre perder o alerta do dia e atrasá-lo um minuto.
+        // Quando falha, LIBERA a guarda do cache junto: sem isso o alerta ficaria bloqueado pelos
+        // 10 min do TTL e a retentativa que este bloco promete nunca aconteceria.
         if (_ok) a.ult = carimbo;
+        else { try { CacheService.getScriptCache().remove(_ckk); } catch (eRm) {} }
         mudou = true;
       });
       if (mudou) _salvar(arr);

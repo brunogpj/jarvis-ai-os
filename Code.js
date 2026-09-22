@@ -2923,7 +2923,12 @@ function doPost(e) {
           
           var bat = obterValorResolvido(body.bateria_nivel || body.bateria);
           var charg = _telCarregando(body.carregando);   // true/false/null — "Ligar"/"Desligar" incluídos
-          var som = _telModoSom(body.modo_som);          // {modo, volume} — número é volume, não modo
+          // volume_toque é o campo NOVO ([vol_ring], percentual); modo_som é o legado, mantido
+          // para a macro antiga seguir funcionando até ser trocada. Medido em 22/09: o MacroDroid
+          // NÃO expõe o modo de som como magic text — 16 nomes testados, todos literais, com
+          // controles válidos na mesma requisição. Então `modo` fica null e a linha é omitida:
+          // não há de onde tirar essa informação, e inventá-la foi o bug original.
+          var som = _telModoSom(body.volume_toque !== undefined ? body.volume_toque : body.modo_som);
           var wifi = obterValorResolvido(body.wifi_nome || body.wifi);
 
           if (bat && precisaStatus) {

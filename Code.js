@@ -3142,6 +3142,7 @@ function doPost(e) {
         var _insV = (_voto === null && _ofr === null && _perdi === null && _fin === null && _trn === null) ? _interpretarInsight(msgVoz) : null;
         var _livre = (_voto === null && _ofr === null && _perdi === null && _fin === null && _trn === null && _insV === null);
         var _viaJev = false;   // marcado se o roteamento semântico (JEV) atender no lugar do LLM
+        var _notifPendentes = null;  // notificações do "o que eu perdi" AGUARDANDO confirmação de entrega
         var _lembC = _livre ? _interpretarLembreteCondicional(msgVoz) : null;
         var _rot   = (_livre && !_lembC) ? _interpretarRotina(msgVoz) : null;
         if (_fin !== null) {
@@ -3173,8 +3174,10 @@ function doPost(e) {
           } catch (eIn) { respVoz = 'Não consegui trazer a ideia agora.'; }
         } else if (_perdi !== null) {
           try {
-            var _rp = resumirNotificacoes({ horas: 12, marcarLidas: true });
+            // NÃO marca aqui: só depois que a entrega se confirmar (ver _notifPendentes, abaixo).
+            var _rp = resumirNotificacoes({ horas: 12, marcarLidas: false });
             respVoz = _rp.resumo;
+            _notifPendentes = _rp.ids || [];
           } catch (eP2) { respVoz = 'Não consegui checar as notificações agora.'; }
         } else if (_voto !== null) {
           try {
@@ -3389,9 +3392,15 @@ function doPost(e) {
         var _falarLocal = (_modoCfg === 'local') || (_modoCfg === 'auto' && _rotaEhLocal && _curto);
         var _falarNuvem = (_modoCfg !== 'local' && _modoCfg !== 'nao' && !_falarLocal);
 
+        // _falarNuvem/_falarLocal dizem a INTENÇÃO; _entregou diz o que de fato saiu. A distinção
+        // existe porque o catch abaixo engole o erro de síntese: sem ela, uma falha de TTS ainda
+        // contaria como entrega. Em 'local' a entrega É o texto no corpo (a macro fala); em
+        // 'nuvem' só vale se a síntese confirmou.
+        var _entregou = !!_falarLocal;
         if (_falarNuvem && typeof Jarvis !== 'undefined' && Jarvis.controlarDispositivo) {
           try {
-            Jarvis.controlarDispositivo({ acao: 'falar', texto: textoLimpo });
+            var _rEnt = Jarvis.controlarDispositivo({ acao: 'falar', texto: textoLimpo });
+            _entregou = !!(_rEnt && _rEnt.status === 'success');
           } catch (eCtrl) {
             Logger.log('Erro ao sintetizar áudio no Drive: ' + eCtrl.message);
           }
@@ -3403,6 +3412,24 @@ function doPost(e) {
             ok: true, ms: 0, resumo: (typeof _viaVoz !== 'undefined' ? _viaVoz : '?') + ' · ' + String(textoLimpo).length + ' car.'
           });
         } catch (eEnt) {}
+
+        /* CONSUMO DAS NOTIFICAÇÕES — aqui, e só aqui. Este é o primeiro ponto do fluxo em que
+         * existe uma entrega de fato: ou o áudio foi sintetizado e está no Drive para a macro
+         * tocar (nuvem), ou o texto vai no corpo para o aparelho falar (local). Enquanto nada
+         * saiu, elas seguem não-lidas e a mesma pergunta devolve a mesma resposta — que é
+         * exatamente o que faltava quando "o que eu perdi" apagou 5 notificações do Agenda Edu
+         * sem nunca ter falado nada. Entrega 'nenhuma' NÃO consome. */
+        if (_notifPendentes && _notifPendentes.length) {
+          var _qtd = _entregou ? _notifMarcarLidas(_notifPendentes) : 0;
+          try {
+            if (typeof Jarvis !== 'undefined' && Jarvis.registrarEvento) Jarvis.registrarEvento({
+              tool: 'notif:consumidas', ok: _entregou, ms: 0,
+              resumo: _entregou
+                ? (_qtd + ' marcadas como lidas APÓS entrega (' + (_falarLocal ? 'local' : 'nuvem') + ')')
+                : ('PRESERVADAS: ' + _notifPendentes.length + ' — a entrega falhou, seguem não-lidas')
+            });
+          } catch (eCm) {}
+        }
 
         // Em modo nuvem devolve o texto (histórico: a macro usa para exibir). Em auto/local o corpo
         // É a fala — então vazio quando quem fala é a nuvem.
@@ -4559,13 +4586,34 @@ function resumirNotificacoes(args) {
                               : (a + ' (' + itens.length + '): ' + amostra);
   });
   if (args.marcarLidas === true) {
-    lista.forEach(function (n) { try { Firestore.updateDoc(_NOTIF_COL, n.id, { lida: true }); } catch (e) {} });
+    _notifMarcarLidas(lista.map(function (n) { return n.id; }));
   }
   return { ok: true, total: lista.length, horas: horas, apps: Object.keys(porApp).length,
            resumo: 'Nas últimas ' + horas + ' horas: ' + partes.join('. ') + '.',
+           // IDs para quem quer marcar como lida SÓ DEPOIS de entregar (ver _notifMarcarLidas).
+           ids: lista.map(function (n) { return n.id; }),
            itens: lista.map(function (n) {
-             return { app: n.d.app, titulo: n.d.titulo, texto: n.d.texto,
+             return { id: n.id, app: n.d.app, titulo: n.d.titulo, texto: n.d.texto,
                       em: new Date(Number(n.d.em)).toISOString() }; }) };
+}
+
+/** Marca notificações como lidas. Separado de resumirNotificacoes DE PROPÓSITO.
+ *
+ * O BUG (21/09, medido ao vivo): a rota de voz chamava resumirNotificacoes({marcarLidas:true}),
+ * que gravava 'lida' no instante em que o TEXTO era gerado — muito antes de o áudio existir.
+ * Duas chamadas com 27 s de diferença devolveram "Agenda Edu (5): ..." e depois "Nada de novo".
+ * Como o corpo HTTP volta VAZIO por protocolo (quem fala é a nuvem), o dono não tem como saber
+ * que perdeu: se o áudio não tocar — Drive lento, macro não disparada, aparelho no silencioso —
+ * as notificações já foram consumidas e não há como recuperá-las.
+ *
+ * Agora quem resume não marca; marca quem ENTREGA. Enquanto a entrega não se confirma, elas
+ * continuam não-lidas e a mesma pergunta devolve a mesma resposta. */
+function _notifMarcarLidas(ids) {
+  var n = 0;
+  (ids || []).forEach(function (id) {
+    try { Firestore.updateDoc(_NOTIF_COL, id, { lida: true }); n++; } catch (e) {}
+  });
+  return n;
 }
 
 /** Diag: {} resumo · {registrar:{...}} simula chegada · {limpar:true} · {horas} */

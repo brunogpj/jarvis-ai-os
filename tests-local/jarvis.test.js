@@ -693,3 +693,51 @@ test('Triagem JEV: limiar é política — mover o corte muda a decisão sem nov
   assert.strictEqual(comLimiar(2.5).acao, 'guardar', '2.0 < 2.5');
   assert.strictEqual(comLimiar(1.5).acao, 'falar', '2.0 >= 1.5');
 });
+
+// ───────────────────────── 📨 Notificação só é consumida APÓS entrega ─────────────────────────
+// O bug (21/09, medido ao vivo): "o que eu perdi" marcava tudo como lido ao GERAR o texto. Duas
+// chamadas com 27s de diferença deram "Agenda Edu (5): ..." e depois "Nada de novo". Como o corpo
+// HTTP volta vazio por protocolo, se o áudio não tocasse as notificações sumiam sem aviso.
+function notifLidasSandbox(docs) {
+  var lidas = {};
+  var s = makeSandbox({ props: {}, docs: docs });
+  s.Firestore.updateDoc = function (col, id, campos) { if (campos && campos.lida) lidas[id] = true; return true; };
+  loadGasFile('TypeSafe.js', s);
+  loadGasFile('Code.js', s);
+  s._lidas = lidas;
+  return s;
+}
+function notifsRecentes(n) {
+  var out = [];
+  for (var i = 0; i < n; i++) out.push({ id: 'n' + i, dados: { app: 'Agenda Edu', titulo: 'Comunicado ' + i, em: Date.now() - 60000 } });
+  return out;
+}
+
+test('Notificações: resumir NÃO marca sozinho; devolve os ids para quem entregar', function () {
+  var s = notifLidasSandbox(notifsRecentes(5));
+  var r = s.resumirNotificacoes({ horas: 12, marcarLidas: false });
+  assert.strictEqual(r.total, 5);
+  assert.deepStrictEqual(Object.keys(s._lidas), [], 'gerar o texto NÃO pode consumir');
+  assert.strictEqual(r.ids.length, 5, 'os ids voltam para o passo de entrega');
+});
+
+test('Notificações: perguntar duas vezes sem entrega devolve a MESMA resposta', function () {
+  var s = notifLidasSandbox(notifsRecentes(5));
+  var a = s.resumirNotificacoes({ horas: 12, marcarLidas: false });
+  var b = s.resumirNotificacoes({ horas: 12, marcarLidas: false });
+  assert.strictEqual(a.resumo, b.resumo, 'era aqui que a 2ª virava "Nada de novo"');
+  assert.match(a.resumo, /Agenda Edu/);
+});
+
+test('Notificações: _notifMarcarLidas consome, e aí sim a resposta muda', function () {
+  var s = notifLidasSandbox(notifsRecentes(3));
+  var r = s.resumirNotificacoes({ horas: 12, marcarLidas: false });
+  assert.strictEqual(s._notifMarcarLidas(r.ids), 3, 'marca as 3 entregues');
+  assert.strictEqual(Object.keys(s._lidas).length, 3);
+});
+
+test('Notificações: marcarLidas:true segue funcionando p/ quem já usava', function () {
+  var s = notifLidasSandbox(notifsRecentes(4));
+  s.resumirNotificacoes({ horas: 12, marcarLidas: true });
+  assert.strictEqual(Object.keys(s._lidas).length, 4, 'compatibilidade preservada');
+});

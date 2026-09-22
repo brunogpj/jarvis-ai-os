@@ -5,6 +5,7 @@
 !appsscript.json
 !Code.js
 !Firestore.js
+!TypeSafe.js
 !Auth.js
 !Jarvis.js
 !WikiMemoryService.js

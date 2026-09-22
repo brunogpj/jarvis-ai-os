@@ -69,6 +69,7 @@ Navegador (HtmlService)                    Google Apps Script (backend, 1 projet
 | `Auth.js`                          | Cadastro/login/logout/sessão/`updateProfile`. SHA-256 ×10.000 + salt; token 7 dias.                                                                                                                                                                                                                                                                                         |
 | `Firestore.js`                     | Wrapper REST via SA: `getDoc/setDoc/createDoc/updateDoc/deleteDoc/listDocs`. Codifica number/array (vetores).                                                                                                                                                                                                                                                               |
 | `Gemini.js`                        | **Caller central** `gerar(payload)` com cascata; `gerarImagem(prompt)`; **`embeddar(texto)`** (gemini-embedding-001 @768). Diagnósticos.                                                                                                                                                                                                                                    |
+| `TypeSafe.js`                      | **Cliente do JEV (TypeSafe System One)** — julgamentos tipados, não texto: `perguntar(state, questions)` e atalho `noul()`. HTTP API crua via `UrlFetchApp` (GAS não roda o SDK npm). Nunca lança: devolve `{ok:false, erro}`. Ver seção *JEV / TypeSafe*.                                                                                                                  |
 | `Jarvis.js`                        | **Motor do agente**: system prompt (modos + WhatsApp + mídia + atendimento a terceiros), declarações de tools, loop ReAct, **gate de confirmação P2**, gating por OWNER, helpers de Workspace/imagem/áudio/arquivo.                                                                                                                                                         |
 | `WikiMemoryService.js`             | Memória cumulativa no Drive: `lerWiki/listarWiki/buscarNoWiki`(keyword)`/escreverWiki/registrarNoLog/ingerirFonte`.                                                                                                                                                                                                                                                         |
 | `Semantica.js`                     | **Busca semântica (RAG, P5.1)**: `indexar` (resumível) embeda trechos do wiki → Firestore `wiki_vetores`; `buscar` por cosseno. Editor: `indexarWikiSemantico()`, `testarBuscaSemantica()`.                                                                                                                                                                                 |
@@ -171,6 +172,7 @@ Webhook Evolution → valida `WHATSAPP_WEBHOOK_SECRET`, **IGNORA grupos/broadcas
 | Imagem         | `GEMINI_API_KEY` | `gemini-2.5-flash-image`             | nano banana (`GEMINI_IMAGE_MODEL`)                            |
 | **Embeddings** | `GEMINI_API_KEY` | **`gemini-embedding-001`** @768 dims | `GEMINI_EMBED_MODEL`/`GEMINI_EMBED_DIMS`; cosseno (P5)        |
 | Voz            | service account  | Cloud TTS `pt-BR-Neural2-B`          | OGG/MP3/WAV                                                   |
+| **Julgamento** | `TYPESAFE_API_KEY` | **`jev-latest`** (TypeSafe System One) | **Não gera texto**: devolve `noul`/`choice`/`score` tipados. Decide onde a regex não entende sentido |
 
 - **Ordem:** `GEMINI_ORDER` = `billing_first` (padrão) ou `free_first`. Cascata multi-modelo por chave.
 - **Alternar:** `usarModeloRobusto()` (atual) vs `usarModeloRapido()`.
@@ -204,11 +206,15 @@ Webhook Evolution → valida `WHATSAPP_WEBHOOK_SECRET`, **IGNORA grupos/broadcas
 | `EVOLUTION_API_URL`/`_KEY`/`_INSTANCE_NAME`, `EVOLUTION_INSTANCES`                          | Evolution/WhatsApp                          |
 | `WHATSAPP_OWNER_NUMBER`, `WHATSAPP_ALLOWED`, `WHATSAPP_WEBHOOK_SECRET`, `WHATSAPP_BOT_MODE` | bot WhatsApp                                |
 | `TTS_SA` (opcional), `TTS_VOICE`, `TTS_LANG`                                                | voz                                         |
+| `TYPESAFE_API_KEY`                                                                          | chave do JEV (TypeSafe). Só via função-ponte temporária — ver `instrucoesTypeSafe()` |
+| `FALA_SENSIVEL_LIMIAR` (0.35), `ROTA_LIMIAR_LEITURA` (0.70), `ROTA_LIMIAR_ACAO` (0.85)      | limiares do JEV — privacidade e roteamento  |
+| `NOTIF_URGENCIA_LIMIAR` (2.0), `NOTIF_ESCALA_LIMIAR` (2.8), `FIN_SALDO_VALIDADE_DIAS` (2)   | triagem, escalonamento de fraude, frescor do saldo |
 
 **Escopos OAuth:** `script.external_request`, `script.scriptapp`, `drive`, `calendar`, `https://mail.google.com/`, `tasks`, `contacts.readonly`, `forms`.
 
 **Setups (editor):** `configurarJarvis()`, `configurarBaseConhecimento('<BASE_ROOT_ID>')`, `configurarModelosGemini()`, `usarModeloRobusto()`, `configurarVoz()`, `configurarWhatsApp(...)`, `configurarA2A()`, `configurarBotInbound('auto'|'secretaria'|'off')`.
 **Diagnóstico:** `diagGemini()`, `testarVoz()`, `testarFirestore()`, `testarWikiMemoryService()`, `listarSkillsJarvis()`, `apontarWebhookJarvis()`, `autorizarGatilhos()`, `testarJobs()`, `testarGmailAvancado()`, `testarLerPagina(url)`, `listarModelosEmbedding()`, `diagSemantica()`, `indexarWikiSemantico()`.
+**Diagnóstico do JEV:** `diagTypeSafe()`, `diagSensibilidade({texto, de})`, `diagRotaSemantica({texto})`, `diagTriagemNotificacao({app, titulo, texto})` — devolvem a análise crua (probabilidade, limiar, quem decidiu). Use-os para **calibrar os limiares com suas próprias mensagens**.
 
 ---
 
@@ -276,4 +282,92 @@ O projeto Gemini atingiu o **teto de gasto mensal** (`429 — monthly spending c
 
 ---
 
-_Documento de referência técnica e material de portfólio. Última revisão: 2026-06-29 (P7 hardening · P8 AsyncBroker · P9 sandbox · deploy `@191` · /exec `<DEPLOYMENT_ID>…`). Construído com Google Apps Script + Cloud Firestore + Gemini, sem servidor próprio._
+## JEV / TypeSafe — julgamentos tipados (2026-09)
+
+### O que é, em uma frase
+
+**O Gemini escreve; o JEV decide.** O JEV (TypeSafe *System One*) não gera texto: recebe um estado e devolve um **número com significado**. É o pedaço de inteligência que o código precisa quando um `if` não dá conta, sem pagar o preço de um LLM inteiro.
+
+| Decisor    | Como decide            | Custo        | Risco                                                       |
+| ---------- | ---------------------- | ------------ | ----------------------------------------------------------- |
+| **Regex**  | Pelas letras literais  | 0 ms, grátis | Não entende sentido — "banco de dados" vira assunto bancário |
+| **Gemini** | Escrevendo uma resposta| 20–40 s      | Pode inventar; é criativo por natureza                       |
+| **JEV**    | Julgando o sentido     | 1–3 s        | Não pode inventar: a saída tem formato fixo                  |
+
+### As três primitivas
+
+Escolha pelo **significado da resposta**, nunca pela conveniência.
+
+| Necessidade                        | Primitiva | Devolve                                     |
+| ---------------------------------- | --------- | ------------------------------------------- |
+| Uma condição vale?                 | `noul`    | probabilidade de SIM (0–1). Sem `confidence` |
+| Qual destes?                       | `choice`  | `choice` + `probabilities` + `confidence`   |
+| O quanto, numa escala ordenada?    | `score`   | `score` + `legend` + `probabilities` + `confidence` |
+
+`noul` perto de 0,5 significa **chances parecidas para sim e não** — não "intensidade média".
+
+### Onde atua hoje (4 pontos)
+
+Em todos, o JEV entra onde antes havia **só regex ou nada**.
+
+| Ponto | Arquivo | Primitiva | O que substituiu |
+| ----- | ------- | --------- | ---------------- |
+| `_avaliarSensibilidade` | `Code.js` | `noul` | Lista de ~200 palavras que escondia conversa banal |
+| `_rotaSemantica` | `Code.js` | `choice` ×4 | Pedido não reconhecido caía no LLM (20–40 s) |
+| `_notifTriagemJev` | `Code.js` | `score` | Notificação sem regra virava `guardar` calado |
+| `_notifEscalaSePreciso` | `Code.js` | `score` | Regra por FONTE engolia fraude junto com extrato |
+
+**Medições reais** (jev-1.13.0, 21–22/09/2026):
+
+```
+SENSIBILIDADE   banais 0,05–0,21  ·  privadas 0,90–0,98   (corte 0,35 — vão limpo)
+ROTEAMENTO      6/6 corretas · "qual o meu turno atual" conf 1,00 · 23,3 s → 9,1 s
+TRIAGEM         promo 0,04 · notícia 1,00 · escola 1,98 · "me liga, urgente" 2,16 · fraude 3,00
+ESCALONAMENTO   Itaú extrato 1,00 (cala) · Itaú fraude 3,00 (fura a regra)
+```
+
+### A ordem que não muda
+
+1. **Regra do dono vence.** `FALA_ASSUNTO_SENSIVEL`, regras de notificação — política é do dono, não do modelo. Resolve local, sem rede, sem token.
+2. **JEV julga** o que sobrou.
+3. **Falha → comportamento antigo.** Sem chave, sem rede, HTTP 4xx/5xx → heurística. **A porta de privacidade nunca abre por falha de infraestrutura.**
+
+### Limiares por consequência
+
+Um limiar não é um número só — depende do que custa errar.
+
+| Decisão | Limiar | Property | Por quê |
+| ------- | ------ | -------- | ------- |
+| Esconder conteúdo na fala | `0.35` | `FALA_SENSIVEL_LIMIAR` | Falar um exame em voz alta é muito pior que anunciar "te enviou uma mensagem" |
+| Rotear consulta (leitura) | `0.70` | `ROTA_LIMIAR_LEITURA` | Erra barato: responde o dado errado, o dono percebe |
+| Rotear ação (definir turno) | `0.85` | `ROTA_LIMIAR_ACAO` | Reescreve 4 alertas de ponto |
+| Falar no vácuo das regras | `2.0` /3 | `NOTIF_URGENCIA_LIMIAR` | Ancora no nível 2 ("alguém esperando, prazo hoje") |
+| Furar regra que calou | `2.8` /3 | `NOTIF_ESCALA_LIMIAR` | Sobrepõe regra do dono; errar custa a confiança dele nas próprias regras |
+
+> A janela de fala (`NOTIF_FALAR_JANELA`) vence **tudo**, inclusive fraude — e é testada **antes** da chamada, para não gastar token numa resposta que seria descartada.
+
+### Onde o JEV **não** serve
+
+- **Fato é lookup, não julgamento.** Saldo, agenda, contagem de e-mail, horário. Lição concreta: em 21/09 o JEV roteou `saldo_swile` com confiança 1,00 e o número ainda estava errado — o valor gravado tinha 3 dias e valia 0,4% do real. **Nenhum modelo conserta dado velho.**
+- **Onde a regex já acerta em 0 ms**, ela fica. O JEV só entra no que sobra.
+- **Onde a decisão é política do dono**, ela é código, não pergunta.
+
+### Roadmap — o que explorar
+
+1. **Reranking do RAG.** `Semantica.buscarHibrido` funde embeddings + BM25 por RRF — fórmula que não lê a pergunta. Um `score` de relevância sobre os ~20 primeiros trechos, escolhendo os 5 melhores, costuma bater RRF. Maior ganho de qualidade disponível e caminho direto contra alucinação (contexto melhor entra no Gemini).
+2. **Unificar as duas cadeias de roteamento.** `_rotaDireta` (chat) e a cadeia inline do `voice_command` **já divergiram**: o chat respondia o turno em 0 ms enquanto a voz mandava o mesmo pedido ao LLM. Um `choice` único mata a classe inteira de "a regex não cobriu essa frase".
+3. **Gate P2 — detectar confirmação.** Hoje por palavra-chave. Um `noul` sobre *"isto confirma a ação pendente?"* é mais robusto — e ali um falso positivo envia e-mail que o dono não mandou.
+4. **Modo secretária com limiar.** Um `score` de "quão certo está este rascunho" deixa os triviais saírem sozinhos e só os duvidosos na fila de aprovação.
+5. **`_generoPorNome`.** Lista de nomes → `choice`, para resolver nome desconhecido.
+
+**Custo:** a API devolve `usage` a cada chamada (um `noul` simples: ~286 tokens de entrada, 20 de saída). Com cache de 10–30 min o volume é baixo — mas **medir antes de decidir**.
+
+### Diagnóstico
+
+`diagTypeSafe()` (a API responde?) · `diagSensibilidade({texto, de})` · `diagRotaSemantica({texto})` · `diagTriagemNotificacao({app, titulo, texto})` — todos devolvem a análise **crua**: probabilidade, limiar e quem decidiu (`regra` | `jev` | `heuristica`). São a ferramenta de calibração: ajuste os limiares com **suas** mensagens, não com os exemplos acima.
+
+**Chave:** `TYPESAFE_API_KEY` nas Script Properties. O botão *Executar* do editor **não passa argumentos** — use a função-ponte temporária que `instrucoesTypeSafe()` imprime, e apague-a depois. Nunca cole a chave no `.gs`.
+
+---
+
+_Documento de referência técnica e material de portfólio. Última revisão: 2026-09-22 (JEV/TypeSafe: privacidade, roteamento, triagem e escalonamento de fraude · deploy `@415` · /exec `<DEPLOYMENT_ID>…`). Revisão anterior: 2026-06-29 (P7 hardening · P8 AsyncBroker · P9 sandbox · `@191`). Construído com Google Apps Script + Cloud Firestore + Gemini + TypeSafe, sem servidor próprio._

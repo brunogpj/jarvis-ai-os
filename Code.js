@@ -3147,7 +3147,20 @@ function doPost(e) {
         var _rot   = (_livre && !_lembC) ? _interpretarRotina(msgVoz) : null;
         if (_fin !== null) {
           try {
-            respVoz = (_fin.tipo === 'gastos') ? _finFalarGastos(_fin.dias) : _finFalarSaldo(_fin.carteira);
+            if (_fin.tipo === 'gastos') {
+              respVoz = _finFalarGastos(_fin.dias);
+            } else if (_fin.tipo === 'definir') {
+              var _rsd = definirSaldoFinanceiro({ voucher: _fin.voucher, mobilidade: _fin.mobilidade, origem: 'voz' });
+              function _brV(v) { return 'R$ ' + Number(v).toFixed(2).replace('.', ','); }
+              respVoz = _rsd.ok
+                ? ('Saldo atualizado: ' +
+                   [(_rsd.saldo.voucher !== null ? 'voucher, ' + _brV(_rsd.saldo.voucher) : null),
+                    (_rsd.saldo.mobilidade !== null ? 'mobilidade, ' + _brV(_rsd.saldo.mobilidade) : null)]
+                     .filter(Boolean).join('; e ') + '.')
+                : ('Não consegui gravar o saldo: ' + (_rsd.erro || 'erro') + '.');
+            } else {
+              respVoz = _finFalarSaldo(_fin.carteira);
+            }
           } catch (eFin) { respVoz = 'Não consegui consultar o saldo agora.'; }
         } else if (_trn !== null) {
           // Chama a MESMA função da ferramenta (definirTurno), que limpa os alertas antigos por tag
@@ -4881,8 +4894,25 @@ function _finFalarSaldo(carteira) {
   var partes = [];
   if (carteira !== 'mobilidade' && sd.voucher !== null) partes.push('voucher, ' + br(sd.voucher));
   if (carteira !== 'voucher' && sd.mobilidade !== null) partes.push('mobilidade, ' + br(sd.mobilidade));
-  var quando = sd.em ? (' Informado em ' + Utilities.formatDate(new Date(sd.em), 'America/Sao_Paulo', 'dd/MM') + '.') : '';
-  return 'Saldo do Swile: ' + partes.join('; e ') + '.' + quando;
+  /* FRESCOR ANTES DO NÚMERO. O saldo aqui é uma FOTO do que ele digitou, não uma consulta ao
+   * Swile — e ele gasta no cartão sem avisar o Jarvis. Em 21/09 o valor gravado dizia R$ 676,98
+   * e o real era R$ 2,50: 0,4% do anunciado, com 3 dias de idade. A versão anterior falava o
+   * número com confiança total e pendurava " Informado em 19/09." no fim, que em ÁUDIO passa
+   * despercebido — quem ouve retém o valor, não a data.
+   * Agora a ressalva vem NA FRENTE quando o dado está velho, e o número vem depois. Dizer
+   * "pode estar desatualizado" custa nada; induzir alguém a contar com saldo que não existe
+   * custa uma compra recusada no caixa. */
+  var dias = sd.em ? Math.floor((Date.now() - Number(sd.em)) / 86400000) : null;
+  var limite = Number(PropertiesService.getScriptProperties().getProperty('FIN_SALDO_VALIDADE_DIAS') || 2);
+  if (!isFinite(limite) || limite < 0) limite = 2;
+  var corpo = 'Saldo do Swile: ' + partes.join('; e ') + '.';
+  if (dias === null) return corpo;
+  if (dias > limite) {
+    return 'Atenção: este saldo é de ' + (dias === 1 ? 'ontem' : dias + ' dias atrás') +
+           ' e pode estar desatualizado. Na última vez que você me informou: ' +
+           partes.join('; e ') + '. Se já gastou depois disso, me diga o valor novo.';
+  }
+  return corpo + ' Informado ' + (dias === 0 ? 'hoje' : (dias === 1 ? 'ontem' : 'há ' + dias + ' dias')) + '.';
 }
 
 /* INSIGHT por voz — determinístico. Dois verbos que o LLM não cobria:
@@ -4967,6 +4997,17 @@ function _interpretarFinanceiro(msg) {
     if (/hoje/.test(s)) dias = 1; else if (/semana/.test(s)) dias = 7; else if (/m[eê]s/.test(s)) dias = 30;
     return { tipo: 'gastos', dias: dias };
   }
+  /* DECLARAR o saldo, não perguntar. Até aqui o único jeito de atualizar era o painel interativo
+   * da recarga — se ele perdesse aquela janela, o valor envelhecia calado e o Jarvis seguia
+   * anunciando um número morto (21/09: R$ 676,98 gravado contra R$ 2,50 reais). Falar o saldo
+   * novo é o gesto mais natural, e não colide com a consulta: "quanto tenho" nunca traz números.
+   * Usa a mensagem ORIGINAL (não a sem-acento) porque _finLerSaldoDeTexto casa "alimentação". */
+  if (/\d/.test(s) && /(registr|anot|atualiz|corrig|meu saldo (e|eh|esta)|saldo (e|eh|esta)|ta em|esta em|sobrou)/.test(s)) {
+    var lido = _finLerSaldoDeTexto(msg);
+    if (lido && (lido.voucher !== null || lido.mobilidade !== null)) {
+      return { tipo: 'definir', voucher: lido.voucher, mobilidade: lido.mobilidade };
+    }
+  }
   if (/\bsaldo\b|quanto (eu )?(tenho|tem)\b|quanto sobrou|quanto resta/.test(s)) {  // "quanto tem" tambem e pergunta de saldo (05/08: so "tenho" deixava passar)
     var cart = null;
     if (/voucher|refeic|alimenta/.test(s)) cart = 'voucher';
@@ -5047,12 +5088,48 @@ function obterSaldoFinanceiro() {
 }
 
 /** Extrai um ou dois valores de texto livre ("700, 250" · "voucher 700 mobilidade 250"). */
+/* As duas ORDENS em que um saldo é dito. A versão anterior só entendia "voucher 2,50" (rótulo
+ * antes), porque nasceu do painel interativo, onde ele DIGITA. Falando, a ordem natural em
+ * português é a inversa — "2,50 no voucher e 0,38 na mobilidade" — e aí o \D{0,12} atravessava o
+ * conector: o rótulo "voucher" casava com o número do OUTRO cartão ("voucher e 0,38"), gravando
+ * 0,38 como voucher. Silencioso e errado.
+ * Agora os conectores são explícitos e curtos, e "e" fica DE FORA de propósito: é o que separa
+ * as duas carteiras, nunca o que liga um rótulo ao seu valor. Número-antes tem prioridade. */
+var _FIN_ROTULO_VOUCHER = 'voucher|refei[çc][ãa]o|alimenta[çc][ãa]o';
+var _FIN_ROTULO_MOBIL   = 'mobilidade|combust[íi]vel|transporte';
+
+var _FIN_LIGA_ANTES  = '(?:reais?\\s*)?(?:n[oa]|em|d[eoa]|para)?';          // "2,50 no voucher"
+var _FIN_LIGA_DEPOIS = '(?:[:=]|est[áa]\\s*em|[ée]h?|de|em|com)?';          // "voucher: 2,50"
+
+/** A frase inteira tem UMA orientação, não uma por carteira. Decidir por rótulo isoladamente
+ *  produzia leituras cruzadas: em "voucher 2,50 mobilidade 0,38" o número-antes casava
+ *  "2,50 mobilidade" e dava 2,50 às duas. Aqui a orientação sai do PRIMEIRO rótulo — se houver
+ *  número logo antes dele, a frase toda é número-antes; senão, rótulo-antes. */
+function _finOrientacao(t) {
+  var m = t.match(new RegExp('(' + _FIN_ROTULO_VOUCHER + '|' + _FIN_ROTULO_MOBIL + ')', 'i'));
+  if (!m) return 'depois';
+  // Só o que vem ANTES do PRIMEIRO rótulo decide. Varrer a frase inteira achava o número da
+  // outra carteira ("voucher 2,50 mobilidade" casava "2,50 mobilidade") e invertia tudo.
+  return new RegExp('[\\d.,]*\\d\\s*' + _FIN_LIGA_ANTES + '\\s*$', 'i').test(t.slice(0, m.index))
+    ? 'antes' : 'depois';
+}
+
+function _finValorDoRotulo(t, rotulos, orientacao) {
+  var re = (orientacao === 'antes')
+    ? new RegExp('([\\d.,]*\\d)\\s*' + _FIN_LIGA_ANTES + '\\s*(?:' + rotulos + ')', 'i')
+    : new RegExp('(?:' + rotulos + ')\\s*' + _FIN_LIGA_DEPOIS + '\\s*([\\d.,]*\\d)', 'i');
+  var m = t.match(re);
+  return m ? _finNum(m[1]) : null;
+}
+
 function _finLerSaldoDeTexto(txt) {
   var t = String(txt || '');
-  var mv = t.match(/(?:voucher|refei[çc][ãa]o|alimenta[çc][ãa]o)\D{0,12}([\d.,]+)/i);
-  var mm = t.match(/(?:mobilidade|combust[íi]vel|cr[ée]dito)\D{0,12}([\d.,]+)/i);
-  if (mv || mm) {
-    return { voucher: mv ? _finNum(mv[1]) : null, mobilidade: mm ? _finNum(mm[1]) : null, porRotulo: true };
+  var temRotulo = new RegExp('(' + _FIN_ROTULO_VOUCHER + '|' + _FIN_ROTULO_MOBIL + ')', 'i').test(t);
+  if (temRotulo) {
+    var ori = _finOrientacao(t);
+    var v = _finValorDoRotulo(t, _FIN_ROTULO_VOUCHER, ori);
+    var m = _finValorDoRotulo(t, _FIN_ROTULO_MOBIL, ori);
+    if (v !== null || m !== null) return { voucher: v, mobilidade: m, porRotulo: true, ordem: ori };
   }
   var nums = (t.match(/[\d.,]*\d/g) || []).map(_finNum).filter(function (n) { return n !== null; });
   if (!nums.length) return null;
@@ -5158,7 +5235,12 @@ function _notifAplicarRegras(d) {
 
     if (acao === 'financeiro') {
       var rf = _finGuardarBruto(d);
-      return { regra: r.id, acao: 'financeiro', arquivado: rf.ok, erro: rf.erro || null };
+      // A regra 'banco'/'financeiro' existe para extrato — e engolia FRAUDE junto. Em 21/09 o
+      // "Compra não reconhecida, R$ 2.400" do Itaú foi arquivado calado, porque a regra casa pela
+      // FONTE e a fonte é a mesma que manda saldo e promoção. Escalar resolve sem desfazer a regra.
+      var escF = _notifEscalaSePreciso(d);
+      return { regra: r.id, acao: 'financeiro', arquivado: rf.ok, erro: rf.erro || null,
+               escalado: escF.escalou, urgencia: escF.urgencia };
     }
 
     if (acao === 'lembrete_casa' || acao === 'lembrete_trabalho') {
@@ -5179,7 +5261,11 @@ function _notifAplicarRegras(d) {
       } catch (e2) {}
       return { regra: r.id, acao: acao, modo: 'falar', falou: falou };
     }
-    return { regra: r.id, acao: acao, modo: 'briefing' };    // fica guardada, entra no resumo
+    // Mesmo caso do 'financeiro': a regra mandou para o resumo, mas se for nível "não pode
+    // esperar" o silêncio deixa de ser a resposta certa.
+    var escB = _notifEscalaSePreciso(d);
+    return { regra: r.id, acao: acao, modo: escB.escalou ? 'falar' : 'briefing',
+             escalado: escB.escalou, urgencia: escB.urgencia };
   }
   // NENHUMA REGRA CASOU. Antes isto virava 'guardar' calado: tudo que o dono ainda não tinha
   // escrito regra ficava invisível até ele perguntar "o que eu perdi" — inclusive o que valia
@@ -5208,12 +5294,19 @@ function _notifAplicarRegras(d) {
  * este número é um PONTO DE PARTIDA: calibre com as suas notificações via diagTriagemNotificacao. */
 var _NOTIF_URGENCIA_LIMIAR = 2.0;   // 0..3 — ver os níveis abaixo
 
-function _notifTriagemJev(d) {
-  if (typeof TypeSafe === 'undefined' || !TypeSafe.temChave()) return { regra: null, acao: 'guardar' };
-  // JANELA DE SILÊNCIO vem ANTES do modelo: fora dela nada fala, por mais urgente que seja.
-  // Perguntar para depois ignorar a resposta seria gastar rede e token à toa.
-  if (!_notifPodeFalar()) return { regra: null, acao: 'guardar', modo: 'briefing', nota: 'fora da janela de fala' };
+/* ESCALONAMENTO — limiar SEPARADO e mais alto (2.8, dentro do nível 3 "não pode esperar").
+ * Aqui não se está preenchendo um vácuo: está se SOBREPONDO a uma regra que o dono escreveu.
+ * Isso só se justifica no extremo — fraude, segurança, emergência — e o preço de errar é
+ * quebrar a confiança nas próprias regras dele. Por isso 2.8 e não 2.0.
+ * 'ignorar' NUNCA escala: é supressão explícita, não arquivamento. */
+var _NOTIF_ESCALA_LIMIAR = 2.8;
 
+/** FONTE ÚNICA da pergunta de urgência. Dois chamadores a usam — a triagem (vácuo das regras) e
+ *  o escalonamento (fura regra que calou). Os limiares diferem porque as consequências diferem,
+ *  mas a PERGUNTA é a mesma: duplicá-la seria repetir o erro que já custou caro aqui, quando
+ *  duas listas para a mesma pergunta divergiram e só uma conhecia "Ligar".
+ *  Devolve { ok, score, confidence, ms, erro }. */
+function _notifPontuarUrgencia(d) {
   var r = TypeSafe.perguntar(
     { app: String(d.app || ''), titulo: String(d.titulo || ''), mensagem: String(d.texto || '') },
     { urgencia: {
@@ -5230,18 +5323,58 @@ function _notifTriagemJev(d) {
       } },
     { cacheSeg: 900 }
   );
-
-  if (!r.ok) return { regra: null, acao: 'guardar', erro: r.erro };
+  if (!r.ok) return { ok: false, erro: r.erro, ms: r.ms };
   var a = r.answers && r.answers.urgencia;
-  if (!a || typeof a.score !== 'number') return { regra: null, acao: 'guardar' };
+  if (!a || typeof a.score !== 'number') return { ok: false, erro: 'resposta sem score', ms: r.ms };
+  return { ok: true, score: a.score,
+           confidence: (typeof a.confidence === 'number') ? a.confidence : null, ms: r.ms };
+}
+
+/** A regra mandou calar. A notificação é urgente o bastante para furar esse silêncio?
+ *  Devolve { escalou, urgencia } — e fala, se for o caso. */
+function _notifEscalaSePreciso(d) {
+  var out = { escalou: false, urgencia: null };
+  if (typeof TypeSafe === 'undefined' || !TypeSafe.temChave()) return out;
+  if (!_notifPodeFalar()) return out;          // janela vence tudo, inclusive fraude
+  var r = _notifPontuarUrgencia(d);
+  if (!r.ok) return out;
+  out.urgencia = r.score;
+
+  var lim = Number(PropertiesService.getScriptProperties().getProperty('NOTIF_ESCALA_LIMIAR') || _NOTIF_ESCALA_LIMIAR);
+  if (!isFinite(lim) || lim <= 0 || lim > 3) lim = _NOTIF_ESCALA_LIMIAR;
+  if (r.score < lim) return out;
+
+  try {
+    var res = (typeof Jarvis !== 'undefined' && Jarvis.controlarDispositivo)
+      ? Jarvis.controlarDispositivo({ acao: 'falar',
+          texto: 'Atenção. ' + (d.app || 'Celular') + '. ' + ((d.titulo || '') + (d.texto ? '. ' + d.texto : '')) }) : null;
+    out.escalou = !!(res && res.status === 'success');
+  } catch (e) {}
+  try {
+    if (typeof Jarvis !== 'undefined' && Jarvis.registrarEvento) Jarvis.registrarEvento({
+      tool: 'notif:escalada', ok: out.escalou, ms: r.ms,
+      resumo: 'urg ' + r.score.toFixed(2) + '>=' + lim + ' furou a regra · ' + String(d.app || '') + ': ' + String(d.titulo || '').substring(0, 60)
+    });
+  } catch (eEv) {}
+  return out;
+}
+
+function _notifTriagemJev(d) {
+  if (typeof TypeSafe === 'undefined' || !TypeSafe.temChave()) return { regra: null, acao: 'guardar' };
+  // JANELA DE SILÊNCIO vem ANTES do modelo: fora dela nada fala, por mais urgente que seja.
+  // Perguntar para depois ignorar a resposta seria gastar rede e token à toa.
+  if (!_notifPodeFalar()) return { regra: null, acao: 'guardar', modo: 'briefing', nota: 'fora da janela de fala' };
+
+  var r = _notifPontuarUrgencia(d);
+  if (!r.ok) return { regra: null, acao: 'guardar', erro: r.erro };
 
   var lim = Number(PropertiesService.getScriptProperties().getProperty('NOTIF_URGENCIA_LIMIAR') || _NOTIF_URGENCIA_LIMIAR);
   if (!isFinite(lim) || lim <= 0 || lim > 3) lim = _NOTIF_URGENCIA_LIMIAR;
 
-  var base = { regra: null, via: 'jev', urgencia: Number(a.score.toFixed(2)),
-               confianca: (typeof a.confidence === 'number') ? Number(a.confidence.toFixed(2)) : null,
+  var base = { regra: null, via: 'jev', urgencia: Number(r.score.toFixed(2)),
+               confianca: (r.confidence === null) ? null : Number(r.confidence.toFixed(2)),
                limiar: lim, ms: r.ms };
-  if (a.score < lim) { base.acao = 'guardar'; base.modo = 'briefing'; return base; }
+  if (r.score < lim) { base.acao = 'guardar'; base.modo = 'briefing'; return base; }
 
   var falou = false;
   try {

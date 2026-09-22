@@ -741,3 +741,105 @@ test('Notificações: marcarLidas:true segue funcionando p/ quem já usava', fun
   s.resumirNotificacoes({ horas: 12, marcarLidas: true });
   assert.strictEqual(Object.keys(s._lidas).length, 4, 'compatibilidade preservada');
 });
+
+// ───────────────────────── 🏦 Escalonamento: urgencia fura regra que calou ─────────────────────────
+function escalaSandbox(score, props) {
+  var falado = [];
+  var s = makeSandbox({
+    props: Object.assign({ TYPESAFE_API_KEY: 'k', NOTIF_FALAR_JANELA: '00:00-23:59' }, props || {}),
+    fetch: function () {
+      return { code: 200, body: { model: 'jev-1', answers: { urgencia: { type: 'score', score: score, confidence: 0.9 } } } };
+    }
+  });
+  s.Jarvis.controlarDispositivo = function (a) { falado.push(a.texto); return { status: 'success' }; };
+  loadGasFile('TypeSafe.js', s);
+  loadGasFile('Code.js', s);
+  s._falado = falado;
+  return s;
+}
+
+test('Escalonamento: fraude (3.0) fura a regra do banco que mandava calar', function () {
+  var s = escalaSandbox(3.0);
+  var r = s._notifEscalaSePreciso({ app: 'Itau', titulo: 'Compra nao reconhecida', texto: 'R$ 2.400 em Eletronicos' });
+  assert.strictEqual(r.escalou, true, 'o caso real de 21/09 que foi arquivado calado');
+  assert.strictEqual(r.urgencia, 3.0);
+  assert.match(s._falado[0], /^Atenção\./, 'a fala escalada se anuncia como excecao');
+});
+
+test('Escalonamento: extrato comum (1.0) NAO fura — a regra do banco continua valendo', function () {
+  var s = escalaSandbox(1.0);
+  var r = s._notifEscalaSePreciso({ app: 'Itau', titulo: 'Extrato', texto: 'seu saldo disponivel' });
+  assert.strictEqual(r.escalou, false);
+  assert.strictEqual(s._falado.length, 0, 'sem fala: era exatamente o que a regra queria');
+});
+
+test('Escalonamento: limiar 2.8 é mais alto que o da triagem (2.0) de proposito', function () {
+  // 2.2 basta para FALAR num vacuo de regra, mas nao para SOBREPOR uma regra do dono.
+  assert.strictEqual(escalaSandbox(2.2)._notifEscalaSePreciso({ app: 'X', titulo: 't', texto: 'm' }).escalou, false);
+  assert.strictEqual(escalaSandbox(2.9)._notifEscalaSePreciso({ app: 'X', titulo: 't', texto: 'm' }).escalou, true);
+});
+
+test('Escalonamento: janela de silencio vence ate fraude, e nem consulta o modelo', function () {
+  var chamou = false;
+  var s = makeSandbox({
+    props: { TYPESAFE_API_KEY: 'k', NOTIF_FALAR_JANELA: '03:00-03:01' },
+    fetch: function () { chamou = true; return { code: 200, body: { answers: { urgencia: { type: 'score', score: 3.0 } } } }; }
+  });
+  loadGasFile('TypeSafe.js', s); loadGasFile('Code.js', s);
+  assert.strictEqual(s._notifEscalaSePreciso({ app: 'Itau', titulo: 'FRAUDE', texto: 'x' }).escalou, false);
+  assert.strictEqual(chamou, false);
+});
+
+// ───────────────────────── 💳 Saldo: frescor e atualizacao por voz ─────────────────────────
+test('Saldo: valor velho leva a ressalva NA FRENTE, nao no fim', function () {
+  var tresDias = Date.now() - 3 * 86400000;
+  var s = makeSandbox({ props: { FIN_SALDO: JSON.stringify({ voucher: 676.98, mobilidade: null, em: tresDias }) } });
+  loadGasFile('TypeSafe.js', s); loadGasFile('Code.js', s);
+  var txt = s._finFalarSaldo(null);
+  assert.match(txt, /^Atenção/, 'em audio, ressalva no fim passa despercebida');
+  assert.match(txt, /3 dias atrás/);
+  assert.match(txt, /676,98/, 'o numero continua sendo dito, com a ressalva');
+});
+
+test('Saldo: valor de hoje fala normal, sem alarme', function () {
+  var s = makeSandbox({ props: { FIN_SALDO: JSON.stringify({ voucher: 2.5, mobilidade: 0.38, em: Date.now() }) } });
+  loadGasFile('TypeSafe.js', s); loadGasFile('Code.js', s);
+  var txt = s._finFalarSaldo(null);
+  assert.ok(!/^Atenção/.test(txt), 'dado fresco nao merece ressalva');
+  assert.match(txt, /R\$ 2,50/);
+  assert.match(txt, /R\$ 0,38/);
+  assert.match(txt, /hoje/);
+});
+
+test('Saldo: declarar por voz vira tipo "definir"; perguntar continua consulta', function () {
+  var s = makeSandbox({}); loadGasFile('TypeSafe.js', s); loadGasFile('Code.js', s);
+  var d = s._interpretarFinanceiro('meu saldo esta em 2,50 no voucher e 0,38 na mobilidade');
+  assert.strictEqual(d.tipo, 'definir');
+  assert.strictEqual(d.voucher, 2.5);
+  assert.strictEqual(d.mobilidade, 0.38);
+  // a consulta nao pode virar declaracao: "quanto tenho" nao traz numero
+  assert.strictEqual(s._interpretarFinanceiro('quanto tenho no cartao alimentacao').tipo, 'saldo');
+  assert.strictEqual(s._interpretarFinanceiro('quanto eu gastei essa semana').tipo, 'gastos');
+});
+
+test('Saldo: parser entende as DUAS ordens de dizer o valor', function () {
+  var s = makeSandbox({}); loadGasFile('TypeSafe.js', s); loadGasFile('Code.js', s);
+  // numero ANTES do rotulo — ordem natural na FALA. Era aqui que "voucher e 0,38" casava errado
+  // e gravava 0,38 como voucher, silenciosamente.
+  [['meu saldo esta em 2,50 no voucher e 0,38 na mobilidade', 2.5, 0.38],
+   ['2,50 no voucher e 0,38 na mobilidade', 2.5, 0.38],
+   ['sobrou 2,50 de alimentacao e 0,38 de transporte', 2.5, 0.38],
+   ['registra 2,50 no voucher', 2.5, null],
+  // rotulo ANTES do numero — ordem do painel interativo, onde ele DIGITA
+   ['voucher 2,50 mobilidade 0,38', 2.5, 0.38],
+   ['voucher: 700 mobilidade: 250', 700, 250],
+   ['alimentacao esta em 15 e mobilidade em 3', 15, 3],
+  // sem rotulo nenhum: posicional, como sempre foi
+   ['700, 250', 700, 250]
+  ].forEach(function (c) {
+    var r = s._finLerSaldoDeTexto(c[0]);
+    assert.ok(r, 'nao parseou: ' + c[0]);
+    assert.strictEqual(r.voucher, c[1], 'voucher em: ' + c[0]);
+    assert.strictEqual(r.mobilidade, c[2], 'mobilidade em: ' + c[0]);
+  });
+});

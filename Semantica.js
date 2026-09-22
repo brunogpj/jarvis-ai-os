@@ -329,6 +329,78 @@ var Semantica = (function () {
    * Busca HÍBRIDA (Cosseno + BM25 fundidos via RRF - Reciprocal Rank Fusion).
    * Se embeddings estiverem indisponíveis (cota 429), degrada perfeitamente para BM25.
    */
+  /* ── RERANKING COM JEV ────────────────────────────────────────────────────────────────
+   * O RRF funde duas listas pela POSIÇÃO em cada uma — é aritmética de ranking e nunca lê a
+   * pergunta. Isso o torna cego à diferença que mais importa no RAG: um trecho que fala do MESMO
+   * ASSUNTO não é o mesmo que um trecho que RESPONDE ao que foi perguntado. Os dois sobem junto,
+   * e o que entra no contexto do Gemini decide se ele responde ancorado ou "preenche" a lacuna.
+   *
+   * ADAPTAÇÃO OBRIGATÓRIA AO GAS: o cookbook do TypeSafe roda as N pontuações em paralelo com
+   * thread pool. UrlFetchApp é SÍNCRONO — 12 chamadas seriais custariam ~30 s e matariam a busca.
+   * Aqui vai UMA requisição com N perguntas: o estado (pergunta + trechos) viaja uma vez só e as
+   * perguntas correm em paralelo do lado do serviço. Um round-trip, não doze.
+   *
+   * FAIL-OPEN INEGOCIÁVEL: qualquer falha devolve a ordem do RRF. Busca que quebra por causa de
+   * um reranker é pior que busca mediana. Desligável por RAG_RERANK='off'.
+   */
+  var _RERANK_CANDIDATOS = 12;   // teto de trechos enviados (tokens e latência)
+  var _RERANK_CHARS = 700;       // corte por trecho
+
+  function _rerankAtivo() {
+    try {
+      if (String(PropertiesService.getScriptProperties().getProperty('RAG_RERANK') || '').toLowerCase() === 'off') return false;
+    } catch (e) {}
+    return (typeof TypeSafe !== 'undefined') && TypeSafe.temChave();
+  }
+
+  /** Reordena `cands` pela relevância REAL à consulta. Devolve null se não deu (o chamador
+   *  mantém a ordem do RRF). Cada item ganha `.jev` com a probabilidade, para diagnóstico. */
+  function _rerankJev(consulta, cands) {
+    if (!_rerankAtivo() || !cands || cands.length < 2) return null;
+    var lista = cands.slice(0, _RERANK_CANDIDATOS);
+
+    var estado = {
+      pergunta: String(consulta || ''),
+      trechos: lista.map(function (c) { return String(c.trecho || '').substring(0, _RERANK_CHARS); })
+    };
+    var perguntas = {};
+    lista.forEach(function (c, i) {
+      // O id da pergunta NÃO vai para o modelo — por isso cada uma precisa nomear seu próprio
+      // trecho pelo caminho no estado. Sem isso, as N perguntas seriam indistinguíveis.
+      perguntas['t' + i] = {
+        type: 'noul',
+        instructions: 'A pergunta do usuário está em `pergunta`. Avalie APENAS o trecho em `trechos[' + i + ']`. ' +
+                      'Esse trecho RESPONDE à pergunta — contém a informação pedida?',
+        criteria: {
+          true: 'Sim — o trecho traz a informação específica que a pergunta pede, ou parte dela suficiente para responder.',
+          false: 'Não — o trecho apenas MENCIONA o mesmo assunto, tema ou palavras, sem conter a resposta; ou fala de outra coisa. ' +
+                 'Tratar do tema certo não basta: o que conta é responder à pergunta feita.'
+        }
+      };
+    });
+
+    var r;
+    try { r = TypeSafe.perguntar(estado, perguntas, { cacheSeg: 600 }); }
+    catch (e) { return null; }
+    if (!r || !r.ok || !r.answers) return null;
+
+    var houve = false;
+    lista.forEach(function (c, i) {
+      var a = r.answers['t' + i];
+      if (a && typeof a.noul === 'number') { c.jev = a.noul; houve = true; }
+      else { c.jev = null; }
+    });
+    if (!houve) return null;
+
+    // Sem resposta para um candidato → vai para o fim, mas NÃO some: perder um trecho por falha
+    // parcial do serviço seria pior que mantê-lo mal posicionado.
+    var ordenada = lista.slice().sort(function (a, b) {
+      return (b.jev === null ? -1 : b.jev) - (a.jev === null ? -1 : a.jev);
+    });
+    // Candidatos além do teto seguem no fim, na ordem do RRF.
+    return ordenada.concat(cands.slice(_RERANK_CANDIDATOS));
+  }
+
   function buscarHibrido(consulta, k) {
     k = k || 5;
     var docs = _docsParaBuscar();   // antes: Firestore.listDocs(COL,1000) aqui E DE NOVO dentro de buscar() — 2x o custo
@@ -361,8 +433,15 @@ var Semantica = (function () {
     var fused = Object.keys(rrfScores).map(function(k) { return rrfScores[k]; });
     fused.sort(function(a, b) { return b.rrfScore - a.rrfScore; });
 
-    return fused.slice(0, k).map(function(f) {
-      return { caminho: f.caminho, trecho: f.trecho, score: Number(f.rrfScore.toFixed(4)), semScore: f.semScore, bm25Score: f.bm25Score };
+    // O RRF entregou os CANDIDATOS na ordem dele; o JEV decide quais realmente respondem.
+    // null = reranking indisponível ou falhou → segue a ordem do RRF, como sempre foi.
+    var ordem = _rerankJev(consulta, fused) || fused;
+
+    return ordem.slice(0, k).map(function(f) {
+      return { caminho: f.caminho, trecho: f.trecho, score: Number(f.rrfScore.toFixed(4)),
+               semScore: f.semScore, bm25Score: f.bm25Score,
+               jev: (f.jev === undefined ? null : f.jev),
+               via: (f.jev === undefined || f.jev === null) ? 'rrf' : 'jev' };
     });
   }
 
@@ -624,7 +703,7 @@ var Semantica = (function () {
     return r;
   }
 
-  return { indexar: indexar, indexarNovos: indexarNovos, purgarOrfaos: purgarOrfaos, purgarOrfaosSeNecessario: purgarOrfaosSeNecessario, buscar: buscar, buscarHibrido: buscarHibrido, status: status, limpar: limpar, purgarMeta: purgarMeta, purgarSkills: purgarSkills, reconstruirIndice: _reconstruirIndiceDrive };
+  return { indexar: indexar, indexarNovos: indexarNovos, purgarOrfaos: purgarOrfaos, purgarOrfaosSeNecessario: purgarOrfaosSeNecessario, buscar: buscar, buscarHibrido: buscarHibrido, status: status, limpar: limpar, purgarMeta: purgarMeta, purgarSkills: purgarSkills, reconstruirIndice: _reconstruirIndiceDrive, rerank: _rerankJev, rerankAtivo: _rerankAtivo };
 })();
 
 /**

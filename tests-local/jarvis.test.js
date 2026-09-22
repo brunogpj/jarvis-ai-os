@@ -843,3 +843,92 @@ test('Saldo: parser entende as DUAS ordens de dizer o valor', function () {
     assert.strictEqual(r.mobilidade, c[2], 'mobilidade em: ' + c[0]);
   });
 });
+
+// ───────────────────────── 🔎 Reranking do RAG com JEV ─────────────────────────
+// O RRF funde listas pela POSICAO e nunca le a pergunta: nao distingue "fala do mesmo assunto"
+// de "responde ao que foi perguntado". O reranking corrige isso — mas NUNCA pode quebrar a busca.
+function rerankSandbox(o) {
+  var s = makeSandbox(o || {});
+  loadGasFile('TypeSafe.js', s);
+  loadGasFile('Semantica.js', s);
+  return s;
+}
+function cands(n) {
+  var out = [];
+  for (var i = 0; i < n; i++) out.push({ caminho: 'p' + i + '.md', trecho: 'trecho numero ' + i, rrfScore: 1 - i * 0.01 });
+  return out;
+}
+function respostaRerank(mapa) {  // {t0:0.1, t1:0.9, ...}
+  var answers = {};
+  Object.keys(mapa).forEach(function (k) { answers[k] = { type: 'noul', noul: mapa[k] }; });
+  return { code: 200, body: { model: 'jev-1.13.0', answers: answers } };
+}
+
+test('Rerank: reordena pela relevancia real, nao pela posicao do RRF', function () {
+  var s = rerankSandbox({
+    props: { TYPESAFE_API_KEY: 'k' },
+    fetch: function () { return respostaRerank({ t0: 0.10, t1: 0.95, t2: 0.40 }); }
+  });
+  var r = s.Semantica.rerank('qual a senha do wifi?', cands(3));
+  assert.strictEqual(r[0].caminho, 'p1.md', 'o 2o do RRF era quem respondia');
+  assert.strictEqual(r[1].caminho, 'p2.md');
+  assert.strictEqual(r[2].caminho, 'p0.md', 'o 1o do RRF so falava do assunto');
+  assert.strictEqual(r[0].jev, 0.95);
+});
+
+test('Rerank: UMA requisicao com N perguntas (GAS e sincrono, serial seria ~30s)', function () {
+  var chamadas = 0, corpo = null;
+  var s = rerankSandbox({
+    props: { TYPESAFE_API_KEY: 'k' },
+    fetch: function (url, params) { chamadas++; corpo = JSON.parse(params.payload);
+      return respostaRerank({ t0: 0.5, t1: 0.6, t2: 0.7, t3: 0.8, t4: 0.9 }); }
+  });
+  s.Semantica.rerank('pergunta', cands(5));
+  assert.strictEqual(chamadas, 1, 'uma chamada por candidato mataria a busca no GAS');
+  assert.strictEqual(Object.keys(corpo.questions).length, 5);
+  assert.strictEqual(corpo.state.trechos.length, 5, 'o estado viaja UMA vez, com todos os trechos');
+  // Cada pergunta precisa nomear seu proprio trecho: o id nao vai para o modelo.
+  assert.match(corpo.questions.t3.instructions, /trechos\[3\]/);
+});
+
+test('Rerank: falha NUNCA quebra a busca — devolve null e o RRF prevalece', function () {
+  ['rede', 'http', 'semChave', 'desligado'].forEach(function (caso) {
+    var props = { TYPESAFE_API_KEY: 'k' };
+    var fetch = function () { return respostaRerank({ t0: 0.9 }); };
+    if (caso === 'rede') fetch = function () { throw new Error('ENOTFOUND'); };
+    if (caso === 'http') fetch = function () { return { code: 500, body: 'erro' }; };
+    if (caso === 'semChave') props = {};
+    if (caso === 'desligado') props.RAG_RERANK = 'off';
+    var s = rerankSandbox({ props: props, fetch: fetch });
+    assert.strictEqual(s.Semantica.rerank('p', cands(3)), null, 'caso: ' + caso);
+  });
+});
+
+test('Rerank: resposta parcial nao DESCARTA candidato — manda para o fim', function () {
+  var s = rerankSandbox({
+    props: { TYPESAFE_API_KEY: 'k' },
+    fetch: function () { return respostaRerank({ t0: 0.2, t2: 0.9 }); }   // t1 ausente
+  });
+  var r = s.Semantica.rerank('p', cands(3));
+  assert.strictEqual(r.length, 3, 'perder um trecho por falha parcial seria pior que ordena-lo mal');
+  assert.strictEqual(r[0].caminho, 'p2.md');
+  assert.strictEqual(r[2].caminho, 'p1.md', 'sem nota vai para o fim');
+  assert.strictEqual(r[2].jev, null);
+});
+
+test('Rerank: candidatos alem do teto seguem no fim, na ordem do RRF', function () {
+  var m = {}; for (var i = 0; i < 12; i++) m['t' + i] = i / 100;
+  var s = rerankSandbox({ props: { TYPESAFE_API_KEY: 'k' }, fetch: function () { return respostaRerank(m); } });
+  var r = s.Semantica.rerank('p', cands(15));
+  assert.strictEqual(r.length, 15, 'nenhum candidato some');
+  assert.strictEqual(r[12].caminho, 'p12.md', 'os 3 fora do teto mantem a ordem do RRF');
+  assert.strictEqual(r[14].caminho, 'p14.md');
+});
+
+test('Rerank: lista com 0 ou 1 candidato nao gasta rede', function () {
+  var chamou = false;
+  var s = rerankSandbox({ props: { TYPESAFE_API_KEY: 'k' }, fetch: function () { chamou = true; return respostaRerank({}); } });
+  assert.strictEqual(s.Semantica.rerank('p', cands(1)), null);
+  assert.strictEqual(s.Semantica.rerank('p', []), null);
+  assert.strictEqual(chamou, false, 'nao ha o que reordenar');
+});

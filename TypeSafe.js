@@ -123,7 +123,6 @@ function configurarTypeSafe(args) {
   PropertiesService.getScriptProperties().setProperty('TYPESAFE_API_KEY', k);
   return { ok: true, configurado: true, tamanho: k.length, proximoPasso: 'Rode diagTypeSafe() para confirmar.' };
 }
-
 /** Imprime o passo a passo de como gravar a chave sem deixá-la no código. */
 function instrucoesTypeSafe() {
   var txt = [

@@ -4,7 +4,7 @@
 // ===================================================================================
 //
 // Script Property obrigatória: WIKI_DRIVE_ID
-// Valor: ID da pasta "wiki" no Google Drive (ex: <WIKI_DRIVE_ID>)
+// Valor: ID da pasta "wiki" no Google Drive
 //
 // Estrutura esperada no Drive:
 //   wiki/
@@ -26,7 +26,7 @@ const WikiMemoryService = {
   _getWikiFolderId: function() {
     if (this._folderId) return this._folderId;
     const id = PropertiesService.getScriptProperties().getProperty('WIKI_DRIVE_ID');
-    if (!id) throw new Error('WIKI_DRIVE_ID não configurado nas Script Properties. Use o ID: <WIKI_DRIVE_ID>');
+    if (!id) throw new Error('WIKI_DRIVE_ID não configurado nas Script Properties.');
     this._folderId = id;
     return id;
   },
@@ -576,8 +576,13 @@ const WikiMemoryService = {
 // SETUP: Configura a Script Property WIKI_DRIVE_ID
 // Execute UMA VEZ no editor GAS após criar o projeto.
 // ===================================================================================
-function configurarWikiDriveId() {
-  const WIKI_ID = '<WIKI_DRIVE_ID>'; // ID da pasta wiki no Drive
+function configurarWikiDriveId(args) {
+  // O ID da pasta é do DONO, não do projeto — por isso vem por argumento e não embutido.
+  // O editor não passa args pelo botão Executar: use uma função-ponte temporária.
+  const WIKI_ID = String((args && (args.id || args.pasta || args)) || '').trim();
+  if (!/^[A-Za-z0-9_-]{20,}$/.test(WIKI_ID)) {
+    return { ok: false, erro: 'Informe o ID da pasta wiki: configurarWikiDriveId({id:"<ID_DA_PASTA>"})' };
+  }
   PropertiesService.getScriptProperties().setProperty('WIKI_DRIVE_ID', WIKI_ID);
   Logger.log('✅ WIKI_DRIVE_ID configurado: ' + WIKI_ID);
 

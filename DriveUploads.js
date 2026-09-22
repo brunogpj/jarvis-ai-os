@@ -5,10 +5,12 @@
 
 var DriveUploads = {
 
-  RAW_FOLDER_ID: '<RAW_DRIVE_ID>', // fallback (BaseConhecimento/raw). Preferir Script Property RAW_DRIVE_ID.
+  // Sem fallback: o ID da pasta e do DONO, nao do projeto. Vive em RAW_DRIVE_ID.
   // ID da pasta raw/ — Script Property RAW_DRIVE_ID (definida por configurarBaseConhecimento) tem prioridade.
   _rawRootId: function () {
-    return PropertiesService.getScriptProperties().getProperty('RAW_DRIVE_ID') || this.RAW_FOLDER_ID;
+    var id = PropertiesService.getScriptProperties().getProperty('RAW_DRIVE_ID');
+    if (!id) throw new Error('RAW_DRIVE_ID nao configurado nas Script Properties (pasta BaseConhecimento/raw).');
+    return id;
   },
   // Nomes canônicos das subpastas (case-insensitive na resolução para evitar duplicatas)
   CATEGORIAS: ['articles', 'assets', 'dados_Internet', 'datasets', 'notes', 'papers', 'repos', 'transcripts'],

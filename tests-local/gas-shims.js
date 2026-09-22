@@ -41,6 +41,21 @@ function makeSandbox(o) {
       }
     },
     DriveApp: {},
+    // Rede: o teste passa `o.fetch(url, params)` e recebe de volta o que quiser.
+    // Devolvendo {code, body} o shim embrulha no formato do HTTPResponse; devolvendo um objeto
+    // com getResponseCode o stub assume o controle total. SEM stub, estoura de propósito —
+    // um teste que bate na rede de verdade não é teste offline.
+    UrlFetchApp: {
+      fetch: function (url, params) {
+        if (typeof o.fetch !== 'function') throw new Error('UrlFetchApp.fetch sem stub (passe o.fetch no teste)');
+        var r = o.fetch(url, params) || {};
+        if (typeof r.getResponseCode === 'function') return r;
+        return {
+          getResponseCode: function () { return r.code === undefined ? 200 : r.code; },
+          getContentText: function () { return typeof r.body === 'string' ? r.body : JSON.stringify(r.body || {}); }
+        };
+      }
+    },
     Tarefas: { listar: function () { return (o.tarefas || []).map(function (t) { return { titulo: t }; }); } },
     Autorizacoes: { listar: function () { return (o.autorizacoes || []); } },
     WhatsApp: { listarAgendadas: function () { return (o.agendadas || []); } },

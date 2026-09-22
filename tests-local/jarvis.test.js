@@ -387,3 +387,309 @@ test('ehMetaArquivoWiki: identifica meta-arquivos e ignora conhecimento real', f
     assert.strictEqual(s.ehMetaArquivoWiki(k), false, k + ' NÃO deveria ser meta');
   });
 });
+
+// ───────────────────────── 📱 Telemetria do MacroDroid (_telCarregando / _telModoSom) ─────────────────────────
+// Os dois nasceram de bugs REAIS encontrados em 21/09 lendo a telemetria de produção, onde o
+// aparelho manda o mesmo dado várias vezes e só alguns magic texts são substituídos:
+//   carregando = "Desligar|Desligar|[battery_charging]|[charging]"
+//   modo_som   = "[ringer_mode]|100|[vol_ringer]"
+test('_telCarregando: "Ligar"/"Desligar" do [power] em PT (o negativo contém o positivo)', function () {
+  var s = code();
+  // A armadilha: "desligar" CONTÉM "lig". Testar o positivo antes dava true p/ desligado.
+  assert.strictEqual(s._telCarregando('Desligar|Desligar|[battery_charging]|[charging]'), false);
+  assert.strictEqual(s._telCarregando('Ligar|Ligar|[battery_charging]'), true,
+    'com o cabo na tomada tem que dar true — o contexto do voice_command dizia "Não"');
+  assert.strictEqual(s._telCarregando('Desligar'), false);
+  assert.strictEqual(s._telCarregando('Ligar'), true);
+  // Variantes em inglês que a macro também pode mandar
+  assert.strictEqual(s._telCarregando('charging'), true);
+  assert.strictEqual(s._telCarregando('discharging'), false);
+  assert.strictEqual(s._telCarregando('usb'), true);
+  assert.strictEqual(s._telCarregando('true'), true);
+  assert.strictEqual(s._telCarregando('false'), false);
+  // Desconhecido = null (≠ false). Quem chama OMITE a linha em vez de afirmar "Não".
+  assert.strictEqual(s._telCarregando('[battery_charging]|[charging]'), null, 'só magic text = não sei');
+  assert.strictEqual(s._telCarregando(''), null);
+  assert.strictEqual(s._telCarregando(null), null);
+});
+
+test('_telModoSom: número é VOLUME, nunca modo; sem texto o modo é desconhecido', function () {
+  var s = code();
+  // O caso de produção: [ringer_mode] nunca resolve e sobra o volume. Antes virava modo "Normal".
+  var real = s._telModoSom('[ringer_mode]|100|[vol_ringer]');
+  assert.strictEqual(real.modo, null, 'sem texto de modo → null (não inventar "Normal")');
+  assert.strictEqual(real.volume, 100, 'o 100 é o volume do toque');
+  // Quando o magic text REALMENTE resolve, o modo é lido
+  assert.strictEqual(s._telModoSom('Silent|0|[vol_ringer]').modo, 'Silencioso');
+  assert.strictEqual(s._telModoSom('Silencioso|0').modo, 'Silencioso');
+  assert.strictEqual(s._telModoSom('Vibrate|30').modo, 'Vibrar');
+  assert.strictEqual(s._telModoSom('Normal|80').modo, 'Normal');
+  assert.strictEqual(s._telModoSom('Vibrate|30').volume, 30);
+  // Vazio / só magic text. Campo a campo de propósito: o objeto nasce DENTRO do vm e tem outro
+  // Object.prototype, então deepStrictEqual falha por realm mesmo com o conteúdo idêntico.
+  ['', '[ringer_mode]', null].forEach(function (v) {
+    var r = s._telModoSom(v);
+    assert.strictEqual(r.modo, null, 'modo p/ ' + JSON.stringify(v));
+    assert.strictEqual(r.volume, null, 'volume p/ ' + JSON.stringify(v));
+  });
+});
+
+// ───────────────────────── 🔐 Sensibilidade do assunto (JEV / TypeSafe) ─────────────────────────
+// Esta é uma PORTA DE PRIVACIDADE: decide se o celular lê o conteúdo em voz alta. O invariante
+// que mais importa não é "o JEV acerta", é "a porta NUNCA abre por falha de infraestrutura".
+function sensSandbox(o) {
+  var s = makeSandbox(o || {});
+  loadGasFile('TypeSafe.js', s);
+  loadGasFile('Code.js', s);
+  return s;
+}
+
+test('Sensibilidade: contrato HTTP do JEV (endpoint, Bearer, corpo, leitura do noul)', function () {
+  var visto = null;
+  var s = sensSandbox({
+    props: { TYPESAFE_API_KEY: 'chave-de-teste' },
+    fetch: function (url, params) {
+      visto = { url: url, params: params };
+      return { code: 200, body: { model: 'jev-1.13.0', answers: { j: { type: 'noul', noul: 0.93 } }, usage: {} } };
+    }
+  });
+  var r = s.TypeSafe.noul('texto qualquer', 'É urgente?');
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.prob, 0.93);
+  assert.strictEqual(r.model, 'jev-1.13.0');
+  // O contrato conferido na doc ao vivo + fonte do SDK v0.6.0
+  assert.strictEqual(visto.url, 'https://api.typesafe.ai/v1/systemone');
+  assert.strictEqual(visto.params.method, 'post');
+  assert.strictEqual(visto.params.headers.Authorization, 'Bearer chave-de-teste');
+  var corpo = JSON.parse(visto.params.payload);
+  assert.strictEqual(corpo.model, 'jev-latest');
+  assert.strictEqual(corpo.questions.j.type, 'noul');
+  assert.ok(visto.params.muteHttpExceptions, 'sem mute, um 4xx virava exceção em vez de erro tratável');
+});
+
+test('Sensibilidade: o JEV decide — prob alta esconde, prob baixa lê', function () {
+  function comProb(p) {
+    return sensSandbox({
+      props: { TYPESAFE_API_KEY: 'k' },
+      fetch: function () { return { code: 200, body: { model: 'jev-1', answers: { j: { type: 'noul', noul: p } } } }; }
+    });
+  }
+  var alto = comProb(0.91)._avaliarSensibilidade('o resultado do meu exame deu alterado', 'Dra. Ana');
+  assert.strictEqual(alto.sensivel, true);
+  assert.strictEqual(alto.via, 'jev');
+  assert.strictEqual(alto.prob, 0.91);
+
+  var baixo = comProb(0.04)._avaliarSensibilidade('bora jogar bola sábado?', 'Douglas');
+  assert.strictEqual(baixo.sensivel, false, 'conversa banal não vira discreta');
+  assert.strictEqual(baixo.via, 'jev');
+
+  // O limiar é BAIXO de propósito (0.35): o custo de falar algo privado em voz alta é assimétrico.
+  var meio = comProb(0.40)._avaliarSensibilidade('me liga que preciso te contar uma coisa', 'X');
+  assert.strictEqual(meio.sensivel, true, '0.40 >= 0.35 → na dúvida, discreto');
+});
+
+test('Sensibilidade: FALHA DE REDE nunca abre a porta (cai na heurística, não em false)', function () {
+  var s = sensSandbox({
+    props: { TYPESAFE_API_KEY: 'k' },
+    fetch: function () { throw new Error('getaddrinfo ENOTFOUND'); }
+  });
+  var r = s._avaliarSensibilidade('o exame de sangue deu alterado, o medico pediu internacao', 'Clinica');
+  assert.strictEqual(r.via, 'heuristica', 'sem rede → rede de segurança, não silêncio');
+  assert.strictEqual(r.sensivel, true, 'a porta NÃO pode abrir porque a API caiu');
+  assert.ok(r.erro, 'o erro real fica registrado para diagnóstico');
+});
+
+test('Sensibilidade: HTTP 500 e 401 também degradam para a heurística', function () {
+  [500, 401].forEach(function (code) {
+    var s = sensSandbox({
+      props: { TYPESAFE_API_KEY: 'k' },
+      fetch: function () { return { code: code, body: 'erro' }; }
+    });
+    var r = s._avaliarSensibilidade('minha senha do banco e 1234', 'Fulano');
+    assert.strictEqual(r.via, 'heuristica', 'HTTP ' + code + ' → heurística');
+    assert.strictEqual(r.sensivel, true);
+  });
+});
+
+test('Sensibilidade: sem chave configurada, comportamento antigo intacto', function () {
+  var s = sensSandbox({});   // sem TYPESAFE_API_KEY
+  assert.strictEqual(s._avaliarSensibilidade('meu cpf e 111', 'X').via, 'heuristica');
+  assert.strictEqual(s._assuntoSensivel('resultado do exame medico'), true);
+  assert.strictEqual(s._assuntoSensivel('bom dia, tudo bem?'), false);
+});
+
+test('Sensibilidade: regra explícita do dono VENCE o modelo (política ≠ julgamento)', function () {
+  var chamou = false;
+  var s = sensSandbox({
+    props: { TYPESAFE_API_KEY: 'k', FALA_ASSUNTO_SENSIVEL: 'projeto omega' },
+    fetch: function () { chamou = true; return { code: 200, body: { answers: { j: { type: 'noul', noul: 0.01 } } } }; }
+  });
+  var r = s._avaliarSensibilidade('novidades do projeto omega?', 'Chefe');
+  assert.strictEqual(r.sensivel, true, 'o dono mandou tratar como sensível — não se discute com o modelo');
+  assert.strictEqual(r.via, 'regra');
+  assert.strictEqual(chamou, false, 'regra resolve local: não gasta rede nem token');
+});
+
+// ───────────────────────── 🧭 Roteamento semântico de voz (JEV / TypeSafe) ─────────────────────────
+// Invariante central: o JEV só entra DEPOIS que a regex falhou, e só AGE com confiança suficiente.
+// Abaixo do limiar ou sem reconhecer → null → o fluxo segue para o LLM exatamente como antes.
+function rotaSandbox(o) {
+  var s = makeSandbox(o || {});
+  loadGasFile('TypeSafe.js', s);
+  loadGasFile('AlertasVoz.js', s);
+  loadGasFile('Code.js', s);
+  return s;
+}
+function respostaJev(intencao, confianca, extras) {
+  var ans = { intencao: { type: 'choice', choice: intencao, confidence: confianca, probabilities: {} } };
+  Object.keys(extras || {}).forEach(function (k) {
+    ans[k] = { type: 'choice', choice: extras[k], confidence: 0.9, probabilities: {} };
+  });
+  return { code: 200, body: { model: 'jev-1.13.0', answers: ans } };
+}
+
+test('Rota JEV: consulta de turno — o caso REAL que caía no LLM (21/09, ~20s)', function () {
+  var s = rotaSandbox({
+    props: { TYPESAFE_API_KEY: 'k' },
+    fetch: function () { return respostaJev('turno_consultar', 0.93); }
+  });
+  s.AlertasVoz.definirTurno('manha');
+  var r = s._rotaSemantica('qual o meu turno atual', 'dono@exemplo.com', true);
+  assert.match(r, /manhã/, 'responde pelo handler determinístico, sem LLM');
+});
+
+test('Rota JEV: UMA requisição carrega seletor + argumentos de todos os ramos (fan-out)', function () {
+  var chamadas = 0, corpo = null;
+  var s = rotaSandbox({
+    props: { TYPESAFE_API_KEY: 'k' },
+    fetch: function (url, params) { chamadas++; corpo = JSON.parse(params.payload); return respostaJev('nenhuma', 0.9); }
+  });
+  s._rotaSemantica('qualquer coisa', 'dono@exemplo.com', true);
+  assert.strictEqual(chamadas, 1, 'duas idas à rede seria o dobro da latência pela mesma informação');
+  assert.deepStrictEqual(Object.keys(corpo.questions).sort(), ['carteira', 'intencao', 'periodo', 'turno']);
+  assert.ok(corpo.questions.intencao.criteria.nenhuma, 'a opção de escape TEM que existir');
+});
+
+test('Rota JEV: "nenhuma" e baixa confiança devolvem null (segue para o LLM)', function () {
+  function r(intencao, conf) {
+    return rotaSandbox({
+      props: { TYPESAFE_API_KEY: 'k' },
+      fetch: function () { return respostaJev(intencao, conf); }
+    })._rotaSemantica('frase ambigua', 'dono@exemplo.com', true);
+  }
+  assert.strictEqual(r('nenhuma', 0.99), null, 'escape explícito → LLM');
+  assert.strictEqual(r('notificacoes', 0.55), null, '0.55 < 0.70 → não age');
+});
+
+test('Rota JEV: limiar por CONSEQUÊNCIA — definir turno exige mais que consultar', function () {
+  function comConf(intencao, conf) {
+    var s = rotaSandbox({
+      props: { TYPESAFE_API_KEY: 'k' },
+      fetch: function () { return respostaJev(intencao, conf, { turno: 'tarde' }); }
+    });
+    s.AlertasVoz.definirTurno('manha');
+    return s._rotaSemantica('turno', 'dono@exemplo.com', true);
+  }
+  // 0.80 passa na leitura (>=0.70) mas NÃO numa ação que reescreve 4 alertas de ponto (>=0.85)
+  assert.ok(comConf('turno_consultar', 0.80), 'leitura a 0.80 → responde');
+  assert.strictEqual(comConf('turno_definir', 0.80), null, 'ação a 0.80 → NÃO mexe na escala');
+  assert.ok(comConf('turno_definir', 0.90), 'ação a 0.90 → executa');
+});
+
+test('Rota JEV: turno ambíguo numa AÇÃO não vira palpite', function () {
+  var s = rotaSandbox({
+    props: { TYPESAFE_API_KEY: 'k' },
+    fetch: function () { return respostaJev('turno_definir', 0.95, { turno: 'indefinido' }); }
+  });
+  assert.strictEqual(s._rotaSemantica('vou mudar de turno', 'dono@exemplo.com', true), null,
+    'sem saber QUAL turno, deixa o LLM perguntar em vez de chutar');
+});
+
+test('Rota JEV: sem chave / sem rede / não-dono → null, caminho antigo intacto', function () {
+  assert.strictEqual(rotaSandbox({})._rotaSemantica('qual meu turno', 'dono@exemplo.com', true), null,
+    'sem TYPESAFE_API_KEY o comportamento é o de hoje');
+  var s = rotaSandbox({ props: { TYPESAFE_API_KEY: 'k' }, fetch: function () { throw new Error('ENOTFOUND'); } });
+  assert.strictEqual(s._rotaSemantica('qual meu turno', 'dono@exemplo.com', true), null, 'rede caída → LLM');
+  var s2 = rotaSandbox({ props: { TYPESAFE_API_KEY: 'k' }, fetch: function () { return respostaJev('notificacoes', 0.99); } });
+  assert.strictEqual(s2._rotaSemantica('o que eu perdi', 'terceiro@x.com', false), null, 'não-dono nunca roteia');
+});
+
+test('Rota JEV: quando a regex JÁ resolve, o JEV nem é consultado', function () {
+  var chamou = false;
+  var s = rotaSandbox({
+    props: { TYPESAFE_API_KEY: 'k' },
+    eventos: ['Reunião'],
+    fetch: function () { chamou = true; return respostaJev('nenhuma', 0.9); }
+  });
+  var r = s._rotaDireta('o que tenho na agenda hoje?', 'dono@exemplo.com', true);
+  assert.match(r, /Reunião/, 'a regex responde, em 0ms');
+  assert.strictEqual(chamou, false, 'caminho quente que já funciona NÃO ganha ida à rede');
+});
+
+// ───────────────────────── 🔔 Triagem de notificação por pontuação (JEV / TypeSafe) ─────────────────────────
+// Só roda no vácuo das regras. Regra do dono é política e vence; janela de silêncio vence o modelo.
+function notifSandbox(o) {
+  var s = makeSandbox(o || {});
+  loadGasFile('TypeSafe.js', s);
+  loadGasFile('Code.js', s);
+  s.Jarvis.controlarDispositivo = function () { return { status: 'success' }; };
+  return s;
+}
+function respostaScore(score, conf) {
+  return { code: 200, body: { model: 'jev-1.13.0', answers: { urgencia: {
+    type: 'score', score: score, confidence: conf === undefined ? 0.8 : conf,
+    legend: {}, probabilities: {} } } } };
+}
+
+test('Triagem JEV: urgente fala, promoção fica para o resumo', function () {
+  function tri(score) {
+    return notifSandbox({
+      props: { TYPESAFE_API_KEY: 'k', NOTIF_FALAR_JANELA: '00:00-23:59' },
+      fetch: function () { return respostaScore(score); }
+    })._notifTriagemJev({ app: 'Banco', titulo: 'x', texto: 'y' });
+  }
+  var urgente = tri(2.9);
+  assert.strictEqual(urgente.acao, 'falar');
+  assert.strictEqual(urgente.urgencia, 2.9);
+  assert.strictEqual(urgente.via, 'jev');
+
+  var promo = tri(0.3);
+  assert.strictEqual(promo.acao, 'guardar');
+  assert.strictEqual(promo.modo, 'briefing');
+  assert.strictEqual(promo.urgencia, 0.3, 'a pontuação fica guardada mesmo quando não fala');
+});
+
+test('Triagem JEV: a JANELA DE SILÊNCIO vence o modelo — e nem gasta a chamada', function () {
+  var chamou = false;
+  var s = notifSandbox({
+    props: { TYPESAFE_API_KEY: 'k', NOTIF_FALAR_JANELA: '03:00-03:01' },  // praticamente nunca
+    fetch: function () { chamou = true; return respostaScore(3.0); }
+  });
+  var r = s._notifTriagemJev({ app: 'Banco', titulo: 'FRAUDE', texto: 'login desconhecido' });
+  assert.strictEqual(r.acao, 'guardar', 'fora da janela nada fala, por mais urgente que seja');
+  assert.strictEqual(chamou, false, 'perguntar para depois ignorar seria rede e token à toa');
+});
+
+test('Triagem JEV: falha e ausência de chave caem no comportamento antigo (guardar)', function () {
+  var semChave = notifSandbox({ props: { NOTIF_FALAR_JANELA: '00:00-23:59' } })
+    ._notifTriagemJev({ app: 'X', titulo: 't', texto: 'm' });
+  assert.strictEqual(semChave.acao, 'guardar');
+
+  var semRede = notifSandbox({
+    props: { TYPESAFE_API_KEY: 'k', NOTIF_FALAR_JANELA: '00:00-23:59' },
+    fetch: function () { throw new Error('ENOTFOUND'); }
+  })._notifTriagemJev({ app: 'X', titulo: 't', texto: 'm' });
+  assert.strictEqual(semRede.acao, 'guardar', 'falha nunca vira fala indevida');
+  assert.ok(semRede.erro);
+});
+
+test('Triagem JEV: limiar é política — mover o corte muda a decisão sem nova inferência', function () {
+  function comLimiar(lim) {
+    return notifSandbox({
+      props: { TYPESAFE_API_KEY: 'k', NOTIF_FALAR_JANELA: '00:00-23:59', NOTIF_URGENCIA_LIMIAR: String(lim) },
+      fetch: function () { return respostaScore(2.0); }
+    })._notifTriagemJev({ app: 'X', titulo: 't', texto: 'm' });
+  }
+  assert.strictEqual(comLimiar(2.5).acao, 'guardar', '2.0 < 2.5');
+  assert.strictEqual(comLimiar(1.5).acao, 'falar', '2.0 >= 1.5');
+});

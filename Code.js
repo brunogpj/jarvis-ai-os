@@ -247,7 +247,8 @@ function testarAvisoContato(args) {
   var tipoMidia = String(args.tipoMidia || '');
   _FALA_FEITA = false;
   _avisarContatoNoCelular(de, texto, tipoMidia, numero);   // fluxo REAL (pode falar no celular)
-  var sensivel = _assuntoSensivel(texto) || _assuntoSensivel(de);
+  var aval = _avaliarSensibilidade(texto, de);
+  var sensivel = aval.sensivel;
   var p = PropertiesService.getScriptProperties();
   var ignorado = _contatoNaLista(p.getProperty('FALA_CONTATO_IGNORAR'), de, numero);
   var discreto = ignorado ? false : ((tipoMidia === 'imagem') || _contatoNaLista(p.getProperty('FALA_CONTATO_DISCRETO'), de, numero) || sensivel);
@@ -256,6 +257,9 @@ function testarAvisoContato(args) {
     ok: true, de: de,
     decisao: ignorado ? 'IGNORADO (sem aviso)' : (discreto ? 'DISCRETO (não lê o conteúdo)' : 'NORMAL (lê o conteúdo)'),
     assuntoSensivel: sensivel,
+    // A análise do JEV vai CRUA no diagnóstico: probabilidade, limiar e quem decidiu.
+    analise: { probabilidade: aval.prob, limiar: aval.limiar, decididoPor: aval.via,
+               modelo: aval.model || null, ms: aval.ms, erro: aval.erro || null },
     genero: g === 'f' ? 'feminino' : (g === 'm' ? 'masculino' : 'indefinido'),
     voz: (g === 'f') ? 'pt-BR-Chirp3-HD-Sulafat' : 'pt-BR-Chirp3-HD-Enceladus'
   };
@@ -602,7 +606,12 @@ function _avisarContatoNoCelular(de, texto, tipoMidia, numero) {
     // 3) DISCRETO/SENSÍVEL: contato marcado como discreto OU assunto sensível → anuncia só QUEM mandou,
     //    sem expor o conteúdo em voz alta (segurança: não vaza o assunto em ambiente público).
     // IMAGEM = sempre discreto (pode ser foto íntima/sensível) — anuncia neutro, sem revelar que é foto.
-    var discreto = (tipoMidia === 'imagem') || _contatoNaLista(p.getProperty('FALA_CONTATO_DISCRETO'), nome, numero) || _assuntoSensivel(texto) || _assuntoSensivel(nome);
+    // Imagem e contato-marcado são decisões de POLÍTICA e não custam rede — testados primeiro,
+    // em curto-circuito. Só o que sobra vira pergunta ao JEV (uma só, com remetente + texto juntos:
+    // o nome e a mensagem se explicam mutuamente e separá-los perderia essa relação).
+    var discreto = (tipoMidia === 'imagem')
+      || _contatoNaLista(p.getProperty('FALA_CONTATO_DISCRETO'), nome, numero)
+      || _avaliarSensibilidade(texto, nome).sensivel;
     var corpo;
     if (discreto) corpo = 'te enviou uma mensagem.';
     else if (tipoMidia === 'audio') corpo = 'enviou um áudio.';
@@ -749,7 +758,112 @@ function _generoPorNome(nome) {
 
 // Heurística de assunto SENSÍVEL (não expor em voz alta). Ajustável via Script Property
 // FALA_ASSUNTO_SENSIVEL (palavras extras separadas por vírgula).
+/* ===================== SENSIBILIDADE DO ASSUNTO (JEV / TypeSafe) =====================
+ * Esta é uma PORTA DE PRIVACIDADE: decide se o conteúdo de uma mensagem pode ser lido em voz
+ * alta no aparelho, possivelmente na frente de outras pessoas. Errar para o lado permissivo
+ * vaza assunto médico/financeiro/íntimo em ambiente público — é o erro caro.
+ *
+ * POR QUE SAIU DA REGEX: a lista de palavras era ampla de propósito, mas amplitude sem
+ * semântica vira ruído. "vou ao banco de dados", "o contrato do jogador", "falaram do governo
+ * no jornal" e "tirei nota boa em Saúde na escola" disparavam todos — o aparelho passava a
+ * anunciar "te enviou uma mensagem" para conversa banal, e o dono perdia o conteúdo à toa.
+ * Palavra-chave não distingue "meu exame deu alterado" de "exame de motorista é dia 10".
+ *
+ * ARQUITETURA (o código manda, o modelo julga):
+ *   1. REGRA do dono (FALA_ASSUNTO_SENSIVEL) — política explícita, vence sempre. Se ele mandou
+ *      tratar "Fulano" como sensível, não é opinião do modelo, é ordem.
+ *   2. JULGAMENTO do JEV — um noul sobre {remetente, mensagem}: probabilidade de que ler isto
+ *      em voz alta exponha algo privado.
+ *   3. FALLBACK heurístico — sem chave, sem rede ou erro: cai na regex antiga. A porta NUNCA
+ *      fica aberta por falha de infraestrutura; degradar para o conservador é o único caminho
+ *      aceitável aqui.
+ * ================================================================================== */
+
+/** Limiar de discrição. Assimétrico DE PROPÓSITO e baixo: o custo de falso NEGATIVO (falar em voz
+ *  alta o resultado de um exame) é muito maior que o de falso POSITIVO (anunciar só "te enviou uma
+ *  mensagem"). A doc do TypeSafe manda calibrar com dados reais — use diagSensibilidade() para
+ *  medir nas suas mensagens antes de mexer. Ajustável em FALA_SENSIVEL_LIMIAR. */
+var _SENS_LIMIAR_PADRAO = 0.35;
+
+/** Análise COMPLETA da sensibilidade, feita pelo JEV e devolvida como ele respondeu.
+ *  Retorna { sensivel, prob, via, limiar, ms, erro } — `via` diz QUEM decidiu (regra|jev|heuristica),
+ *  para o diagnóstico não ter que adivinhar por que o aparelho ficou discreto. */
+function _avaliarSensibilidade(texto, remetente) {
+  var txt = String(texto || '').trim();
+  var nome = String(remetente || '').trim();
+  if (!txt && !nome) return { sensivel: false, prob: null, via: 'vazio', limiar: null, ms: 0, erro: null };
+
+  // ── 1. REGRA EXPLÍCITA DO DONO — política, não julgamento. Vence o modelo. ──
+  var extra = (PropertiesService.getScriptProperties().getProperty('FALA_ASSUNTO_SENSIVEL') || '')
+    .split(',').map(function (s) { return _semAcento(s); }).filter(Boolean);
+  if (extra.length) {
+    var alvo = _semAcento(txt + ' ' + nome);
+    for (var i = 0; i < extra.length; i++) {
+      if (alvo.indexOf(extra[i]) !== -1) {
+        return { sensivel: true, prob: null, via: 'regra', termo: extra[i], limiar: null, ms: 0, erro: null };
+      }
+    }
+  }
+
+  // ── 2. JULGAMENTO DO JEV ──
+  if (typeof TypeSafe !== 'undefined' && TypeSafe.temChave()) {
+    var limiar = Number(PropertiesService.getScriptProperties().getProperty('FALA_SENSIVEL_LIMIAR') || _SENS_LIMIAR_PADRAO);
+    if (!isFinite(limiar) || limiar <= 0 || limiar >= 1) limiar = _SENS_LIMIAR_PADRAO;
+    var r = TypeSafe.noul(
+      { remetente: nome || '(desconhecido)', mensagem: txt || '(sem texto)' },
+      'O aparelho vai anunciar esta mensagem em voz alta, por um alto-falante, num lugar onde ' +
+      'outras pessoas (colegas, família, desconhecidos) podem ouvir. Ler o conteúdo em voz alta ' +
+      'exporia algo que o destinatário preferiria manter privado? Considere tanto o texto da ' +
+      'mensagem quanto quem a enviou: o nome do remetente sozinho já pode revelar o assunto.',
+      {
+        true: 'Sim — expõe algo privado. Ex.: resultado ou sintoma de saúde do próprio destinatário, ' +
+              'valores, dívidas, salário, senha ou código de verificação, documento pessoal, assunto ' +
+              'jurídico ou de emprego que o envolve, conteúdo íntimo ou de relacionamento, briga ou ' +
+              'fofoca sobre alguém, endereço/localização pessoal, ou um remetente cujo nome já denuncia ' +
+              'o assunto (médico, clínica, psicólogo, advogado, banco, cobrança).',
+        false: 'Não — é conversa comum que não constrange se alguém ouvir. Ex.: combinar horário, ' +
+               'trabalho corriqueiro, piada, link, recado prático, notícia pública ou assunto geral. ' +
+               'Palavras como banco, contrato, governo, saúde ou exame em sentido NEUTRO e impessoal ' +
+               '(notícia, escola, esporte, assunto de terceiros distantes) NÃO tornam a mensagem privada.'
+      },
+      { cacheSeg: 1800 }
+    );
+    if (r.ok) {
+      return { sensivel: r.prob >= limiar, prob: r.prob, via: 'jev', limiar: limiar,
+               model: r.model, ms: r.ms, cache: !!r.cache, erro: null };
+    }
+    // caiu aqui = sem rede/erro de API: segue para a heurística (nunca abre a porta por falha)
+    var h = _assuntoSensivelHeuristica(txt) || _assuntoSensivelHeuristica(nome);
+    return { sensivel: h, prob: null, via: 'heuristica', limiar: limiar, ms: r.ms || 0, erro: r.erro };
+  }
+
+  // ── 3. SEM CHAVE: heurística de sempre ──
+  var hh = _assuntoSensivelHeuristica(txt) || _assuntoSensivelHeuristica(nome);
+  return { sensivel: hh, prob: null, via: 'heuristica', limiar: null, ms: 0, erro: 'TYPESAFE_API_KEY ausente' };
+}
+
+/** Compatibilidade: os chamadores antigos só querem o booleano. */
 function _assuntoSensivel(texto) {
+  return _avaliarSensibilidade(texto, '').sensivel;
+}
+
+/** DIAGNÓSTICO: mostra a análise do JEV CRUA, com probabilidade e quem decidiu.
+ *  args {texto, de}. Serve para calibrar FALA_SENSIVEL_LIMIAR com mensagens reais. */
+function diagSensibilidade(args) {
+  args = args || {};
+  var r = _avaliarSensibilidade(String(args.texto || ''), String(args.de || args.remetente || ''));
+  return {
+    ok: true,
+    entrada: { remetente: String(args.de || args.remetente || ''), mensagem: String(args.texto || '') },
+    decisao: r.sensivel ? 'DISCRETO (não lê o conteúdo)' : 'NORMAL (lê o conteúdo)',
+    probabilidade: r.prob, limiar: r.limiar, decididoPor: r.via,
+    modelo: r.model || null, ms: r.ms, cache: !!r.cache, erro: r.erro || null
+  };
+}
+
+/** Heurística por palavra-chave — hoje é a REDE DE SEGURANÇA, não mais o caminho principal.
+ *  Continua ampla de propósito: quando ela roda, é porque o julgamento bom não estava disponível. */
+function _assuntoSensivelHeuristica(texto) {
   var t = _semAcento(texto);
   if (!t) return false;
   // Dinheiro explícito: "R$ 500", "US$ 500", "$500", "500 reais/dólares/mil".
@@ -791,6 +905,155 @@ function _extrairFala(mensagem) {
   if (!raw || !_temComandoFala(raw)) return null;
   var mAspas = raw.match(/["“”'‘’]([\s\S]+?)["“”'‘’]/);
   return (mAspas && mAspas[1].trim()) ? mAspas[1].trim() : null;
+}
+
+/* ===================== ROTEAMENTO SEMÂNTICO (JEV / TypeSafe) =====================
+ * ONDE ENTRA: só DEPOIS que toda a cadeia determinística falhou — nunca antes. Quando a regex
+ * casa, ela já responde em 0 ms e acerta; não há o que melhorar ali, e pôr rede no caminho quente
+ * do que já funciona seria piorar o comum para consertar o raro.
+ *
+ * O QUE CONSERTA: o pedido que a regex NÃO reconhece despenca no LLM — 20-40 s, com busca RAG
+ * no meio. Caso real medido em 21/09 22:31: "qual o meu turno atual" custou buscarConhecimento +
+ * LLM porque _interpretarTurnoTrabalho exige a palavra "manhã"/"tarde" na frase, e uma PERGUNTA
+ * não tem nenhuma das duas. A resposta já estava em memória. Aqui o JEV escolhe a intenção e
+ * devolve ao MESMO handler determinístico — mais rápido e tipado que o LLM, e sem inventar nada.
+ *
+ * PADRÃO (function calling / fan-out especulativo da doc): UMA requisição carrega o seletor de
+ * intenção E os argumentos de TODOS os ramos. As perguntas rodam em paralelo e não se enxergam;
+ * o código consome só as do ramo escolhido. Duas idas à rede seriam o dobro da latência para a
+ * mesma informação.
+ *
+ * LIMIAR POR CONSEQUÊNCIA, não um número só (confidence.md): consultar é leitura e erra barato;
+ * definir turno reescreve 4 alertas de ponto e erra caro. "nenhuma" é opção EXPLÍCITA — sem ela
+ * o modelo é forçado a escolher algo, e um roteador que nunca diz "não sei" é um gerador de
+ * falsos positivos. Abaixo do limiar → devolve null → segue para o LLM, exatamente como hoje.
+ * ================================================================================== */
+var _ROTA_LIMIAR_LEITURA = 0.70;
+var _ROTA_LIMIAR_ACAO    = 0.85;
+
+function _rotaSemantica(mensagem, email, isOwner) {
+  if (!isOwner) return null;
+  var msg = String(mensagem || '').trim();
+  if (!msg) return null;
+  if (typeof TypeSafe === 'undefined' || !TypeSafe.temChave()) return null;
+
+  var p = PropertiesService.getScriptProperties();
+  var limL = Number(p.getProperty('ROTA_LIMIAR_LEITURA') || _ROTA_LIMIAR_LEITURA);
+  var limA = Number(p.getProperty('ROTA_LIMIAR_ACAO') || _ROTA_LIMIAR_ACAO);
+  if (!isFinite(limL) || limL <= 0 || limL >= 1) limL = _ROTA_LIMIAR_LEITURA;
+  if (!isFinite(limA) || limA <= 0 || limA >= 1) limA = _ROTA_LIMIAR_ACAO;
+
+  var r = TypeSafe.perguntar({ pedido: msg }, {
+    intencao: {
+      type: 'choice',
+      instructions: 'O dono falou isto por voz para o assistente pessoal dele. O que ele está pedindo? ' +
+                    'Escolha "nenhuma" se o pedido não for exatamente um dos casos listados — é melhor ' +
+                    'passar adiante do que atender o pedido errado.',
+      criteria: {
+        saldo_swile:      { what: 'Consultar quanto AINDA TEM no cartão de benefícios (Swile): voucher/alimentação ou mobilidade.',
+                            not_for: 'Quanto já gastou — isso é gastos_swile.',
+                            examples: ['quanto tenho no alimentação', 'qual o saldo do swile', 'sobrou quanto na mobilidade'] },
+        gastos_swile:     { what: 'Consultar quanto JÁ GASTOU no cartão de benefícios num período, ou onde gastou.',
+                            not_for: 'Saldo restante — isso é saldo_swile.',
+                            examples: ['quanto gastei essa semana', 'onde gastei esse mês', 'meus maiores gastos'] },
+        turno_consultar:  { what: 'PERGUNTAR qual é o turno de trabalho vigente e/ou os horários de ponto de hoje.',
+                            not_for: 'Mudar o turno — isso é turno_definir.',
+                            examples: ['qual meu turno atual', 'que horas eu bato o ponto', 'to na manhã ou na tarde?'] },
+        turno_definir:    { what: 'DECLARAR que vai passar a trabalhar num turno, mudando a escala.',
+                            not_for: 'Só perguntar qual é — isso é turno_consultar.',
+                            examples: ['essa semana vou trabalhar de tarde', 'mudei pro turno da manhã'] },
+        notificacoes:     { what: 'Pedir o resumo do que chegou no celular enquanto ele não estava olhando.',
+                            examples: ['o que eu perdi', 'chegou alguma coisa?', 'me atualiza'] },
+        nenhuma:          { what: 'Qualquer outra coisa: conversa, pergunta geral, pedido de ação, redação, busca na web, agenda, e-mail, WhatsApp.',
+                            examples: ['resuma meus e-mails', 'que horas são', 'manda oi pro Douglas', 'explica o que é RAG'] }
+      }
+    },
+    // ── especulativas: rodam sempre, mas só a do ramo escolhido é lida ──
+    turno: {
+      type: 'choice',
+      instructions: 'SUPONDO que o pedido seja para MUDAR o turno de trabalho: para qual turno ele vai passar?',
+      criteria: { manha: 'Turno da manhã / matutino / começar cedo.',
+                  tarde: 'Turno da tarde / vespertino / noturno.',
+                  indefinido: 'Não dá para saber pelo pedido, ou ele citou os dois.' }
+    },
+    carteira: {
+      type: 'choice',
+      instructions: 'SUPONDO que o pedido seja sobre o SALDO do cartão de benefícios: de qual carteira?',
+      criteria: { voucher: 'Voucher / alimentação / refeição.',
+                  mobilidade: 'Mobilidade / transporte / combustível.',
+                  ambas: 'As duas, ou ele não especificou.' }
+    },
+    periodo: {
+      type: 'choice',
+      instructions: 'SUPONDO que o pedido seja sobre GASTOS já feitos: qual o período?',
+      criteria: { hoje: 'Hoje / ontem / últimos dias.',
+                  semana: 'Esta semana / últimos 7 dias.',
+                  mes: 'Este mês / últimos 30 dias, ou período não dito.' }
+    }
+  }, { cacheSeg: 600 });
+
+  if (!r.ok) return null;                       // sem rede/erro → LLM, como hoje
+  var a = r.answers && r.answers.intencao;
+  if (!a || a.type !== 'choice') return null;
+  var intencao = a.choice, conf = Number(a.confidence);
+  if (intencao === 'nenhuma' || !isFinite(conf)) return null;
+
+  var limite = (intencao === 'turno_definir') ? limA : limL;
+  if (conf < limite) return null;               // incerto → não age, deixa o LLM tratar
+
+  function arg(id, padrao) {
+    var x = r.answers && r.answers[id];
+    return (x && x.type === 'choice' && x.choice) ? x.choice : padrao;
+  }
+
+  var resp = null;
+  try {
+    if (intencao === 'saldo_swile') {
+      var cart = arg('carteira', 'ambas');
+      resp = _finFalarSaldo(cart === 'ambas' ? null : cart);
+    } else if (intencao === 'gastos_swile') {
+      var per = arg('periodo', 'mes');
+      resp = _finFalarGastos(per === 'hoje' ? 1 : (per === 'semana' ? 7 : 30));
+    } else if (intencao === 'turno_consultar') {
+      var ta = (typeof AlertasVoz !== 'undefined' && AlertasVoz.turnoAtual) ? AlertasVoz.turnoAtual() : null;
+      resp = ta ? ('Seu turno atual é o da ' + (ta === 'manha' ? 'manhã' : 'tarde') + '.')
+                : 'Nenhum turno definido ainda. Diga "essa semana vou trabalhar no turno da manhã" (ou da tarde).';
+    } else if (intencao === 'turno_definir') {
+      var tv = arg('turno', 'indefinido');
+      if (tv === 'indefinido') return null;     // ambíguo numa AÇÃO → o LLM que pergunte
+      var rt = definirTurnoTrabalho({ turno: tv });
+      resp = (rt && rt.ok) ? rt.resumo : null;
+    } else if (intencao === 'notificacoes') {
+      resp = resumirNotificacoes({ horas: 12, marcarLidas: true }).resumo;
+    }
+  } catch (e) { return null; }                  // handler falhou → LLM, nunca uma resposta pela metade
+
+  if (!resp) return null;
+  // RASTRO: sem isto não dá para saber, depois, que foi o JEV que atendeu — a mesma lacuna que
+  // tornou cega toda investigação de bug de voz até aqui.
+  try {
+    if (typeof Jarvis !== 'undefined' && Jarvis.registrarEvento) Jarvis.registrarEvento({
+      tool: 'rota:jev:' + intencao, ok: true, ms: r.ms, userEmail: email,
+      resumo: msg.substring(0, 80) + ' → conf ' + conf.toFixed(2) + ' (limiar ' + limite + ')'
+    });
+  } catch (eEv) {}
+  return resp;
+}
+
+/** DIAGNÓSTICO: mostra a análise do JEV CRUA para uma frase — intenção, confiança e a
+ *  distribuição inteira. Serve para calibrar ROTA_LIMIAR_* com frases reais suas. */
+function diagRotaSemantica(args) {
+  args = args || {};
+  var msg = String(args.texto || args.msg || '');
+  if (typeof TypeSafe === 'undefined' || !TypeSafe.temChave()) {
+    return { ok: false, erro: 'TYPESAFE_API_KEY não configurada.' };
+  }
+  var det = _preverRotaDeterministica(msg);
+  var resp = _rotaSemantica(msg, PropertiesService.getScriptProperties().getProperty('OWNER_EMAIL'), true);
+  return { ok: true, frase: msg,
+           rotaDeterministica: det,
+           nota: det === 'nao_coberto' ? 'a regex NÃO pega — é aqui que o JEV entra' : 'a regex já resolve; o JEV nem seria chamado',
+           respostaDoJev: resp };
 }
 
 function _rotaDireta(mensagem, email, isOwner) {
@@ -876,7 +1139,10 @@ function _rotaDireta(mensagem, email, isOwner) {
       return '🌐 Monitores web:\n' + ws.map(function (x) { return '• ' + (x.descricao || x.url); }).join('\n');
     }
   } catch (e) { return null; }
-  return null;
+  // ÚLTIMO RECURSO ANTES DO LLM: nenhuma regex acima reconheceu o pedido. O JEV tenta identificar
+  // a intenção e devolve ao MESMO handler determinístico; não reconhecendo, retorna null e o
+  // fluxo segue para o modelo exatamente como antes.
+  return _rotaSemantica(mensagem, email, isOwner);
 }
 
 /**
@@ -1435,6 +1701,43 @@ function _limparValorTelemetria(v) {
     if (p && !/[\[\]{}]/.test(p)) return p;
   }
   return '';
+}
+
+/** Telemetria → está carregando? true/false/null(desconhecido).
+ *  O [power] do MacroDroid responde em PT: "Ligar" = na tomada / "Desligar" = fora.
+ *  A ORDEM IMPORTA: "desligar" CONTÉM "lig" — o negativo tem que ser testado ANTES.
+ *  FONTE ÚNICA de propósito. Isto vivia duplicado: _avaliarEventosProativos acertava, mas o
+ *  contexto do voice_command tinha a própria lista (charging/carregando/true/ac/usb/plugged) que
+ *  NÃO conhecia "Ligar" — com o cabo na tomada o modelo era informado "Carregando: Não". Bug real
+ *  encontrado em 21/09; duas listas para a mesma pergunta divergem, é só questão de tempo. */
+function _telCarregando(v) {
+  var s = String(_limparValorTelemetria(v) || '').toLowerCase();
+  if (!s) return null;
+  if (/deslig|discharg|false|\bnao\b/.test(s)) return false;
+  if (/lig|charg|true|\bsim\b|\bac\b|usb|plugged|full/.test(s)) return true;
+  return null;
+}
+
+/** Telemetria → { modo, volume }. modo ∈ Normal|Silencioso|Vibrar|null; volume 0-100 ou null.
+ *  O modo_som chega como "[ringer_mode]|100|[vol_ringer]": o magic text do MODO nunca é
+ *  substituído pelo MacroDroid e sobra só o VOLUME. _limparValorTelemetria devolvia "100" e o
+ *  chamador tratava esse número como se fosse o modo — nenhum teste de silencioso/vibrar casava,
+ *  caía no default e AFIRMAVA "Modo de Som: Normal" mesmo com o aparelho no silencioso.
+ *  Número é volume; modo só quando vier TEXTO. Sem texto, modo fica null e quem chama OMITE a
+ *  linha — dizer "não sei" é barato, afirmar o que não se sabe contamina a resposta do modelo. */
+function _telModoSom(v) {
+  var out = { modo: null, volume: null };
+  String(v == null ? '' : v).split('|').forEach(function (parte) {
+    var p = parte.trim();
+    if (!p || /[\[\]{}]/.test(p)) return;                 // magic text não substituído
+    if (/^\d{1,3}$/.test(p)) { if (out.volume === null) out.volume = Number(p); return; }
+    if (out.modo) return;
+    var low = p.toLowerCase();
+    if (/silent|silencioso|sil[êe]ncio|mudo/.test(low)) out.modo = 'Silencioso';
+    else if (/vibrate|vibrar|vibra/.test(low)) out.modo = 'Vibrar';
+    else if (/normal/.test(low)) out.modo = 'Normal';
+  });
+  return out;
 }
 
 function obterStatusDispositivo(token) {
@@ -2626,27 +2929,22 @@ function doPost(e) {
           }
           
           var bat = obterValorResolvido(body.bateria_nivel || body.bateria);
-          var charg = obterValorResolvido(body.carregando);
-          var sound = obterValorResolvido(body.modo_som);
+          var charg = _telCarregando(body.carregando);   // true/false/null — "Ligar"/"Desligar" incluídos
+          var som = _telModoSom(body.modo_som);          // {modo, volume} — número é volume, não modo
           var wifi = obterValorResolvido(body.wifi_nome || body.wifi);
-          
+
           if (bat && precisaStatus) {
             contextLoc += "\n- Nível da Bateria: " + bat.replace('%', '') + "%";
           }
-          if (charg && precisaStatus) {
-            var cL = charg.toLowerCase();
-            var isCharging = (cL.indexOf('charging') !== -1 || cL.indexOf('carregando') !== -1 || cL === 'true' || cL.indexOf('ac') !== -1 || cL.indexOf('usb') !== -1 || cL.indexOf('plugged') !== -1);
-            contextLoc += "\n- Carregando: " + (isCharging ? 'Sim' : 'Não');
+          // null = a telemetria não disse. Omite a linha em vez de afirmar "Não" por omissão.
+          if (charg !== null && precisaStatus) {
+            contextLoc += "\n- Carregando: " + (charg ? 'Sim' : 'Não');
           }
-          if (sound && precisaStatus) {
-            var sL = sound.toLowerCase();
-            var modeSound = 'Normal';
-            if (sL.indexOf('silent') !== -1 || sL.indexOf('silencioso') !== -1 || sL.indexOf('silêncio') !== -1) {
-              modeSound = 'Silencioso';
-            } else if (sL.indexOf('vibrate') !== -1 || sL.indexOf('vibrar') !== -1) {
-              modeSound = 'Vibrar';
-            }
-            contextLoc += "\n- Modo de Som: " + modeSound;
+          if (precisaStatus && som.modo) {
+            contextLoc += "\n- Modo de Som: " + som.modo;
+          }
+          if (precisaStatus && som.volume !== null) {
+            contextLoc += "\n- Volume do toque: " + som.volume + "%";
           }
           if (wifi && precisaStatus) {
             contextLoc += "\n- Conectado ao Wi-Fi: " + wifi;
@@ -2843,6 +3141,7 @@ function doPost(e) {
         var _trn = (_voto === null && _ofr === null && _perdi === null && _fin === null) ? _interpretarTurnoTrabalho(msgVoz) : null;
         var _insV = (_voto === null && _ofr === null && _perdi === null && _fin === null && _trn === null) ? _interpretarInsight(msgVoz) : null;
         var _livre = (_voto === null && _ofr === null && _perdi === null && _fin === null && _trn === null && _insV === null);
+        var _viaJev = false;   // marcado se o roteamento semântico (JEV) atender no lugar do LLM
         var _lembC = _livre ? _interpretarLembreteCondicional(msgVoz) : null;
         var _rot   = (_livre && !_lembC) ? _interpretarRotina(msgVoz) : null;
         if (_fin !== null) {
@@ -2986,7 +3285,13 @@ function doPost(e) {
             respVoz = Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false });
           }
         } else {
-          respVoz = Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false });
+          // A cadeia determinística inteira passou batido. ANTES de gastar 20-40 s no LLM, o JEV
+          // tenta reconhecer a intenção e responder pelo handler determinístico. Null = ele não
+          // reconheceu (ou ficou abaixo do limiar) → LLM, como sempre foi.
+          var _sem = null;
+          try { _sem = _rotaSemantica(msgVoz, emailUser, true); } catch (eSem) { _sem = null; }
+          _viaJev = !!_sem;
+          respVoz = _sem || Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false });
         }
         // QUAL ROTA ATENDEU. Sem isto não dá para saber, depois, se um pedido caiu num atalho
         // determinístico ou no LLM — que é exatamente a pergunta que apareceu em toda investigação
@@ -3011,6 +3316,10 @@ function doPost(e) {
           : _loja              ? 'compras'
           : _lig               ? 'ligar'
           : (_appNome && _appSimples && !_acaoComposta) ? 'abrir_app'
+          // 'jev' e 'llm' dividem o mesmo galho (a cadeia acima falhou); quem separa é _viaJev,
+          // marcado logo onde o roteamento semântico atendeu. Sem isso os dois casos ficariam
+          // indistinguíveis na telemetria — e a pergunta "o JEV está pegando o quê?" não teria dado.
+          : (typeof _viaJev !== 'undefined' && _viaJev) ? 'jev'
           : 'llm';
         try {
           if (typeof Jarvis !== 'undefined' && Jarvis.registrarEvento) Jarvis.registrarEvento({
@@ -4824,7 +5133,85 @@ function _notifAplicarRegras(d) {
     }
     return { regra: r.id, acao: acao, modo: 'briefing' };    // fica guardada, entra no resumo
   }
-  return { regra: null, acao: 'guardar' };
+  // NENHUMA REGRA CASOU. Antes isto virava 'guardar' calado: tudo que o dono ainda não tinha
+  // escrito regra ficava invisível até ele perguntar "o que eu perdi" — inclusive o que valia
+  // interrupção. Escrever uma regra por app não escala, e a regra não lê o CONTEÚDO: a mesma
+  // fonte manda promoção e aviso de fraude. O JEV pontua o quanto AQUELA notificação merece
+  // interromper; a política (limiar, janela de silêncio) continua no código.
+  return _notifTriagemJev(d);
+}
+
+/* ===================== TRIAGEM POR PONTUAÇÃO (JEV / TypeSafe) =====================
+ * Só roda no vácuo deixado pelas regras — regra explícita do dono é política e vence sempre,
+ * sem gastar rede. Aqui é julgamento: "isto merece tocar o alto-falante agora?"
+ *
+ * A pontuação é GUARDADA junto da notificação. Trocar o limiar depois não precisa de nova
+ * inferência (o padrão "judgments into reusable data"): a evidência e o significado da pergunta
+ * não mudaram, só a política de corte.
+ * ============================================================================== */
+var _NOTIF_URGENCIA_LIMIAR = 2.2;   // 0..3 — ver os níveis abaixo
+
+function _notifTriagemJev(d) {
+  if (typeof TypeSafe === 'undefined' || !TypeSafe.temChave()) return { regra: null, acao: 'guardar' };
+  // JANELA DE SILÊNCIO vem ANTES do modelo: fora dela nada fala, por mais urgente que seja.
+  // Perguntar para depois ignorar a resposta seria gastar rede e token à toa.
+  if (!_notifPodeFalar()) return { regra: null, acao: 'guardar', modo: 'briefing', nota: 'fora da janela de fala' };
+
+  var r = TypeSafe.perguntar(
+    { app: String(d.app || ''), titulo: String(d.titulo || ''), mensagem: String(d.texto || '') },
+    { urgencia: {
+        type: 'score',
+        instructions: 'Esta notificação chegou no celular do dono. Ele está no meio de outra coisa e o ' +
+                      'aparelho vai LER ISTO EM VOZ ALTA se a pontuação for alta. O quanto ela merece ' +
+                      'interromper agora, em vez de esperar o resumo do fim do dia?',
+        criteria: [
+          'Promoção, propaganda, newsletter, cupom, novidade de app, curtida ou seguidor novo, notificação de jogo, sugestão automática de conteúdo.',
+          'Informação que ele vai querer ver, mas que não muda nada se ele ler daqui a algumas horas: resumo de notícia, atualização de pedido a caminho, lembrete de evento distante, extrato normal.',
+          'Alguém esperando resposta dele, ou algo com prazo HOJE: mensagem pessoal direta, cobrança de tarefa, reunião começando em minutos, entrega chegando agora, comunicado da escola do filho sobre amanhã.',
+          'Não pode esperar: alerta de segurança ou login desconhecido, dinheiro saindo da conta sem ele reconhecer, código de verificação que ele está usando agora, emergência de saúde ou família, prazo vencendo nas próximas horas.'
+        ]
+      } },
+    { cacheSeg: 900 }
+  );
+
+  if (!r.ok) return { regra: null, acao: 'guardar', erro: r.erro };
+  var a = r.answers && r.answers.urgencia;
+  if (!a || typeof a.score !== 'number') return { regra: null, acao: 'guardar' };
+
+  var lim = Number(PropertiesService.getScriptProperties().getProperty('NOTIF_URGENCIA_LIMIAR') || _NOTIF_URGENCIA_LIMIAR);
+  if (!isFinite(lim) || lim <= 0 || lim > 3) lim = _NOTIF_URGENCIA_LIMIAR;
+
+  var base = { regra: null, via: 'jev', urgencia: Number(a.score.toFixed(2)),
+               confianca: (typeof a.confidence === 'number') ? Number(a.confidence.toFixed(2)) : null,
+               limiar: lim, ms: r.ms };
+  if (a.score < lim) { base.acao = 'guardar'; base.modo = 'briefing'; return base; }
+
+  var falou = false;
+  try {
+    var res = (typeof Jarvis !== 'undefined' && Jarvis.controlarDispositivo)
+      ? Jarvis.controlarDispositivo({ acao: 'falar',
+          texto: (d.app || 'Celular') + '. ' + ((d.titulo || '') + (d.texto ? '. ' + d.texto : '')) }) : null;
+    falou = !!(res && res.status === 'success');
+  } catch (e) {}
+  try {
+    if (typeof Jarvis !== 'undefined' && Jarvis.registrarEvento) Jarvis.registrarEvento({
+      tool: 'notif:jev', ok: falou, ms: r.ms,
+      resumo: 'urg ' + base.urgencia + '/' + lim + ' · ' + String(d.app || '') + ': ' + String(d.titulo || '').substring(0, 60)
+    });
+  } catch (eEv) {}
+  base.acao = 'falar'; base.modo = 'falar'; base.falou = falou;
+  return base;
+}
+
+/** DIAGNÓSTICO: pontuação CRUA do JEV para uma notificação, com a distribuição entre os níveis.
+ *  Serve para calibrar NOTIF_URGENCIA_LIMIAR com notificações reais suas. */
+function diagTriagemNotificacao(args) {
+  args = args || {};
+  if (typeof TypeSafe === 'undefined' || !TypeSafe.temChave()) return { ok: false, erro: 'TYPESAFE_API_KEY não configurada.' };
+  var d = { app: String(args.app || ''), titulo: String(args.titulo || ''), texto: String(args.texto || '') };
+  var r = _notifTriagemJev(d);
+  return { ok: true, entrada: d, resultado: r,
+           decisao: r.acao === 'falar' ? 'FALA EM VOZ ALTA' : 'guarda para o resumo' };
 }
 
 /** CRUD de regras. args {adicionar:{...}} · {remover:id} · {listar:true} · {semear:true} */
@@ -5967,10 +6354,9 @@ function _avaliarEventosProativos(tel, opts) {
   var nivelTxt = _limparValorTelemetria(bruto.bateria_nivel || bruto.bateria || '');
   var nivel = parseInt(String(nivelTxt).replace(/[^\d]/g, ''), 10);
   if (isNaN(nivel) || nivel < 0 || nivel > 100) nivel = null;
-  var cargaTxt = String(_limparValorTelemetria(bruto.carregando || '')).toLowerCase();
   // O [power] do MacroDroid responde em PT: "Ligar" = conectado / "Desligar" = desconectado.
-  var carregando = /deslig|discharg|false|\bnao\b/.test(cargaTxt) ? false
-                 : (/lig|charg|true|\bsim\b|\bac\b|usb|plugged|full/.test(cargaTxt) ? true : null);
+  // Mesma leitura que o contexto do voice_command usa — ver _telCarregando (fonte única).
+  var carregando = _telCarregando(bruto.carregando || '');
   var ssid = _limparValorTelemetria(bruto.wifi_nome || bruto.wifi || '');
   var local = _localPorSsid(ssid);
 
@@ -6623,6 +7009,12 @@ function _diagDispatch(body) {
     diagAppsNotificacao:    (typeof diagAppsNotificacao !== 'undefined') ? diagAppsNotificacao : null,
     configurarRegraNotificacao:(typeof configurarRegraNotificacao !== 'undefined') ? configurarRegraNotificacao : null,
     diagPonto:              (typeof diagPonto !== 'undefined') ? diagPonto : null,
+    // TypeSafe/JEV: só os de LEITURA. configurarTypeSafe grava a chave e fica fora de propósito —
+    // um setter de segredo exposto por HTTP transforma o vazamento do DIAG_TOKEN em troca de chave.
+    diagTypeSafe:           (typeof diagTypeSafe !== 'undefined') ? diagTypeSafe : null,
+    diagSensibilidade:      (typeof diagSensibilidade !== 'undefined') ? diagSensibilidade : null,
+    diagRotaSemantica:      (typeof diagRotaSemantica !== 'undefined') ? diagRotaSemantica : null,
+    diagTriagemNotificacao: (typeof diagTriagemNotificacao !== 'undefined') ? diagTriagemNotificacao : null,
     diagFinanceiro:         (typeof diagFinanceiro !== 'undefined') ? diagFinanceiro : null,
     diagSaldo:              (typeof diagSaldo !== 'undefined') ? diagSaldo : null,
     diagParserFinanceiro:   (typeof diagParserFinanceiro !== 'undefined') ? diagParserFinanceiro : null,

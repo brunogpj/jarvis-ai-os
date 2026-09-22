@@ -45,7 +45,7 @@ function _qaCasos() {
 /** Roda o harness completo. Retorna {total, ok, falhas:[...]} e loga um relatório legível. */
 function rodarQA() {
   if (typeof Gemini === 'undefined' || !Gemini.temChave()) { Logger.log('❌ GEMINI_API_KEY ausente — QA precisa do modelo.'); return; }
-  var email = PropertiesService.getScriptProperties().getProperty('OWNER_EMAIL') || 'dono@exemplo.com';
+  var email = PropertiesService.getScriptProperties().getProperty('OWNER_EMAIL') || '';
   var casos = _qaCasos();
   var ok = 0, falhas = [];
 

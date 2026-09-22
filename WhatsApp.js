@@ -547,7 +547,7 @@ var WhatsApp = (function () {
   // /exec CANÔNICO do deployment versionado (estável). getService().getUrl() é NÃO-CONFIÁVEL
   // aqui (retorna o /dev de OUTRO deployment), então usamos a Script Property WEBHOOK_EXEC_URL
   // (se setada) ou este padrão. Se um dia trocar o deployment, basta atualizar a propriedade.
-  var _EXEC_URL_PADRAO = 'https://script.google.com/macros/s/<DEPLOYMENT_ID>/exec';
+  var _EXEC_URL_PADRAO = '';   // sem padrao: defina WEBHOOK_EXEC_URL
   function _execUrl() {
     var u = _p('WEBHOOK_EXEC_URL');
     if (u && /\/exec$/.test(u)) return u;

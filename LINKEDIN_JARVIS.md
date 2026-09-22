@@ -1,7 +1,7 @@
 # 📣 LinkedIn — Jarvis (AI Personal OS) · Post + Roteiro de Narração
 
 > Material para o vídeo de apresentação do projeto. Baseado em `TESTES_JARVIS.md`.
-> Autor: **Bruno Felipe dos Santos Marques** · dono@exemplo.com
+> Autor: **Bruno Felipe dos Santos Marques**
 
 ---
 

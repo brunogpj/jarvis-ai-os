@@ -401,6 +401,10 @@ var Semantica = (function () {
     return ordenada.concat(cands.slice(_RERANK_CANDIDATOS));
   }
 
+  /* ⚠️ SEM CHAMADORES no projeto (conferido em 22/09). O RAG que o agente usa de verdade é
+   * Jarvis._buscarConhecimento, que faz a PRÓPRIA fusão de palavra-chave + semântico e chama
+   * Semantica.rerank direto. Esta função ficou como referência do RRF puro e é útil para A/B —
+   * mas mexer aqui achando que muda o comportamento em produção não muda nada. */
   function buscarHibrido(consulta, k) {
     k = k || 5;
     var docs = _docsParaBuscar();   // antes: Firestore.listDocs(COL,1000) aqui E DE NOVO dentro de buscar() — 2x o custo

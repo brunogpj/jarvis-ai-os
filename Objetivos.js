@@ -142,7 +142,7 @@ var Objetivos = (function () {
 
 /** Diagnóstico: planeja + executa um objetivo de teste. Rode no editor. */
 function testarObjetivo() {
-  var r = Objetivos.criar('dono@exemplo.com', 'Pesquise as principais novidades do Google Gemini em 2025 e salve um resumo curto no meu wiki.');
+  var r = Objetivos.criar(String(PropertiesService.getScriptProperties().getProperty('OWNER_EMAIL') || ''), 'Pesquise as principais novidades do Google Gemini em 2025 e salve um resumo curto no meu wiki.');
   Logger.log('Plano: ' + JSON.stringify(r.plano));
   var x = Objetivos.executar(r.id);
   Logger.log('Síntese: ' + (x.sintese || x.erro));

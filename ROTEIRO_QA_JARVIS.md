@@ -2,7 +2,7 @@
 
 > Companheiro do `TESTES_JARVIS.md`. Aqui está a **ordem ideal de execução** de uma rodada completa e, em cada bloco, **o que observar** (o sinal de "passou" e a **assinatura de bug**). Marque o Status direto no `TESTES_JARVIS.md`.
 >
-> **Build alvo:** b37 · **URL:** `/exec` `<DEPLOYMENT_ID>…` (NUNCA testar no `/dev`).
+> **Build alvo:** b37 · **URL:** `/exec` `<DEPLOYMENT_ID>` (NUNCA testar no `/dev`).
 > **Princípio:** começar barato (leitura) → escrita reversível → ações externas (com confirmação) → assíncrono → segundo número. **Dispare o que é assíncrono cedo** (Jobs/Objetivos avisam no WhatsApp ~1-2 min depois) e siga testando enquanto roda.
 
 ---

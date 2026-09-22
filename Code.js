@@ -2833,7 +2833,7 @@ function doPost(e) {
       var emailUser = '';
       if (token === voiceToken) {
         isAuthorized = true;
-        emailUser = props.getProperty('OWNER_EMAIL') || 'dono@exemplo.com';
+        emailUser = props.getProperty('OWNER_EMAIL') || '';
       } else {
         var sessaoUser = getSessionUser(token);
         if (sessaoUser && Jarvis._isOwner(sessaoUser.email)) {
@@ -2860,13 +2860,6 @@ function doPost(e) {
           });
         } catch (eDb) {
           Logger.log("Erro ao salvar telemetria_dispositivo: " + eDb.message);
-        }
-        // Inicializa os endereços padrão se não estiverem configurados nas propriedades
-        if (!props.getProperty('CASA_ENDERECO')) {
-          props.setProperty('CASA_ENDERECO', '<endereço de Casa>');
-        }
-        if (!props.getProperty('TRABALHO_ENDERECO')) {
-          props.setProperty('TRABALHO_ENDERECO', '<endereço de Trabalho>');
         }
 
         // Tenta reverter geocódigo da localização atual se vier lat e lon no corpo da requisição
@@ -2951,8 +2944,8 @@ function doPost(e) {
           }
           
           if (precisaLoc) {
-            var casaEnd = _obterEnderecoDaWiki('Casa') || props.getProperty('CASA_ENDERECO') || '<endereço de Casa>';
-            var trabEnd = _obterEnderecoDaWiki('Trabalho') || props.getProperty('TRABALHO_ENDERECO') || '<endereço de Trabalho>';
+            var casaEnd = _obterEnderecoDaWiki('Casa') || props.getProperty('CASA_ENDERECO');
+            var trabEnd = _obterEnderecoDaWiki('Trabalho') || props.getProperty('TRABALHO_ENDERECO');
             contextLoc += "\n- Endereço de Casa salvo: " + casaEnd;
             contextLoc += "\n- Endereço de Trabalho salvo: " + trabEnd;
           }
@@ -3543,7 +3536,7 @@ function doPost(e) {
       var voiceTokenVa = pVa.getProperty('VOICE_API_TOKEN');
       if (!voiceTokenVa) { voiceTokenVa = Utilities.getUuid().replace(/-/g, '') + Utilities.getUuid().replace(/-/g, ''); pVa.setProperty('VOICE_API_TOKEN', voiceTokenVa); }
       var okVa = false, emailVa = '';
-      if (tokVa === voiceTokenVa) { okVa = true; emailVa = pVa.getProperty('OWNER_EMAIL') || 'dono@exemplo.com'; }
+      if (tokVa === voiceTokenVa) { okVa = true; emailVa = pVa.getProperty('OWNER_EMAIL') || ''; }
       else { var suVa = getSessionUser(tokVa); if (suVa && Jarvis._isOwner(suVa.email)) { okVa = true; emailVa = suVa.email; } }
       if (!okVa) return ContentService.createTextOutput("Erro: Não autorizado").setMimeType(ContentService.MimeType.TEXT);
       var mimeVa = String(body.mime || body.mimeType || 'audio/ogg');
@@ -3666,7 +3659,7 @@ function gerenciarPrefDono(args) {
  */
 function diagConversas(args) {
   args = args || {};
-  var email = String(PropertiesService.getScriptProperties().getProperty('OWNER_EMAIL') || 'dono@exemplo.com').trim().toLowerCase();
+  var email = String(PropertiesService.getScriptProperties().getProperty('OWNER_EMAIL') || '').trim().toLowerCase();
   var emailDoc = Firestore.getDoc('emails', email);
   var uid = (emailDoc && emailDoc.uid) ? emailDoc.uid : null;
   if (!uid) return { ok: false, erro: 'uid do dono não encontrado em emails/' + email };
@@ -7083,7 +7076,7 @@ function diagFsDoc(args) {
 function diagApagarConversas(args) {
   args = args || {};
   if (args.confirmar !== true) return { ok: false, erro: 'Exclusão IRREVERSÍVEL. Passe {confirmar:true} para executar.' };
-  var email = String(PropertiesService.getScriptProperties().getProperty('OWNER_EMAIL') || 'dono@exemplo.com').trim().toLowerCase();
+  var email = String(PropertiesService.getScriptProperties().getProperty('OWNER_EMAIL') || '').trim().toLowerCase();
   var emailDoc = Firestore.getDoc('emails', email);
   var uid = (emailDoc && emailDoc.uid) ? emailDoc.uid : null;
   if (!uid) return { ok: false, erro: 'uid do dono não encontrado em emails/' + email };
@@ -7115,7 +7108,7 @@ function diagApagarConversas(args) {
  */
 function diagChat(args) {
   args = args || {};
-  var email = String(PropertiesService.getScriptProperties().getProperty('OWNER_EMAIL') || 'dono@exemplo.com').trim().toLowerCase();
+  var email = String(PropertiesService.getScriptProperties().getProperty('OWNER_EMAIL') || '').trim().toLowerCase();
   var isOwner = Jarvis._isOwner(email);
   var msg = String(args.message || args.mensagem || '').trim();
   if (!msg) return { ok: false, erro: 'informe args.message' };
@@ -7781,4 +7774,27 @@ function verificarWebhooks() {
   var props = PropertiesService.getScriptProperties().getProperties();
   Logger.log('MACRODROID_WEBHOOK_URL=' + props.MACRODROID_WEBHOOK_URL);
   Logger.log('MACRODROID_WEBHOOK_SECRET=' + props.MACRODROID_WEBHOOK_SECRET);
+}
+
+/** Grava a URL /exec da implantação ativa. Ela é o endereço PÚBLICO deste web app
+ *  (access: ANYONE_ANONYMOUS) — por isso saiu do código e vive só em Script Property.
+ *  Pegue com `clasp deployments` e rode UMA VEZ:
+ *    configurarExecUrl({url:'https://script.google.com/macros/s/<ID>/exec'})
+ *  Usada pelas notificações interativas (botões) e pelo apontamento do webhook do WhatsApp. */
+function configurarExecUrl(args) {
+  var u = (args && (args.url || args)) ? String(args.url || args).trim() : '';
+  if (!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(u)) {
+    return { ok: false, erro: 'Informe a URL completa terminando em /exec. Ex.: configurarExecUrl({url:"https://script.google.com/macros/s/<ID>/exec"})' };
+  }
+  PropertiesService.getScriptProperties().setProperty('WEBHOOK_EXEC_URL', u);
+  return { ok: true, configurado: true, url: u };
+}
+
+/** A URL /exec já está gravada? Diz sem revelar a URL inteira (o log pode ser compartilhado). */
+function diagExecUrl() {
+  var u = String(PropertiesService.getScriptProperties().getProperty('WEBHOOK_EXEC_URL') || '');
+  return { ok: true, configurada: !!u,
+           amostra: u ? (u.substring(0, 46) + '…/exec') : null,
+           nota: u ? 'Notificações interativas e webhook do WhatsApp operacionais.'
+                   : 'AUSENTE — rode configurarExecUrl({url:"…"}). Sem ela, os botões da notificação interativa não funcionam.' };
 }

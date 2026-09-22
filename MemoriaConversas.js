@@ -173,7 +173,7 @@ function tickMemoriaConversas() {
 
 /** Diagnóstico: recall semântico nas conversas do dono. Ex.: testarMemoriaConversas('o que decidi sobre o dashboard?'). */
 function testarMemoriaConversas(consulta) {
-  var email = PropertiesService.getScriptProperties().getProperty('OWNER_EMAIL') || 'dono@exemplo.com';
+  var email = PropertiesService.getScriptProperties().getProperty('OWNER_EMAIL') || '';
   var res = MemoriaConversas.buscar(email, consulta || 'o que conversamos sobre o Jarvis?', 5);
   res.forEach(function (r) { Logger.log('• ' + r.score.toFixed(3) + ' · [' + (r.titulo || r.conversaId) + ']\n   ' + String(r.trecho).substring(0, 180).replace(/\n/g, ' ') + '…'); });
   return res;

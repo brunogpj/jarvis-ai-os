@@ -15,7 +15,7 @@ Projeto Google Apps Script gerenciado localmente via clasp.
 | Nome no Drive | `App_Web_Aplication` |
 | Script ID | `<SCRIPT_ID>` |
 | Editor | https://script.google.com/d/<SCRIPT_ID>/edit |
-| Dono | dono@exemplo.com |
+| Dono | <seu-email> |
 | Pasta local | `C:\Users\Bruno\projetos\Web_App_Projeto` |
 | Runtime | V8, timezone `America/Sao_Paulo` |
 | Web App | `executeAs: USER_DEPLOYING`, `access: ANYONE_ANONYMOUS` |
@@ -135,7 +135,7 @@ tráfego interno) → rate limit global (240/min) → webhook da Evolution
 ```powershell
 node -v                                  # Node 20+
 npm install -g @google/clasp             # se a CLI divergir, usar @2.4.2
-clasp login                              # entrar como dono@exemplo.com
+clasp login                              # entrar como <seu-email>
 ```
 
 Pré-requisito: habilitar a Apps Script API em

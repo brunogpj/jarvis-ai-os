@@ -5197,7 +5197,16 @@ function _notifAplicarRegras(d) {
  * inferência (o padrão "judgments into reusable data"): a evidência e o significado da pergunta
  * não mudaram, só a política de corte.
  * ============================================================================== */
-var _NOTIF_URGENCIA_LIMIAR = 2.2;   // 0..3 — ver os níveis abaixo
+/* Corte em 2.0 porque 2.0 É o nível 2 ("alguém esperando resposta dele, ou prazo HOJE") — o
+ * limiar ancora no significado do nível, não num número escolhido a esmo.
+ * MEDIDO de verdade contra o jev-1.13.0 em 21/09, com notificações no formato real:
+ *   Shopee "MEGA OFERTA" 0.05 · Instagram "novo seguidor" 0.00 · G1 "Resumo do dia" 1.00
+ *   Agenda Edu "Atividade escolar amanhã" 1.98 · WhatsApp "consegue me ligar? é urgente" 2.16
+ *   Itaú "Compra não reconhecida R$ 2.400" 3.00
+ * O primeiro corte que testei (2.2) silenciava o pedido urgente de ligação por 0.04 — errado:
+ * é exatamente o caso que justifica interromper. A margem entre 1.98 e 2.16 é estreita, então
+ * este número é um PONTO DE PARTIDA: calibre com as suas notificações via diagTriagemNotificacao. */
+var _NOTIF_URGENCIA_LIMIAR = 2.0;   // 0..3 — ver os níveis abaixo
 
 function _notifTriagemJev(d) {
   if (typeof TypeSafe === 'undefined' || !TypeSafe.temChave()) return { regra: null, acao: 'guardar' };

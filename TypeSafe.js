@@ -109,12 +109,39 @@ var TypeSafe = (function () {
   return { perguntar: perguntar, noul: noul, temChave: temChave, URL: TYPESAFE_URL };
 })();
 
-/** Configura a chave da API. Rode UMA VEZ no editor; a chave fica só nas Script Properties. */
+/** Configura a chave da API. A chave fica SÓ nas Script Properties, nunca no código.
+ *
+ * ATENÇÃO — o botão "Executar" do editor NÃO passa argumentos: rodar `configurarTypeSafe` pelo
+ * menu cai sempre neste erro. A saída certa é uma função-ponte TEMPORÁRIA (ver instrucoesTypeSafe),
+ * que você apaga logo depois. NÃO cole a chave dentro deste arquivo para contornar: aconteceu em
+ * 21/09, a chave foi parar no corpo desta mensagem de erro e só não vazou para o git porque o
+ * `clasp push` seguinte sobrescreveu o arquivo por acaso. */
 function configurarTypeSafe(args) {
   var k = (args && (args.chave || args.key || args)) ? String(args.chave || args.key || args).trim() : '';
-  if (!k) return { ok: false, erro: 'Informe a chave: configurarTypeSafe({chave:"..."})' };
+  if (!k) return { ok: false, erro: 'Sem argumento. O editor não passa args pelo botão Executar — rode instrucoesTypeSafe() para ver como fazer. NÃO cole a chave neste arquivo.' };
+  if (k.indexOf('...') !== -1 || k.length < 20) return { ok: false, erro: 'Isso não parece uma chave.' };
   PropertiesService.getScriptProperties().setProperty('TYPESAFE_API_KEY', k);
-  return { ok: true, configurado: true, tamanho: k.length };
+  return { ok: true, configurado: true, tamanho: k.length, proximoPasso: 'Rode diagTypeSafe() para confirmar.' };
+}
+
+/** Imprime o passo a passo de como gravar a chave sem deixá-la no código. */
+function instrucoesTypeSafe() {
+  var txt = [
+    '1. Crie uma função TEMPORÁRIA em qualquer arquivo .gs:',
+    '',
+    '     function _bootTypeSafe() {',
+    '       return configurarTypeSafe({ chave: "COLE_A_CHAVE_AQUI" });',
+    '     }',
+    '',
+    '2. Selecione _bootTypeSafe no menu e clique em Executar.',
+    '3. Rode diagTypeSafe() — deve voltar ok:true com o nome do modelo.',
+    '4. APAGUE a função _bootTypeSafe. A chave já está nas Script Properties;',
+    '   deixá-la no código é o que o projeto inteiro evita.',
+    '',
+    'Chave gravada agora? ' + (String(PropertiesService.getScriptProperties().getProperty('TYPESAFE_API_KEY') || '') ? 'SIM' : 'NÃO')
+  ].join('\n');
+  Logger.log(txt);
+  return txt;
 }
 
 /** DIAGNÓSTICO: a API responde? Usa uma pergunta trivial de ida-e-volta (custo mínimo). */

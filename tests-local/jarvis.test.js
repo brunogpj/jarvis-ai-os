@@ -948,7 +948,7 @@ var T0735 = Date.UTC(2026, 8, 23, 10, 35);  // 07:35 BRT
 
 test('Notificação: catraca cortada vira QUEM e QUANDO, sem parar no nome', function () {
   var s = corpoSandbox();
-  var f = s._notifCorpoFalavel('Catracas | Entrada - Saída: Agenda Edu', 'Informamos que o(a) aluno(a) FULANA L...', T0735);
+  var f = s._notifCorpoFalavel('Catracas | Entrada - Saída: Agenda Edu', 'Informamos que o(a) aluno(a) ANA L...', T0735);
   assert.strictEqual(f, 'Catraca da escola: Ana, às 07:35.');
   assert.ok(!/entrad|sa[ií]d/i.test(f.replace('Catraca da escola', '')), 'NÃO afirma entrada/saída: o texto que diria foi cortado');
 });

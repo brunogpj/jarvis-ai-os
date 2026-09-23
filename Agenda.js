@@ -49,6 +49,9 @@ var Agenda = (function () {
         try { Firestore.deleteDoc(COL, t.id); rem++; } catch (e) {}
       }
     });
+    // 'success' com 0 removidas era mentira que o modelo repetia: em 23/09 ele "cancelou" uma tarefa
+    // que já não existia e anunciou "foi cancelada". Nada removido = diz que nada foi removido.
+    if (!rem) return { status: 'nao_encontrada', removidas: 0, erro: 'Nenhuma tarefa agendada encontrada com "' + idOuDesc + '". Nada foi cancelado.' };
     return { status: 'success', removidas: rem };
   }
 

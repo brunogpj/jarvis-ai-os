@@ -131,10 +131,19 @@ var AlertasVoz = (function () {
   function cancelar(idOuTrecho) {
     var alvo = String(idOuTrecho || '').toLowerCase().trim();
     if (!alvo) return { ok: false, erro: 'Informe o id ou um trecho do texto.' };
-    var arr = _ler(), antes = arr.length;
-    arr = arr.filter(function (a) { return !(a.id === idOuTrecho || String(a.texto || '').toLowerCase().indexOf(alvo) !== -1); });
+    var arr = _ler(), saiu = [];
+    arr = arr.filter(function (a) {
+      var casa = (a.id === idOuTrecho || String(a.texto || '').toLowerCase().indexOf(alvo) !== -1);
+      if (casa) saiu.push({ id: a.id, hora: _hhmm(Number(a.hora), Number(a.minuto || 0)), texto: String(a.texto || '').substring(0, 60) });
+      return !casa;
+    });
+    /* HONESTO SOBRE O QUE FEZ. Devolvia { ok: true } mesmo sem remover nada — e o modelo lia "ok" e
+     * anunciava sucesso. Em 23/09 ele pediu para cancelar dois alertas, passou um id só, removeu UM
+     * e respondeu "os alertas foram cancelados". Agora: nada removido = ok:false com o motivo; e a
+     * lista exata do que saiu, para não dar margem a generalizar. */
+    if (!saiu.length) return { ok: false, removidos: 0, erro: 'Nenhum alerta encontrado com "' + idOuTrecho + '". Nada foi cancelado.' };
     _salvar(arr);
-    return { ok: true, removidos: antes - arr.length };
+    return { ok: true, removidos: saiu.length, cancelados: saiu };
   }
 
   // Handler do tick (1 min): dispara os alertas cujo HH:MM (e dia) batem agora.

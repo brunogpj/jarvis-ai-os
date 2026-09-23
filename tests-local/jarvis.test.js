@@ -1143,3 +1143,34 @@ test('Alerta: mesmo texto em horário DIFERENTE continua sendo outro alerta', fu
   s.AlertasVoz.criar({ hora: 15, texto: 'beba agua' });
   assert.strictEqual(s.AlertasVoz.listar().length, 2);
 });
+
+// ───────────────────────── 🤥 Ferramentas de cancelar não podem mentir ─────────────────────────
+// Devolviam sucesso sem remover nada; o modelo lia "ok" e anunciava "foi cancelada" (23/09, 2 vezes).
+test('Cancelar alerta: nada encontrado = ok:false e diz que nada foi cancelado', function () {
+  var s = criarSandbox();
+  var r = s.AlertasVoz.cancelar('id-que-nao-existe');
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.removidos, 0);
+  assert.match(r.erro, /Nada foi cancelado/);
+});
+
+test('Cancelar alerta: devolve EXATAMENTE quais saíram, para não generalizar', function () {
+  var s = criarSandbox();
+  var a = s.AlertasVoz.criar({ hora: 9, texto: 'alerta um' }).alerta;
+  s.AlertasVoz.criar({ hora: 10, texto: 'alerta dois' });
+  var r = s.AlertasVoz.cancelar(a.id);
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.removidos, 1);
+  assert.strictEqual(r.cancelados.length, 1, 'um só — o modelo disse "os alertas" quando era um');
+  assert.strictEqual(r.cancelados[0].id, a.id);
+  assert.strictEqual(s.AlertasVoz.listar().length, 1, 'o outro continua');
+});
+
+test('Cancelar tarefa agendada: nada encontrado NÃO é success', function () {
+  var s = makeSandbox({ docs: [] });
+  s.Firestore.deleteDoc = function () {};
+  loadGasFile('Agenda.js', s);
+  var r = s.Agenda.cancelar('95590c31-inexistente');
+  assert.notStrictEqual(r.status, 'success', 'foi assim que "cancelou" uma tarefa que já não existia');
+  assert.strictEqual(r.removidas, 0);
+});

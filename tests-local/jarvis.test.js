@@ -932,3 +932,134 @@ test('Rerank: lista com 0 ou 1 candidato nao gasta rede', function () {
   assert.strictEqual(s.Semantica.rerank('p', []), null);
   assert.strictEqual(chamou, false, 'nao ha o que reordenar');
 });
+
+// ───────────────────────── 🔔 Notificação cortada NA ORIGEM (Agenda Edu) ─────────────────────────
+// Conferido por adb em 23/09: o app entrega o texto truncado até no android.bigText. O texto
+// completo não existe na notificação — o Jarvis parava de falar no meio do nome.
+function corpoSandbox() {
+  var s = makeSandbox({});
+  s.Utilities.formatDate = function (d) {        // BRT fixo para o teste (UTC-3)
+    var x = new Date(d); return String((x.getUTCHours() + 21) % 24).padStart(2, '0') + ':' + String(x.getUTCMinutes()).padStart(2, '0');
+  };
+  loadGasFile('TypeSafe.js', s); loadGasFile('Code.js', s);
+  return s;
+}
+var T0735 = Date.UTC(2026, 8, 23, 10, 35);  // 07:35 BRT
+
+test('Notificação: catraca cortada vira QUEM e QUANDO, sem parar no nome', function () {
+  var s = corpoSandbox();
+  var f = s._notifCorpoFalavel('Catracas | Entrada - Saída: Agenda Edu', 'Informamos que o(a) aluno(a) FULANA L...', T0735);
+  assert.strictEqual(f, 'Catraca da escola: Ana, às 07:35.');
+  assert.ok(!/entrad|sa[ií]d/i.test(f.replace('Catraca da escola', '')), 'NÃO afirma entrada/saída: o texto que diria foi cortado');
+});
+
+test('Notificação: corte no MEIO da palavra some a palavra pela metade e avisa', function () {
+  var s = corpoSandbox();
+  var f = s._notifCorpoFalavel('Central de Notificações', 'Avisos - Prezado(a) responsável, A nota do(a) a...', T0735);
+  assert.ok(!/\ba\.\.\./.test(f), 'o "a..." pendurado não pode ser lido');
+  assert.match(f, /O restante está no aplicativo\.$/);
+});
+
+test('Notificação: reticência de ESTILO (com espaço) não come palavra inteira', function () {
+  var s = corpoSandbox();
+  var f = s._notifCorpoFalavel('Palavra do dia', 'Não temas, porque eu sou contigo ...', T0735);
+  assert.match(f, /contigo/, 'palavra completa antes de " ..." fica');
+});
+
+test('Notificação: texto completo passa intacto', function () {
+  var s = corpoSandbox();
+  assert.strictEqual(s._notifCorpoFalavel('Comunicado', 'Reunião de pais amanhã às 19h.', T0735),
+                     'Comunicado. Reunião de pais amanhã às 19h.');
+});
+
+// ───────────────────────── 🗓️ Briefings: colisão e a função duplicada ─────────────────────────
+function alertasSandbox(alertas, hhmm, dow) {
+  var s = makeSandbox({ props: { ALERTAS_VOZ: JSON.stringify(alertas), ALERTA_TOLERANCIA_MIN: '10' } });
+  var falas = [];
+  s.Utilities.formatDate = function (d, tz, fmt) {
+    if (fmt === 'H') return String(Number(hhmm.split(':')[0]));
+    if (fmt === 'm') return String(Number(hhmm.split(':')[1]));
+    if (fmt === 'u') return String(dow === 0 ? 7 : dow);
+    if (fmt === 'yyyy-MM-dd') return '2026-09-24';
+    return hhmm;
+  };
+  s.LockService = { getScriptLock: function () { return { tryLock: function () { return true; }, releaseLock: function () {} }; } };
+  s.ScriptApp = { getProjectTriggers: function () { return []; }, deleteTrigger: function () {},
+    newTrigger: function () { return { timeBased: function () { return { everyMinutes: function () { return { create: function () {} }; } }; } }; } };
+  s.Jarvis.controlarDispositivo = function (a) { falas.push(a.texto); return { status: 'success' }; };
+  s.Jarvis.ask = function () { return 'noticias do dia'; };
+  s.Jarvis.registrarEvento = function (ev) { (s._eventos = s._eventos || []).push(ev); };
+  loadGasFile('AlertasVoz.js', s);
+  s._falas = falas;
+  return s;
+}
+function briefTurno(h, m) { return { id: 'b1', hora: h, minuto: m, dias: [], texto: 'noticias', dinamico: true, ativo: true, ult: '', tag: 'briefing' }; }
+var BRIEF_MANHA = { id: 'b2', hora: 8, minuto: 30, dias: [], texto: 'panorama', dinamico: true, ativo: true, ult: '', tag: 'briefing_manha' };
+
+test('Briefing: o do TURNO cede quando colide com briefing de horário fixo (turno manhã)', function () {
+  var s = alertasSandbox([briefTurno(7, 30), BRIEF_MANHA], '07:31', 3);
+  s.AlertasVoz.tick();
+  assert.strictEqual(s._falas.length, 0, '07:30 NÃO fala: as mesmas notícias sairiam de novo às 08:30');
+  assert.ok((s._eventos || []).some(function (e) { return e.tool === 'alertaVoz:suprimido'; }), 'deixa rastro');
+});
+
+test('Briefing: sem colisão (turno tarde, 13:30) o do turno fala normalmente', function () {
+  var s = alertasSandbox([briefTurno(13, 30), BRIEF_MANHA], '13:31', 3);
+  s.AlertasVoz.tick();
+  assert.strictEqual(s._falas.length, 1, 'papel distinto na tarde: segue valendo');
+});
+
+test('Briefing: reposicionarBriefing tem UMA definição e devolve o campo que definirTurno lê', function () {
+  var src = require('fs').readFileSync(require('path').join(__dirname, '..', 'AlertasVoz.js'), 'utf8');
+  assert.strictEqual((src.match(/function reposicionarBriefing\(turno\)/g) || []).length, 1,
+    'duas definições = a de baixo vence e o anti-colisão de cima nunca roda');
+  var s = alertasSandbox([briefTurno(7, 30)], '07:00', 3);
+  s.AlertasVoz.definirTurno('manha');
+  var r = s.AlertasVoz.reposicionarBriefing('manha');
+  assert.ok(r.ok);
+  assert.ok(r.briefing, 'sem .briefing o Jarvis diria "seu briefing mudou para as undefined"');
+});
+
+// ───────────────────────── 👋 Presença não repete o ponto ─────────────────────────
+test('Presença: "Bom trabalho" não repete ponto já alertado, e sai uma vez por expediente', function () {
+  var src = require('fs').readFileSync(require('path').join(__dirname, '..', 'Code.js'), 'utf8');
+  assert.ok(src.indexOf("' Lembre-se de bater o ponto.'") === -1, 'o ramo que lembrava de ponto JÁ alertado saiu');
+  assert.ok(src.indexOf("_governanca('chegou_trabalho', { cooldownMin: 720") !== -1, 'uma saudação por expediente');
+});
+
+// ───────────────────────── 🧠 Portão do JEV: agendar fala só com intenção real ─────────────────────────
+function gateSandbox(prob, comChave) {
+  var chamou = 0;
+  var s = makeSandbox({
+    props: comChave === false ? {} : { TYPESAFE_API_KEY: 'k' },
+    fetch: function () { chamou++; return { code: 200, body: { answers: { j: { type: 'noul', noul: prob } } } }; }
+  });
+  loadGasFile('TypeSafe.js', s); loadGasFile('Jarvis.js', s);
+  s._chamou = function () { return chamou; };
+  return s;
+}
+
+test('Portão JEV: "seja meu despertador AGORA" NÃO recebe a ferramenta de agendar (o bug de 21/09)', function () {
+  var s = gateSandbox(0.15);   // valor REAL medido para esta frase em 23/09
+  var p = s.Jarvis._toolsPermitidas('Voce e meu despertador agora. Me de um bom dia caloroso, anuncie a hora atual e fala as noticias');
+  assert.ok(!p || !p.agendarAlertaVoz, 'sem a ferramenta, o modelo não tem como congelar a resposta num alarme');
+});
+
+test('Portão JEV: "todo dia útil às 8h me fala minha agenda" GANHA a ferramenta (a regex recusava)', function () {
+  var s = gateSandbox(0.95);   // valor REAL medido em 23/09
+  var p = s.Jarvis._toolsPermitidas('todo dia util as 8h me fala minha agenda no celular');
+  assert.ok(p && p.agendarAlertaVoz, 'a hora vinha ANTES do verbo e a regex não casava');
+});
+
+test('Portão JEV: sem chave, vale a regex antiga (comportamento anterior)', function () {
+  var s = gateSandbox(0.99, false);
+  var p = s.Jarvis._toolsPermitidas('me fala a hora');
+  assert.ok(p && p.agendarAlertaVoz, 'regex antiga liberava — e sem JEV continua liberando');
+  assert.strictEqual(s._chamou(), 0);
+});
+
+test('Portão JEV: mensagem sem sinal de horário não gasta chamada', function () {
+  var s = gateSandbox(0.5);
+  s.Jarvis._toolsPermitidas('resuma meus emails nao lidos');
+  assert.strictEqual(s._chamou(), 0, 'o JEV só é consultado quando há sinal de agenda');
+});

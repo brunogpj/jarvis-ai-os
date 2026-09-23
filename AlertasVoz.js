@@ -164,6 +164,33 @@ var AlertasVoz = (function () {
         if (a.dias && a.dias.length && a.dias.indexOf(dow) === -1) return;
         var carimbo = dia + 'T' + a.hora + ':' + (a.minuto || 0);   // uma vez por dia, por alerta
         if (a.ult === carimbo) return;
+        /* COLISÃO DE BRIEFINGS. O 'briefing' (tag) ACOMPANHA O TURNO: com turno da tarde ele cai às
+         * 13:30, antes do expediente — papel distinto, útil. Com turno da MANHÃ cai às 07:30 e
+         * colide com o briefing_manha das 08:30: as mesmas manchetes duas vezes em uma hora.
+         * Medido de 20 a 23/09, todos os dias. E o das 07:30 era o pior dos dois: sem limite de
+         * tamanho, gerou o áudio de 8,8 MB e 199 s que quase bateu no teto do GAS.
+         * Regra: havendo um briefing_manha ativo no MESMO dia a até 120 min, o do turno cede.
+         * Na tarde não há colisão e ele segue normal — por isso é regra, não exclusão do alerta.
+         * Marca o dia como resolvido para não reavaliar a cada tick da janela, e deixa rastro. */
+        if (a.tag === 'briefing') {
+          var _colide = arr.some(function (b) {
+            // Qualquer briefing de horário FIXO (briefing_manha, _tarde, _noite, _extra) — não só
+            // o da manhã. O incidente de 14/09 foi com um briefing_tarde.
+            if (b === a || b.ativo === false || String(b.tag || '').indexOf('briefing_') !== 0) return false;
+            if (b.dias && b.dias.length && b.dias.indexOf(dow) === -1) return false;
+            return Math.abs((Number(b.hora) * 60 + Number(b.minuto || 0)) - alvo) <= 120;
+          });
+          if (_colide) {
+            a.ult = carimbo; mudou = true;
+            try {
+              if (typeof Jarvis !== 'undefined' && Jarvis.registrarEvento) Jarvis.registrarEvento({
+                tool: 'alertaVoz:suprimido', ok: true, ms: 0,
+                resumo: 'briefing ' + _hhmm(Number(a.hora), Number(a.minuto || 0)) + ' cede a um briefing de horario fixo (mesmas noticias em menos de 2h)'
+              });
+            } catch (eSp) {}
+            return;
+          }
+        }
         // GUARDA DE CORRIDA (CacheService, atômico entre execuções): impede dois ticks simultâneos
         // de falarem o mesmo alerta. TTL CURTO de propósito — 90s, não 30 min. Com 30 min, uma fala
         // que falhasse ficava bloqueada para o resto da janela de tolerância e o alerta simplesmente
@@ -327,41 +354,14 @@ var AlertasVoz = (function () {
     });
     if (!movidos.length) return { ok: false, erro: 'Nenhum alerta dinâmico/briefing encontrado para mover.', turno: t };
     _salvar(arr); _garantirTick();
-    return { ok: true, turno: t, entradaPonto: _hhmm(entrada[0], entrada[1]), antecedenciaMin: ante,
-             hora: _hhmm(h, m), movidos: movidos };
+    // `briefing` e `entrada` são os nomes que definirTurno LÊ ("seu briefing mudou para as X");
+    // `hora` e `entradaPonto` ficam por compatibilidade. Havia uma SEGUNDA cópia desta função
+    // logo abaixo, mais antiga e sem o anti-colisão — em JS a última declaração vence, então
+    // o anti-colisão escrito depois do incidente de 14/09 NUNCA rodou. Removida em 23/09.
+    return { ok: true, turno: t, entrada: _hhmm(entrada[0], entrada[1]), entradaPonto: _hhmm(entrada[0], entrada[1]),
+             antecedenciaMin: ante, briefing: _hhmm(h, m), hora: _hhmm(h, m), movidos: movidos };
   }
 
-  /**
-   * BRIEFING ATRELADO AO TURNO: move o(s) alerta(s) DINÂMICO(s) para X minutos ANTES do ponto de
-   * ENTRADA do turno vigente (X = Script Property BRIEFING_ANTECEDENCIA_MIN, default 30).
-   * Antes o briefing era fixo (08:20) — no turno da tarde ele tocava 6h depois de fazer sentido, e
-   * mesmo na manhã caía DEPOIS do ponto das 08:00. Agora acompanha o turno sozinho.
-   * Preserva os DIAS e o TEXTO do alerta (é o briefing que o dono escreveu); só muda o horário.
-   */
-  function reposicionarBriefing(turno) {
-    var t = _TURNOS[turno] ? turno : (interpretarTurno(turno) || turnoAtual());
-    if (!t || !_TURNOS[t]) return { ok: false, erro: 'Turno não definido — rode definirTurno primeiro.' };
-    var entrada = _TURNOS[t].pontos[0];                       // [hora, minuto, rótulo] = ponto de ENTRADA
-    var ante = Number(PropertiesService.getScriptProperties().getProperty('BRIEFING_ANTECEDENCIA_MIN') || 30);
-    var tot = entrada[0] * 60 + entrada[1] - ante;
-    if (tot < 0) tot += 24 * 60;                              // antecedência que atravessa a meia-noite
-    var h = Math.floor(tot / 60), m = tot % 60;
-    var arr = _ler(), movidos = [];
-    arr.forEach(function (a) {
-      // SO o briefing atrelado ao turno se move. Antes o filtro pegava QUALQUER alerta
-      // dinamico -- com tres briefings no dia (manha, tarde, noite) os tres seriam
-      // arrastados para o mesmo horario na primeira troca de turno. Os de horario fixo
-      // usam tag briefing_manha / briefing_noite e ficam onde estao.
-      if (a.tag === 'briefing') {
-        movidos.push({ id: a.id, de: _hhmm(a.hora, a.minuto || 0), para: _hhmm(h, m) });
-        a.hora = h; a.minuto = m; a.tag = 'briefing';         // tag p/ achar com precisão nas próximas vezes
-      }
-    });
-    if (!movidos.length) return { ok: false, erro: 'Nenhum alerta dinâmico (briefing) encontrado.' };
-    _salvar(arr); _garantirTick();
-    return { ok: true, turno: t, entrada: _hhmm(entrada[0], entrada[1]), antecedenciaMin: ante,
-             briefing: _hhmm(h, m), movidos: movidos };
-  }
 
   /** Turno vigente ('manha'|'tarde'|null) — lido da property gravada em definirTurno. */
   function turnoAtual() {

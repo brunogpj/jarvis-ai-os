@@ -3457,9 +3457,17 @@ function doPost(e) {
       var vtDb = pDb.getProperty('VOICE_API_TOKEN');
       if (tokDb !== vtDb) return ContentService.createTextOutput("Não autorizado").setMimeType(ContentService.MimeType.TEXT);
       try {
+        // n = quantos eventos (padrão 30, teto 200). Com 30, uma investigação de redundância não
+        // enxergava nem um dia inteiro — briefing, ponto e presença de manhã já ocupavam tudo.
+        var nEv = Math.min(200, Math.max(1, Number(body.n) || 30));
         var telemetria = Firestore.listDocs('telemetria_dispositivo', 10);
-        var eventos = Firestore.listDocs('agente_eventos', 30);
-        return ContentService.createTextOutput(JSON.stringify({ telemetria: telemetria, eventos: eventos })).setMimeType(ContentService.MimeType.JSON);
+        var eventos = Firestore.listDocs('agente_eventos', nEv);
+        var saida = { telemetria: telemetria, eventos: eventos };
+        // Opcionais, só leitura. Alertas: sem eles não dá para ver QUEM agenda cada fala repetida.
+        // Notificações: o texto que de fato chegou, para distinguir corte da ORIGEM de corte nosso.
+        if (body.alertas) { try { saida.alertas = (typeof AlertasVoz !== 'undefined') ? AlertasVoz.listar() : null; } catch (eA) { saida.alertas = { erro: eA.message }; } }
+        if (body.notificacoes) { try { saida.notificacoes = Firestore.listDocs(_NOTIF_COL, Math.min(200, Number(body.notificacoes) || 40)); } catch (eN) { saida.notificacoes = { erro: eN.message }; } }
+        return ContentService.createTextOutput(JSON.stringify(saida)).setMimeType(ContentService.MimeType.JSON);
       } catch (errDb) {
         return ContentService.createTextOutput("Erro: " + errDb.message).setMimeType(ContentService.MimeType.TEXT);
       }
@@ -4449,6 +4457,44 @@ function _notifTxt(v) {
   return t.replace(/\s+/g, ' ').substring(0, 400);
 }
 
+/* O QUE UMA NOTIFICAÇÃO FALA — fonte única para os quatro caminhos que falam notificação
+ * (registro direto, regra, triagem JEV e escalonamento). Antes cada um montava a frase do seu
+ * jeito, e nenhum sabia lidar com texto cortado.
+ *
+ * O CORTE VEM DA ORIGEM, NÃO DAQUI. Conferido por adb em 23/09: o Agenda Edu entrega
+ * "Informamos que o(a) aluno(a) FULANA L..." tanto em android.text quanto em android.bigText —
+ * a versão EXPANDIDA já chega truncada. O texto completo só existe dentro do app. Nenhuma macro
+ * recupera o que não foi enviado. O Jarvis lia a frase como veio e parava no meio do nome.
+ *
+ * O que dá para fazer é falar algo ÚTIL com o que chegou:
+ *  - reticência COLADA numa palavra ("L...") é corte no meio da palavra: some a palavra pela
+ *    metade e a reticência. Reticência com espaço antes é estilo do app: some só a reticência.
+ *  - catraca da escola: o que um responsável precisa é QUEM e QUANDO. O nome sai do texto e o
+ *    horário é o de chegada da notificação (segundos depois da catraca). NÃO diz se foi entrada
+ *    ou saída: o título é genérico ("Entrada - Saída") e o texto que diria foi cortado — inferir
+ *    pelo horário seria afirmar o que não se sabe, sobre uma criança.
+ *  - demais cortes: avisa que o resto está no app, em vez de terminar a frase no vazio. */
+function _notifCorpoFalavel(titulo, texto, em) {
+  var t = String(titulo || '').trim();
+  var x = String(texto || '').trim();
+  var cortado = false;
+  if (/\S(\.\.\.|…)$/.test(x)) { x = x.replace(/\s*\S*(\.\.\.|…)$/, '').trim(); cortado = true; }
+  else if (/\s(\.\.\.|…)$/.test(x)) { x = x.replace(/\s*(\.\.\.|…)$/, '').trim(); cortado = true; }
+
+  if (/catraca/i.test(t)) {
+    var nome = (x.match(/alun[oa]\s*\(?[oa]?\)?\s+([A-Za-zÀ-ÿ]{2,})/) || [])[1];
+    var hora = '';
+    try { if (em) hora = Utilities.formatDate(new Date(Number(em)), 'America/Sao_Paulo', 'HH:mm'); } catch (eH) {}
+    if (nome) {
+      nome = nome.charAt(0).toUpperCase() + nome.slice(1).toLowerCase();
+      return 'Catraca da escola: ' + nome + (hora ? ', às ' + hora : '') + '.';
+    }
+  }
+  var corpo = t + (x ? (t ? '. ' : '') + x : '');
+  if (cortado) corpo += '. O restante está no aplicativo.';
+  return corpo;
+}
+
 function _notifListaProp(chave) {
   var v = String(PropertiesService.getScriptProperties().getProperty(chave) || '').trim();
   if (!v) return [];
@@ -4518,7 +4564,7 @@ function registrarNotificacao(d) {
                   (_notifNaLista(_notifListaProp('NOTIF_FALAR_APPS'), app, pacote) === true);
   var falou = null;
   if (querFalar && _notifPodeFalar()) {
-    var fala = 'Notificação do ' + (app || 'celular') + '. ' + (titulo || '') + (texto ? '. ' + texto : '');
+    var fala = 'Notificação do ' + (app || 'celular') + '. ' + _notifCorpoFalavel(titulo, texto, agora);
     try {
       var r = (typeof Jarvis !== 'undefined' && Jarvis.controlarDispositivo)
         ? Jarvis.controlarDispositivo({ acao: 'falar', texto: fala }) : null;
@@ -5215,7 +5261,8 @@ function _notifAplicarRegras(d) {
     var r = regras[i];
     if (!_notifRegraCasa(r, d.app, d.pacote, d.titulo, d.texto)) continue;
     var acao = String(r.acao || 'avisar').toLowerCase();
-    var frase = r.texto ? String(r.texto) : ((d.titulo || '') + (d.texto ? '. ' + d.texto : ''));
+    // Texto próprio da regra vence (é política do dono); senão, a fonte única de fala.
+    var frase = r.texto ? String(r.texto) : _notifCorpoFalavel(d.titulo, d.texto, d.em || Date.now());
 
     if (acao === 'ignorar') return { regra: r.id, acao: 'ignorar' };
 
@@ -5345,7 +5392,7 @@ function _notifEscalaSePreciso(d) {
   try {
     var res = (typeof Jarvis !== 'undefined' && Jarvis.controlarDispositivo)
       ? Jarvis.controlarDispositivo({ acao: 'falar',
-          texto: 'Atenção. ' + (d.app || 'Celular') + '. ' + ((d.titulo || '') + (d.texto ? '. ' + d.texto : '')) }) : null;
+          texto: 'Atenção. ' + (d.app || 'Celular') + '. ' + _notifCorpoFalavel(d.titulo, d.texto, d.em || Date.now()) }) : null;
     out.escalou = !!(res && res.status === 'success');
   } catch (e) {}
   try {
@@ -5378,7 +5425,7 @@ function _notifTriagemJev(d) {
   try {
     var res = (typeof Jarvis !== 'undefined' && Jarvis.controlarDispositivo)
       ? Jarvis.controlarDispositivo({ acao: 'falar',
-          texto: (d.app || 'Celular') + '. ' + ((d.titulo || '') + (d.texto ? '. ' + d.texto : '')) }) : null;
+          texto: (d.app || 'Celular') + '. ' + _notifCorpoFalavel(d.titulo, d.texto, d.em || Date.now()) }) : null;
     falou = !!(res && res.status === 'success');
   } catch (e) {}
   try {
@@ -6600,9 +6647,24 @@ function _avaliarEventosProativos(tel, opts) {
       if (gCasa.permitido) _falas.push(txtCasa);
       disparos.push({ evento: 'chegou_casa', texto: txtCasa, permitido: gCasa.permitido, motivo: gCasa.motivo || null });
     } else if (transicao.para === 'trabalho') {
-      var txtTrab = 'Bom trabalho, Bruno.' + (minPonto !== null && minPonto <= 60
-        ? ' Você bate o ponto em ' + minPonto + ' minutos.' : ' Lembre-se de bater o ponto.');
-      var gTrab = _governanca('chegou_trabalho', { cooldownMin: 240, simular: simular });
+      /* A PRESENÇA NÃO FALA DE PONTO quando o ponto já tem dono. O ponto é coberto por DOIS
+       * mecanismos dedicados — o alerta agendado (tag ponto) e a checagem ponto_ausente — e a
+       * presença era o TERCEIRO. Medido em 22/09: 08:01 alerta, 08:03 "lembre-se de bater o
+       * ponto", 08:18 ponto_ausente. Três vezes o mesmo aviso em 17 minutos. E o ramo antigo
+       * dizia "Lembre-se de bater o ponto" justamente quando o próximo ponto estava LONGE —
+       * ou seja, lembrava de um que já tinha tido seu próprio alerta.
+       * Só volta a mencionar o ponto se NÃO houver alerta de ponto configurado. */
+      var _temAlertaPonto = false;
+      try {
+        _temAlertaPonto = (typeof AlertasVoz !== 'undefined') && AlertasVoz.listar().some(function (al) {
+          return al.tag === 'ponto' || /marcar (o )?ponto/i.test(String(al.texto || ''));
+        });
+      } catch (eAp) {}
+      var txtTrab = 'Bom trabalho, Bruno.' + (!_temAlertaPonto && minPonto !== null && minPonto <= 60
+        ? ' Você bate o ponto em ' + minPonto + ' minutos.' : '');
+      // Uma saudação por EXPEDIENTE, não por chegada. Com 240 min, a volta do almoço (08:17 →
+      // 13:18, 5h depois) passava do cooldown e repetia "Bom trabalho" no mesmo dia.
+      var gTrab = _governanca('chegou_trabalho', { cooldownMin: 720, simular: simular });
       if (gTrab.permitido) _falas.push(txtTrab);
       disparos.push({ evento: 'chegou_trabalho', texto: txtTrab, permitido: gTrab.permitido, motivo: gTrab.motivo || null });
     } else if (transicao.de === 'casa') {

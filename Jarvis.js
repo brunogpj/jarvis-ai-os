@@ -997,6 +997,37 @@ var Jarvis = (function () {
   // Calcula o subconjunto de ferramentas permitidas para a mensagem do dono.
   // Retorna null  → sem filtro (todas as ferramentas).
   // Retorna objeto { nome: true, … } → somente essas ferramentas.
+  /** "Ele quer AGENDAR uma fala para um horário futuro?" — true | false | null.
+   *  null = JEV indisponível; quem chama mantém a decisão da regex (comportamento anterior).
+   *  Criar alerta é AÇÃO que persiste e se repete, então o limiar é de ação (0,6), não de leitura.
+   *  A pergunta diz explicitamente que mencionar hora/despertador/bom dia NÃO basta: era
+   *  exatamente essa confusão ("seja meu despertador AGORA" ≠ "me desperte às 6") que gerou o
+   *  alarme fabricado de 21/09. */
+  function _intencaoAgendarFala(mensagem) {
+    if (typeof TypeSafe === 'undefined' || !TypeSafe.temChave()) return null;
+    var r;
+    try {
+      r = TypeSafe.noul(
+        { pedido: String(mensagem || '').slice(0, 1200) },
+        'O dono falou isto para o assistente pessoal dele. Ele está pedindo para AGENDAR uma fala que deve ' +
+        'acontecer num horário FUTURO — uma única vez ou se repetindo (todo dia, dias úteis, amanhã, às X horas)?',
+        {
+          true: 'Sim — quer que o assistente fale algo num horário que ainda NÃO chegou. Ex.: todo dia útil às 8h me ' +
+                'fala minha agenda; amanhã às 7 me lembra do remédio em voz alta; me desperta às 6 com as notícias; ' +
+                'toda segunda às 9h me fala as tarefas.',
+          false: 'Não — quer algo AGORA, ou só pergunta. Mencionar hora, despertador, alarme ou bom dia NÃO basta. ' +
+                 'Ex.: você é meu despertador agora, me dá um bom dia; me fala a hora; que horas são; qual é o ' +
+                 'horário do ponto; lembra que eu bati o ponto?'
+        },
+        { cacheSeg: 600 }
+      );
+    } catch (e) { return null; }
+    if (!r || !r.ok) return null;
+    var lim = Number(_prop('ALERTA_INTENCAO_LIMIAR') || 0.6);
+    if (!isFinite(lim) || lim <= 0 || lim >= 1) lim = 0.6;
+    return r.prob >= lim;
+  }
+
   function _toolsPermitidas(mensagem) {
     // Normaliza: minúsculas + remove acentos (NFD strip).
     var msg = String(mensagem || '');
@@ -1138,6 +1169,29 @@ var Jarvis = (function () {
         g.nomes.forEach(function (n) { permitidas[n] = true; });
       }
     });
+
+    /* CRIAR ALERTA DE VOZ: decidido pelo SIGNIFICADO (JEV), não pela palavra.
+     * agendarAlertaVoz é a única ferramenta aqui que CRIA configuração persistente e RECORRENTE —
+     * e era liberada por palavra-chave. Em 21/09 às 06:00 o pedido "você é meu despertador agora,
+     * me dê um bom dia..." abriu a ferramenta, o modelo agendou um alarme para toda segunda e
+     * gravou nele a PRÓPRIA resposta alucinada ("reunião do projeto Alpha", "contrato com o
+     * fornecedor X", "hoje, 21 de setembro"). Ia disparar em 28/09. Removido em 23/09.
+     * A regex errava nos dois sentidos, medido: liberava "me fala a hora" e "qual o horário do
+     * ponto", e BLOQUEAVA "todo dia útil às 8h me fala minha agenda" (a hora vinha antes do verbo).
+     * Agora, havendo qualquer sinal de horário/agenda, o JEV responde uma pergunta só: "ele quer
+     * agendar uma fala para um horário FUTURO?". Calibrado em 23/09 com 8 casos reais: pedidos
+     * para agora 0,02–0,15; pedidos de agendamento 0,93–0,97. 8/8 com limiar 0,6.
+     * Sem JEV (sem chave, sem rede) vale a regex, exatamente como antes. */
+    var _sinalAgenda = /(\d{1,2}\s*h\b|\d{1,2}:\d{2}|as \d|todo dia|todos os dias|toda (seg|ter|qua|qui|sex|sab|dom|manha|tarde|noite)|dias? ute|diariamente|recorrent|alarme|despert|lembr|alerta|agend|amanha)/.test(msg);
+    if (permitidas.agendarAlertaVoz || _sinalAgenda) {
+      var _querAgendar = _intencaoAgendarFala(mensagem);   // true | false | null (indisponível)
+      if (_querAgendar !== null && _querAgendar !== !!permitidas.agendarAlertaVoz) {
+        try { _registrarEvento({ tool: 'gate:jev:agendarAlertaVoz', ok: true, ms: 0,
+          resumo: (_querAgendar ? 'LIBERADO' : 'BLOQUEADO') + ' (regex dizia ' + (permitidas.agendarAlertaVoz ? 'sim' : 'nao') + ') · ' + String(mensagem || '').slice(0, 80) }); } catch (eGj) {}
+      }
+      if (_querAgendar === true) permitidas.agendarAlertaVoz = true;
+      else if (_querAgendar === false) delete permitidas.agendarAlertaVoz;
+    }
 
     // FALLBACK SEGURO: se nenhum grupo casou, retorna o núcleo (conversa pura).
     // Nunca retorna vazio — o núcleo é o piso mínimo.
@@ -2302,7 +2356,19 @@ var Jarvis = (function () {
     var engine = (props.getProperty('TTS_ENGINE') || 'cloud').toLowerCase();
     var r = null;
     var _tSint = Date.now();
-    if (engine === 'gemini' && Voz.sintetizarGemini && t.length <= 4500) {
+    /* TETO DO GEMINI TTS POR TAMANHO — medido, não chutado (22-23/09):
+     *   Gemini sintetiza a ~1x TEMPO REAL. Briefing de 8,8 MB (~3 min de fala) = 172 s de síntese,
+     *   199 s no total, contra um teto de 360 s do GAS que também paga o LLM ANTES da síntese.
+     *   Cloud TTS fez o mesmo tipo de trabalho em 2 s. O teto antigo (4500 car.) deixava passar
+     *   textos que ficavam a um briefing mais longo de ser MORTOS pelo GAS — sem áudio nenhum.
+     * Gemini segue sendo a voz para o que é curto e médio (ponto, respostas, avisos); acima do
+     * teto vai o Cloud TTS. Troca voz calorosa por garantia de entrega onde o risco é real.
+     * Ajustável em TTS_GEMINI_MAX_CHARS sem deploy. */
+    var _maxGemini = Number(props.getProperty('TTS_GEMINI_MAX_CHARS') || 1500);
+    if (!isFinite(_maxGemini) || _maxGemini < 0) _maxGemini = 1500;
+    _spans.chars = t.length;
+    if (engine === 'gemini' && t.length > _maxGemini) _spans.motivoCloud = 'texto>' + _maxGemini;
+    if (engine === 'gemini' && Voz.sintetizarGemini && t.length <= _maxGemini) {
       var vg = voz ? String(voz).split('-').pop() : null;   // "pt-BR-Chirp3-HD-Sulafat" → "Sulafat" (voz do Gemini)
       try { var rg = Voz.sintetizarGemini(t, vg ? { voz: vg } : {}); if (rg.status === 'success') { r = rg; _spans.engine = 'gemini'; } } catch (eG) {}
     }
@@ -2469,7 +2535,7 @@ var Jarvis = (function () {
               var _espera = _livreEm - Date.now();
               if (_espera > 0) { var _tEsp = Date.now(); Utilities.sleep(Math.min(_espera, 30000)); _spansFala.espera = Date.now() - _tEsp; }
               var fala = _falarNoCelular(args.texto, a.voz);
-              if (fala && fala.spans) { _spansFala.sintese = fala.spans.sintese; _spansFala.drive = fala.spans.drive; _spansFala.engine = fala.spans.engine; _spansFala.bytes = fala.spans.bytes; }
+              if (fala && fala.spans) { _spansFala.sintese = fala.spans.sintese; _spansFala.drive = fala.spans.drive; _spansFala.engine = fala.spans.engine; _spansFala.bytes = fala.spans.bytes; _spansFala.chars = fala.spans.chars; if (fala.spans.motivoCloud) _spansFala.motivoCloud = fala.spans.motivoCloud; }
               if (!fala.ok) { if (_lockFala) _lockFala.releaseLock(); return { status: 'error', erro: 'Falha ao gerar a voz na nuvem: ' + fala.erro }; }
               // Duração estimada: ~14 caracteres/s em pt-BR, + 4 s de download e partida do player.
               var _dur = Math.ceil(String(args.texto || '').length / 14) * 1000 + 4000;
@@ -3248,7 +3314,7 @@ var Jarvis = (function () {
                        : '⚠️ Atingi o limite de passos sem concluir. Tente reformular o pedido.';
   }
 
-  return { ask: ask, _isOwner: _isOwner, registrarEvento: _registrarEvento, lerPrefs: _lerPrefs, prepararVozCelular: _falarNoCelular, controlarDispositivo: _controlarDispositivo, capturarConhecimento: _capturarConhecimento, buscarConhecimento: _buscarConhecimento, gerarPodcastWiki: _gerarPodcastWiki, ultimoTrace: function () { return (_ultimoTrace || []).slice(); } };
+  return { ask: ask, _isOwner: _isOwner, _toolsPermitidas: _toolsPermitidas, registrarEvento: _registrarEvento, lerPrefs: _lerPrefs, prepararVozCelular: _falarNoCelular, controlarDispositivo: _controlarDispositivo, capturarConhecimento: _capturarConhecimento, buscarConhecimento: _buscarConhecimento, gerarPodcastWiki: _gerarPodcastWiki, ultimoTrace: function () { return (_ultimoTrace || []).slice(); } };
 })();
 
 /**

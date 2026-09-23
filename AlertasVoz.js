@@ -60,6 +60,12 @@ var AlertasVoz = (function () {
      * de turno e o Bruno foi cobrado nos dois turnos ao mesmo tempo.
      * Inferir pelo texto e melhor que exigir do modelo: funciona mesmo quando ele esquece. */
     var _tag = o.tag ? String(o.tag) : '';
+    /* 'briefing' É RESERVADO. É o papel do briefing que ACOMPANHA O TURNO: reposicionarBriefing
+     * move TODO alerta com essa tag para 30 min antes do ponto, e a regra de colisão do tick o
+     * suprime perto de outros briefings. Em 23/09 o modelo criou "às 9h me fala o tempo" com
+     * tag briefing — na próxima troca de turno o alerta de clima pularia sozinho para 07:30.
+     * Quem cria o briefing do turno é o próprio sistema; vindo de fora, a tag é reinferida. */
+    if (_tag === 'briefing') _tag = '';
     if (!_tag) {
       var _sG = String(texto).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
       if (/marcar (o )?ponto|ponto de (inicio|retorno|fim)|bater (o )?ponto/.test(_sG)) _tag = 'ponto';
@@ -67,8 +73,24 @@ var AlertasVoz = (function () {
       else _tag = 'avulso';
     }
 
+    /* NÃO DUPLICA. Em 23/09 um único pedido ("todo dia útil às 9h me fala o tempo") gerou DOIS
+     * alertas idênticos — o modelo chamou a ferramenta duas vezes no mesmo turno. Cada um falaria
+     * no mesmo minuto: a repetição que o dono já tinha pedido para eliminar. Mesmo horário, mesmos
+     * dias e mesmo texto = o mesmo alerta; devolve o que já existe em vez de criar outro. */
+    var arr = _ler();
+    var _normT = function (s) { return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim(); };
+    var _diasKey = dias.slice().sort().join(',');
+    for (var _i = 0; _i < arr.length; _i++) {
+      var _a = arr[_i];
+      if (_a.ativo === false) continue;
+      if (Number(_a.hora) === h && Number(_a.minuto || 0) === m &&
+          (_a.dias || []).slice().sort().join(',') === _diasKey && _normT(_a.texto) === _normT(texto)) {
+        return { ok: true, alerta: _a, duplicado: true,
+                 info: 'Esse alerta já existia às ' + _hhmm(h, m) + ' — não criei outro igual.' };
+      }
+    }
     var item = { id: Utilities.getUuid().slice(0, 8), hora: h, minuto: m, dias: dias, texto: texto, dinamico: _dinamico, ativo: true, ult: '', tag: _tag };
-    var arr = _ler(); arr.push(item); _salvar(arr); _garantirTick();
+    arr.push(item); _salvar(arr); _garantirTick();
     return { ok: true, alerta: item, info: 'Alerta de voz às ' + _hhmm(h, m) + (dias.length ? (' (' + dias.map(_nomeDia).join(',') + ')') : ' (todos os dias)') + ' criado.' };
   }
 

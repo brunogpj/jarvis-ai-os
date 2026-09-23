@@ -1032,7 +1032,7 @@ function gateSandbox(prob, comChave) {
   var chamou = 0;
   var s = makeSandbox({
     props: comChave === false ? {} : { TYPESAFE_API_KEY: 'k' },
-    fetch: function () { chamou++; return { code: 200, body: { answers: { j: { type: 'noul', noul: prob } } } }; }
+    fetch: function () { chamou++; var pf = (typeof prob === 'object') ? prob.fala : prob, pu = (typeof prob === 'object') ? prob.futuro : prob; return { code: 200, body: { answers: { fala: { type: 'noul', noul: pf }, futuro: { type: 'noul', noul: pu } } } }; }
   });
   loadGasFile('TypeSafe.js', s); loadGasFile('Jarvis.js', s);
   s._chamou = function () { return chamou; };
@@ -1094,4 +1094,52 @@ test('Voz: agendamento não vaza das instruções — "seja meu despertador agor
 test('Voz: confirmação curta ("sim") continua liberando tudo', function () {
   var s = makeSandbox({}); loadGasFile('TypeSafe.js', s); loadGasFile('Jarvis.js', s);
   assert.strictEqual(s.Jarvis._toolsPermitidas('sim' + SUFIXO_VOZ), null, 'o fluxo de confirmação do Gate P2 depende disso');
+});
+
+// ───────────────────────── 🧠 Portão JEV (2ª pergunta): programar QUALQUER coisa para depois ─────────────────────────
+test('Portão JEV: "me fala minha agenda" NÃO recebe agendarTarefa (a regex lia "agenda" como "agend")', function () {
+  var s = gateSandbox({ fala: 0.03, futuro: 0.03 });   // valores REAIS medidos em 23/09
+  var p = s.Jarvis._toolsPermitidas('me fala minha agenda de hoje');
+  assert.ok(!p.agendarTarefa, 'foi assim que reexecutou o agendamento do turno anterior e respondeu "agendei"');
+  assert.ok(!p.agendarAlertaVoz && !p.agendarMensagemWhatsApp);
+  assert.ok(p.listarProximosEventos, 'a CONSULTA à agenda continua disponível');
+});
+
+test('Portão JEV: "manda oi pro Douglas amanhã às 9h" mantém a mensagem agendada, sem virar alerta de voz', function () {
+  var s = gateSandbox({ fala: 0.10, futuro: 0.98 });
+  var p = s.Jarvis._toolsPermitidas('manda oi pro douglas amanha as 9h');
+  assert.ok(!p.agendarAlertaVoz, 'não é uma fala');
+  assert.ok(!('agendarMensagemWhatsApp' in p) || p.agendarMensagemWhatsApp,
+    'a 2ª pergunta NÃO remove ferramentas quando ele quer programar algo');
+});
+
+// ───────────────────────── 🔁 AlertasVoz.criar: sem duplicata e sem sequestrar a tag do turno ─────────────────────────
+function criarSandbox() {
+  var s = makeSandbox({ props: { ALERTAS_VOZ: '[]' } });
+  s.ScriptApp = { getProjectTriggers: function () { return [{ getHandlerFunction: function () { return 'tickAlertasVoz'; } }]; }, deleteTrigger: function () {} };
+  loadGasFile('AlertasVoz.js', s);
+  return s;
+}
+
+test('Alerta: o mesmo pedido duas vezes vira UM alerta (o modelo chamou a ferramenta 2x em 23/09)', function () {
+  var s = criarSandbox();
+  var o = { hora: 9, minuto: 0, dias: [1, 2, 3, 4, 5], texto: 'o tempo em Belo Horizonte', dinamico: true };
+  var a = s.AlertasVoz.criar(o), b = s.AlertasVoz.criar(o);
+  assert.ok(a.ok && b.ok);
+  assert.strictEqual(b.duplicado, true);
+  assert.strictEqual(s.AlertasVoz.listar().length, 1, 'dois idênticos falariam no mesmo minuto');
+  assert.strictEqual(a.alerta.id, b.alerta.id);
+});
+
+test('Alerta: tag "briefing" vinda de fora é reinferida — é reservada ao briefing do turno', function () {
+  var s = criarSandbox();
+  var r = s.AlertasVoz.criar({ hora: 9, texto: 'o tempo em Belo Horizonte', dinamico: true, tag: 'briefing' });
+  assert.notStrictEqual(r.alerta.tag, 'briefing', 'senão a troca de turno arrastaria o alerta de clima para 07:30');
+});
+
+test('Alerta: mesmo texto em horário DIFERENTE continua sendo outro alerta', function () {
+  var s = criarSandbox();
+  s.AlertasVoz.criar({ hora: 9, texto: 'beba agua' });
+  s.AlertasVoz.criar({ hora: 15, texto: 'beba agua' });
+  assert.strictEqual(s.AlertasVoz.listar().length, 2);
 });

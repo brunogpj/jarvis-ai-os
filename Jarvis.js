@@ -794,7 +794,7 @@ var Jarvis = (function () {
             dias: { type: 'ARRAY', items: { type: 'NUMBER' }, description: 'Dias: 0=Dom..6=Sáb. Vazio=todos. Dias úteis=[1,2,3,4,5].' },
             texto: { type: 'STRING', description: 'O que falar. Se for conteúdo a GERAR (ex.: "minha agenda de hoje"), marque dinamico=true.' },
             dinamico: { type: 'BOOLEAN', description: 'true = trata "texto" como pedido e fala a RESPOSTA gerada no disparo (ex.: agenda/clima). false (padrão) = fala o texto literal.' },
-            tag: { type: 'STRING', description: 'PAPEL do alerta, para ele poder ser gerenciado depois: "ponto" (lembrete de marcar ponto — entra na pausa de férias), "briefing" (acompanha o turno de trabalho) ou "avulso" (padrão). Se omitir, o servidor infere pelo texto.' }
+            tag: { type: 'STRING', description: 'PAPEL do alerta: "ponto" (lembrete de marcar ponto — entra na pausa de férias) ou "avulso" (padrão). Na dúvida, OMITA: o servidor infere pelo texto. NÃO use "briefing": esse papel é exclusivo do briefing do turno e é gerenciado pelo próprio sistema.' }
           },
           required: ['hora', 'texto']
         }
@@ -1003,29 +1003,56 @@ var Jarvis = (function () {
    *  A pergunta diz explicitamente que mencionar hora/despertador/bom dia NÃO basta: era
    *  exatamente essa confusão ("seja meu despertador AGORA" ≠ "me desperte às 6") que gerou o
    *  alarme fabricado de 21/09. */
-  function _intencaoAgendarFala(mensagem) {
+  /** Duas perguntas numa requisição só (o JEV responde em paralelo — uma ida à rede, não duas):
+   *   fala   → "ele quer agendar uma FALA para um horário futuro?" (decide ADICIONAR agendarAlertaVoz,
+   *            que a regex deixava de fora em "todo dia útil às 8h me fala minha agenda")
+   *   futuro → "ele quer PROGRAMAR qualquer coisa para depois — fala, tarefa, lembrete, mensagem?"
+   *            (decide REMOVER toda ferramenta de criação de agenda)
+   *  A segunda existe porque a primeira é sobre fala: usá-la para remover tiraria
+   *  agendarMensagemWhatsApp de um "manda oi pro Douglas amanhã às 9h" legítimo.
+   *  Calibrado em 23/09 — fala: 8/8 (agora 0,02–0,15 · agendar 0,93–0,97); futuro: 10/10
+   *  (consulta/cancelamento 0,02–0,07 · programar 0,97–0,98), incluindo "quais meus compromissos
+   *  amanhã" (0,03): tem "amanhã", mas é consulta. Devolve null se o JEV estiver indisponível. */
+  function _intencaoAgendamento(mensagem) {
     if (typeof TypeSafe === 'undefined' || !TypeSafe.temChave()) return null;
     var r;
     try {
-      r = TypeSafe.noul(
-        { pedido: String(mensagem || '').slice(0, 1200) },
-        'O dono falou isto para o assistente pessoal dele. Ele está pedindo para AGENDAR uma fala que deve ' +
-        'acontecer num horário FUTURO — uma única vez ou se repetindo (todo dia, dias úteis, amanhã, às X horas)?',
-        {
-          true: 'Sim — quer que o assistente fale algo num horário que ainda NÃO chegou. Ex.: todo dia útil às 8h me ' +
-                'fala minha agenda; amanhã às 7 me lembra do remédio em voz alta; me desperta às 6 com as notícias; ' +
-                'toda segunda às 9h me fala as tarefas.',
-          false: 'Não — quer algo AGORA, ou só pergunta. Mencionar hora, despertador, alarme ou bom dia NÃO basta. ' +
-                 'Ex.: você é meu despertador agora, me dá um bom dia; me fala a hora; que horas são; qual é o ' +
-                 'horário do ponto; lembra que eu bati o ponto?'
+      r = TypeSafe.perguntar({ pedido: String(mensagem || '').slice(0, 1200) }, {
+        fala: {
+          type: 'noul',
+          instructions: 'O dono falou isto para o assistente pessoal dele. Ele está pedindo para AGENDAR uma fala que deve ' +
+                        'acontecer num horário FUTURO — uma única vez ou se repetindo (todo dia, dias úteis, amanhã, às X horas)?',
+          criteria: {
+            true: 'Sim — quer que o assistente fale algo num horário que ainda NÃO chegou. Ex.: todo dia útil às 8h me ' +
+                  'fala minha agenda; amanhã às 7 me lembra do remédio em voz alta; me desperta às 6 com as notícias; ' +
+                  'toda segunda às 9h me fala as tarefas.',
+            false: 'Não — quer algo AGORA, ou só pergunta. Mencionar hora, despertador, alarme ou bom dia NÃO basta. ' +
+                   'Ex.: você é meu despertador agora, me dá um bom dia; me fala a hora; que horas são; qual é o ' +
+                   'horário do ponto; lembra que eu bati o ponto?'
+          }
         },
-        { cacheSeg: 600 }
-      );
+        futuro: {
+          type: 'noul',
+          instructions: 'O dono falou isto para o assistente pessoal dele. Ele está pedindo para PROGRAMAR alguma coisa para ' +
+                        'acontecer DEPOIS — uma fala, um lembrete, uma tarefa recorrente ou uma mensagem para ser enviada num horário futuro?',
+          criteria: {
+            true: 'Sim — quer que algo aconteça num momento que ainda não chegou. Ex.: todo dia útil às 8h resuma meus ' +
+                  'e-mails; manda oi pro Douglas amanhã às 9h; me lembra de tomar o remédio às 12h; toda segunda me fala as tarefas.',
+            false: 'Não — quer uma resposta AGORA, está só consultando, ou está CANCELANDO/listando algo. Falar de agenda, ' +
+                   'compromissos ou do dia de amanhã NÃO é programar. Ex.: me fala minha agenda de hoje; quais meus ' +
+                   'compromissos amanhã; o que tenho essa semana; cancele a tarefa agendada; você é meu despertador agora.'
+          }
+        }
+      }, { cacheSeg: 600 });
     } catch (e) { return null; }
-    if (!r || !r.ok) return null;
+    if (!r || !r.ok || !r.answers) return null;
     var lim = Number(_prop('ALERTA_INTENCAO_LIMIAR') || 0.6);
     if (!isFinite(lim) || lim <= 0 || lim >= 1) lim = 0.6;
-    return r.prob >= lim;
+    var pF = r.answers.fala && r.answers.fala.noul, pU = r.answers.futuro && r.answers.futuro.noul;
+    return {
+      fala:   (typeof pF === 'number') ? pF >= lim : null,
+      futuro: (typeof pU === 'number') ? pU >= 0.5 : null
+    };
   }
 
   function _toolsPermitidas(mensagem) {
@@ -1196,14 +1223,29 @@ var Jarvis = (function () {
      * para agora 0,02–0,15; pedidos de agendamento 0,93–0,97. 8/8 com limiar 0,6.
      * Sem JEV (sem chave, sem rede) vale a regex, exatamente como antes. */
     var _sinalAgenda = /(\d{1,2}\s*h\b|\d{1,2}:\d{2}|as \d|todo dia|todos os dias|toda (seg|ter|qua|qui|sex|sab|dom|manha|tarde|noite)|dias? ute|diariamente|recorrent|alarme|despert|lembr|alerta|agend|amanha)/.test(msg);
-    if (permitidas.agendarAlertaVoz || _sinalAgenda) {
-      var _querAgendar = _intencaoAgendarFala(mensagem);   // true | false | null (indisponível)
-      if (_querAgendar !== null && _querAgendar !== !!permitidas.agendarAlertaVoz) {
-        try { _registrarEvento({ tool: 'gate:jev:agendarAlertaVoz', ok: true, ms: 0,
-          resumo: (_querAgendar ? 'LIBERADO' : 'BLOQUEADO') + ' (regex dizia ' + (permitidas.agendarAlertaVoz ? 'sim' : 'nao') + ') · ' + String(mensagem || '').slice(0, 80) }); } catch (eGj) {}
+    // Ferramentas que CRIAM algo programado para depois — persistente, às vezes recorrente.
+    var _CRIA_AGENDA = ['agendarAlertaVoz', 'agendarTarefa', 'agendarMensagemWhatsApp'];
+    var _algumaCriacao = _CRIA_AGENDA.some(function (n) { return permitidas[n]; });
+    if (_algumaCriacao || _sinalAgenda) {
+      var _int = _intencaoAgendamento(mensagem);   // {fala, futuro} | null (indisponível → regex, como antes)
+      if (_int) {
+        var _antes = _CRIA_AGENDA.filter(function (n) { return permitidas[n]; }).join(',') || '-';
+        if (_int.futuro === false) {
+          /* NÃO QUER PROGRAMAR NADA → nenhuma ferramenta de criação de agenda. Em 23/09, logo após um
+           * pedido de agendamento, "me fala minha agenda de hoje" recebeu agendarTarefa (a regex lê
+           * "agenda" como "agend") e o modelo REEXECUTOU o pedido anterior do histórico: criou uma
+           * tarefa às 9h e respondeu "agendei" a uma pergunta sobre a agenda. */
+          _CRIA_AGENDA.forEach(function (n) { delete permitidas[n]; });
+        } else {
+          if (_int.fala === true) permitidas.agendarAlertaVoz = true;
+          else if (_int.fala === false) delete permitidas.agendarAlertaVoz;
+        }
+        var _depois = _CRIA_AGENDA.filter(function (n) { return permitidas[n]; }).join(',') || '-';
+        if (_antes !== _depois) {
+          try { _registrarEvento({ tool: 'gate:jev:agenda', ok: true, ms: 0,
+            resumo: 'regex [' + _antes + '] → JEV [' + _depois + '] · ' + String(mensagem || '').slice(0, 70) }); } catch (eGj) {}
+        }
       }
-      if (_querAgendar === true) permitidas.agendarAlertaVoz = true;
-      else if (_querAgendar === false) delete permitidas.agendarAlertaVoz;
     }
 
     // VOZ SEMPRE PODE AGIR NO APARELHO. As instruções anexadas pela rota de voz EXIGEM chamar

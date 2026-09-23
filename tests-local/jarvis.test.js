@@ -1063,3 +1063,35 @@ test('Portão JEV: mensagem sem sinal de horário não gasta chamada', function 
   s.Jarvis._toolsPermitidas('resuma meus emails nao lidos');
   assert.strictEqual(s._chamou(), 0, 'o JEV só é consultado quando há sinal de agenda');
 });
+
+// ───────────────────────── 🎙️ Voz: o filtro julga o PEDIDO, não as instruções anexadas ─────────────────────────
+// Medido em 23/09: a rota de voz anexa ~29.500 caracteres de instrução ("[Interação por voz: abrir app,
+// tocar música, rota, alarme...]"). O filtro julgava o texto inteiro e TODO pedido de voz recebia 100
+// ferramentas — "qual o meu saldo" deveria receber 12.
+var SUFIXO_VOZ = '\n\n[Interação por voz: responda direto. AÇÃO NO CELULAR: abrir app, abra o WhatsApp, ' +
+  'tocar música, rota, navegar, alarme, despertador, agenda, lembrete, todo dia às 8h, controlarDispositivo, ' +
+  'enviar mensagem, e-mail, notícias, ponto, turno, alerta de voz, objetivo, autorizar, skill, cérebro]';
+
+test('Voz: instruções anexadas NÃO inflam o cardápio de ferramentas', function () {
+  var s = makeSandbox({}); loadGasFile('TypeSafe.js', s); loadGasFile('Jarvis.js', s);
+  var soPedido = Object.keys(s.Jarvis._toolsPermitidas('qual o meu saldo')).length;
+  var comVoz = Object.keys(s.Jarvis._toolsPermitidas('qual o meu saldo' + SUFIXO_VOZ)).length;
+  assert.ok(comVoz <= soPedido + 1, 'voz não pode abrir o cardápio inteiro: ' + soPedido + ' vs ' + comVoz);
+});
+
+test('Voz: controlarDispositivo SEMPRE disponível (as instruções de voz o exigem)', function () {
+  var s = makeSandbox({}); loadGasFile('TypeSafe.js', s); loadGasFile('Jarvis.js', s);
+  var p = s.Jarvis._toolsPermitidas('qual o meu saldo' + SUFIXO_VOZ);
+  assert.ok(p.controlarDispositivo, 'sem ela o modelo diria "abri o app" sem ter como abrir');
+});
+
+test('Voz: agendamento não vaza das instruções — "seja meu despertador agora" fica sem agendarAlertaVoz', function () {
+  var s = makeSandbox({}); loadGasFile('TypeSafe.js', s); loadGasFile('Jarvis.js', s);   // sem chave: só regex
+  var p = s.Jarvis._toolsPermitidas('voce e meu despertador agora, me de bom dia' + SUFIXO_VOZ);
+  assert.ok(!p.agendarAlertaVoz, 'as palavras "alarme/despertador/todo dia às 8h" das INSTRUÇÕES liberavam a ferramenta');
+});
+
+test('Voz: confirmação curta ("sim") continua liberando tudo', function () {
+  var s = makeSandbox({}); loadGasFile('TypeSafe.js', s); loadGasFile('Jarvis.js', s);
+  assert.strictEqual(s.Jarvis._toolsPermitidas('sim' + SUFIXO_VOZ), null, 'o fluxo de confirmação do Gate P2 depende disso');
+});

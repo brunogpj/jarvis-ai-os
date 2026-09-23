@@ -1029,6 +1029,19 @@ var Jarvis = (function () {
   }
 
   function _toolsPermitidas(mensagem) {
+    /* JULGA O PEDIDO DO DONO — não as instruções que a rota de voz anexa depois dele.
+     * A rota voice_command monta `msgVoz + contexto + "\n\n[Interação por voz: ...]"`, e esse
+     * bloco tem ~29.500 caracteres falando de abrir app, tocar música, rota, alarme, agenda...
+     * Medido em 23/09: "qual o meu saldo" recebia 12 ferramentas pelo pedido e 100 com o bloco;
+     * "que horas são", 10 contra 100. O filtro por intenção estava DESLIGADO para toda a voz —
+     * cada pedido levava ~7 mil tokens de instrução MAIS os esquemas de 100 ferramentas, e o
+     * modelo tinha à mão ferramentas que ninguém pediu. Foi assim que "seja meu despertador
+     * agora" alcançou agendarAlertaVoz em 21/09 e virou um alarme recorrente fabricado.
+     * O bloco anexado começa sempre em "\n\n[" (contexto do aparelho ou interação por voz). */
+    var _bruto = String(mensagem || '');
+    var _ehVoz = _bruto.indexOf('\n\n[Interação por voz:') !== -1;
+    mensagem = _bruto.split('\n\n[')[0];
+
     // Normaliza: minúsculas + remove acentos (NFD strip).
     var msg = String(mensagem || '');
     try { msg = msg.normalize('NFD').replace(/[̀-ͯ]/g, ''); } catch (e) {}
@@ -1192,6 +1205,11 @@ var Jarvis = (function () {
       if (_querAgendar === true) permitidas.agendarAlertaVoz = true;
       else if (_querAgendar === false) delete permitidas.agendarAlertaVoz;
     }
+
+    // VOZ SEMPRE PODE AGIR NO APARELHO. As instruções anexadas pela rota de voz EXIGEM chamar
+    // controlarDispositivo para qualquer ação no celular — tirar a ferramenta do cardápio seria
+    // convidar o modelo a dizer "abri o app" sem ter como abrir. É a única exceção ao filtro.
+    if (_ehVoz) permitidas.controlarDispositivo = true;
 
     // FALLBACK SEGURO: se nenhum grupo casou, retorna o núcleo (conversa pura).
     // Nunca retorna vazio — o núcleo é o piso mínimo.

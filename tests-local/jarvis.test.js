@@ -1228,3 +1228,12 @@ test('Nenhum aviso proativo ao dono depende mais do WhatsApp', function () {
     assert.ok(src.indexOf('_avisarDono(') !== -1, f + ' deveria avisar pelo celular');
   });
 });
+
+test('Saldo: pedir as DUAS carteiras responde as duas (não para no voucher)', function () {
+  var s = code({});
+  var f = s._interpretarFinanceiro('qual o meu saldo no voucher e meu saldo da mobilidade');
+  assert.strictEqual(f.tipo, 'saldo');
+  assert.strictEqual(f.carteira, null, 'foi voucher em 23/09 e a mobilidade sumiu da fala');
+  assert.strictEqual(s._interpretarFinanceiro('qual o saldo do voucher').carteira, 'voucher');
+  assert.strictEqual(s._interpretarFinanceiro('quanto tem na mobilidade').carteira, 'mobilidade');
+});

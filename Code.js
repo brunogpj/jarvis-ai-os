@@ -5047,9 +5047,10 @@ function _interpretarFinanceiro(msg) {
     }
   }
   if (/\bsaldo\b|quanto (eu )?(tenho|tem)\b|quanto sobrou|quanto resta/.test(s)) {  // "quanto tem" tambem e pergunta de saldo (05/08: so "tenho" deixava passar)
-    var cart = null;
-    if (/voucher|refeic|alimenta/.test(s)) cart = 'voucher';
-    else if (/mobilidade|combust|transporte/.test(s)) cart = 'mobilidade';
+    // As DUAS citadas = as duas na resposta. Era if/else-if: em 23/09 "qual o meu saldo no
+    // voucher e meu saldo da mobilidade" casou 'voucher' primeiro e a mobilidade sumiu da fala.
+    var querV = /voucher|refeic|alimenta/.test(s), querM = /mobilidade|combust|transporte/.test(s);
+    var cart = (querV && !querM) ? 'voucher' : (querM && !querV) ? 'mobilidade' : null;
     return { tipo: 'saldo', carteira: cart };
   }
   return null;

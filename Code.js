@@ -3127,17 +3127,23 @@ function doPost(e) {
         // então o `if (_lembC)` rodava sempre e o fim da cadeia sobrescrevia a resposta já montada.
         // (-2) "O QUE EU PERDI?" — resumo determinístico das notificações. Zero LLM: a resposta é
         // um fato, não uma opinião, e mandar isso pro modelo só adicionaria custo e risco de invenção.
-        var _perdi = (_voto === null && _ofr === null) ? _interpretarPerdi(msgVoz) : null;
+        // (-3) HORA, DATA E AGENDA — fatos, sem LLM (ver _interpretarFatoVoz: "são 21:29" às 22:08 e
+        // uma reunião inventada, ambos em 23/09). Vem antes de tudo e cala o resto da cadeia.
+        var _fato = (_voto === null && _ofr === null) ? _interpretarFatoVoz(msgVoz) : null;
+        var _perdi = (_voto === null && _ofr === null && _fato === null) ? _interpretarPerdi(msgVoz) : null;
         // (-1.5) SALDO/EXTRATO DO SWILE — determinístico. Número não passa pelo modelo.
         var _fin = (_voto === null && _ofr === null && _perdi === null) ? _interpretarFinanceiro(msgVoz) : null;
         var _trn = (_voto === null && _ofr === null && _perdi === null && _fin === null) ? _interpretarTurnoTrabalho(msgVoz) : null;
         var _insV = (_voto === null && _ofr === null && _perdi === null && _fin === null && _trn === null) ? _interpretarInsight(msgVoz) : null;
-        var _livre = (_voto === null && _ofr === null && _perdi === null && _fin === null && _trn === null && _insV === null);
+        var _livre = (_fato === null && _voto === null && _ofr === null && _perdi === null && _fin === null && _trn === null && _insV === null);
         var _viaJev = false;   // marcado se o roteamento semântico (JEV) atender no lugar do LLM
         var _notifPendentes = null;  // notificações do "o que eu perdi" AGUARDANDO confirmação de entrega
         var _lembC = _livre ? _interpretarLembreteCondicional(msgVoz) : null;
         var _rot   = (_livre && !_lembC) ? _interpretarRotina(msgVoz) : null;
-        if (_fin !== null) {
+        if (_fato !== null) {
+          try { respVoz = (_fato.via === 'agenda') ? _falarAgenda(_fato.periodo) : _falarRelogio(_fato); }
+          catch (eFt) { respVoz = 'Não consegui consultar isso agora.'; }
+        } else if (_fin !== null) {
           try {
             if (_fin.tipo === 'gastos') {
               respVoz = _finFalarGastos(_fin.dias);
@@ -3306,7 +3312,8 @@ function doPost(e) {
         // de bug de voz até aqui (em 13/08 um "o que eu perdi" não deixou vestígio nenhum).
         // A ordem espelha a cadeia if/else if acima; ao mexer lá, mexer aqui também.
         var _viaVoz =
-            (_fin   !== null) ? 'financeiro'
+            (_fato  !== null) ? _fato.via
+          : (_fin   !== null) ? 'financeiro'
           : (_trn   !== null) ? 'turno'
           : (_insV  !== null) ? ('insight_' + _insV.acao)
           : (_perdi !== null) ? 'notificacoes'
@@ -3388,7 +3395,7 @@ function doPost(e) {
          * Ajustável sem deploy pela property FALA_LOCAL_ROTAS (lista separada por vírgula).
          * O teto de caracteres continua como rede de segurança: resposta de ação que venha longa
          * (um extrato inteiro, por exemplo) volta para a nuvem. */
-        var _ROTAS_LOCAIS_PADRAO = 'financeiro,turno,rotina,controle_nativo,abrir_app,spotify,youtube,google,navegar,compras,ligar,biblia,insight_gravar,voto_insight';
+        var _ROTAS_LOCAIS_PADRAO = 'relogio,agenda,financeiro,turno,rotina,controle_nativo,abrir_app,spotify,youtube,google,navegar,compras,ligar,biblia,insight_gravar,voto_insight';
         var _rotasLocais = String(PropertiesService.getScriptProperties().getProperty('FALA_LOCAL_ROTAS') || _ROTAS_LOCAIS_PADRAO)
           .split(',').map(function (x) { return x.trim(); }).filter(function (x) { return x; });
         var _viaBase = String((typeof _viaVoz !== 'undefined') ? _viaVoz : '').split(':')[0];
@@ -5056,6 +5063,84 @@ function _interpretarFinanceiro(msg) {
   return null;
 }
 
+/* FATOS DE RELÓGIO E AGENDA NA VOZ — sem LLM.
+ * Em 23/09 às 22:08, "que horas são" respondeu "São 21:29": o modelo copiou a hora de uma
+ * resposta anterior que estava no histórico da voz (janela de 2h), mesmo com a hora certa no
+ * prompt de sistema. Minutos depois, "o que eu tenho na agenda amanhã" respondeu "Reunião de
+ * Alinhamento às 14:00" SEM chamar a ferramenta de agenda — o evento não existia (agenda vazia).
+ * Hora, data e compromissos são fatos: saem do relógio e da agenda, nunca do modelo.
+ * Brasília é UTC-3 fixo desde 2019 (sem horário de verão) — dá para calcular sem Utilities,
+ * e o mesmo código roda igual no GAS e nos testes locais. */
+var _DIAS_SEMANA_PT = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
+var _MESES_PT = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+
+function _partesBRT(d) {
+  var b = new Date(d.getTime() - 3 * 3600000);
+  return { ano: b.getUTCFullYear(), mes: b.getUTCMonth(), dia: b.getUTCDate(), dow: b.getUTCDay(), h: b.getUTCHours(), m: b.getUTCMinutes() };
+}
+function _horaFalada(h, m) { return h + 'h' + (m ? (m < 10 ? '0' + m : String(m)) : ''); }
+/** Meia-noite (BRT) do dia `d` deslocado `mais` dias, como Date real. */
+function _inicioDiaBRT(d, mais) {
+  var p = _partesBRT(d);
+  return new Date(Date.UTC(p.ano, p.mes, p.dia + (mais || 0)) + 3 * 3600000);
+}
+
+/** Reconhece pedido de hora, data ou agenda. → {via:'relogio'|'agenda', ...} ou null. */
+function _interpretarFatoVoz(msg) {
+  var s = String(msg || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[?!.,;:]/g, ' ').replace(/\s+/g, ' ').trim()
+    .replace(/^(ok |oi |ei |e ai )?(jarvis )?/, '').replace(/( jarvis| por favor| agora| ai)+$/, '').trim();
+  // Pedido de MUDANÇA na agenda não é consulta: marcar, cancelar, mover — isso é do modelo.
+  var mexe = /\b(marc|agend(ar|e|ou|ei|amos)\b|cri[ae]|adicion|coloc|bot[ae]|inclu|cancel|remov|exclu|desmarc|mud[ae]|alter|lembr)/.test(s);
+  // "que horas eu bato o ponto" e "que horas é a reunião" NÃO são o relógio: o pedido tem de
+  // TERMINAR na pergunta (a limpeza acima já tirou "agora", "jarvis", "por favor").
+  var hora = /(^|\b)que horas? (sao|e|eh)$/.test(s) || /\bhoras? (de )?(atual|certa)\b/.test(s) ||
+             /\b(fala|diz|diga|informa|fale)\w* (a |que )?horas?$/.test(s) || /^horas?$/.test(s);
+  var data = /\bque dia (e|eh) hoje$/.test(s) || /\bhoje e que dia$/.test(s) || /\bque data e hoje$/.test(s) ||
+             /\b(data|dia) (de hoje|atual)\b/.test(s) || /\b(fala|diz|diga|informa|fale)\w* (a )?data$/.test(s);
+  if ((hora || data) && !mexe) return { via: 'relogio', hora: hora, data: data };
+  if (mexe) return null;
+  var falaDeAgenda = /\b(agenda|compromissos?|eventos?|reunio(es)?|reuniao)\b/.test(s);
+  var tenho = /\bo que (eu )?tenho\b/.test(s);
+  var periodo = /\bamanha\b/.test(s) ? 'amanha' : /\bhoje\b/.test(s) ? 'hoje'
+              : /\b(essa|esta|nesta|da) semana\b|\bproximos dias\b/.test(s) ? 'semana' : null;
+  if ((falaDeAgenda || tenho) && periodo) return { via: 'agenda', periodo: periodo };
+  if (falaDeAgenda && /\b(minha agenda|agenda de hoje|meus compromissos)\b/.test(s)) return { via: 'agenda', periodo: 'hoje' };
+  return null;
+}
+
+function _falarRelogio(f, agora) {
+  var p = _partesBRT(agora || new Date());
+  var dataTxt = _DIAS_SEMANA_PT[p.dow] + ', ' + p.dia + ' de ' + _MESES_PT[p.mes] + ' de ' + p.ano;
+  if (f.hora && f.data) return 'Hoje é ' + dataTxt + ', e são ' + _horaFalada(p.h, p.m) + '.';
+  if (f.data) return 'Hoje é ' + dataTxt + '.';
+  return 'São ' + _horaFalada(p.h, p.m) + '.';
+}
+
+/** Lê a agenda de verdade (CalendarApp) e fala o resultado. Agenda vazia é dito como vazia. */
+function _falarAgenda(periodo, agora) {
+  agora = agora || new Date();
+  var ini, fim, rotulo;
+  if (periodo === 'amanha') { ini = _inicioDiaBRT(agora, 1); fim = _inicioDiaBRT(agora, 2); rotulo = 'Amanhã'; }
+  else if (periodo === 'semana') { ini = agora; fim = _inicioDiaBRT(agora, 7); rotulo = 'Nos próximos 7 dias'; }
+  else { ini = agora; fim = _inicioDiaBRT(agora, 1); rotulo = 'Hoje'; }
+  var evs;
+  try { evs = CalendarApp.getDefaultCalendar().getEvents(ini, fim); }
+  catch (e) { return 'Não consegui ler a sua agenda agora.'; }
+  if (!evs || !evs.length) {
+    return rotulo + (periodo === 'hoje' ? ', daqui até o fim do dia,' : '') + ' você não tem nada na agenda.';
+  }
+  var itens = evs.slice(0, 6).map(function (e) {
+    var t = String(e.getTitle() || 'sem título');
+    if (e.isAllDayEvent && e.isAllDayEvent()) return (periodo === 'semana' ? _DIAS_SEMANA_PT[_partesBRT(e.getStartTime()).dow] + ', ' : '') + 'o dia todo, ' + t;
+    var p = _partesBRT(e.getStartTime());
+    return (periodo === 'semana' ? _DIAS_SEMANA_PT[p.dow] + ' ' : '') + 'às ' + _horaFalada(p.h, p.m) + ', ' + t;
+  });
+  var resto = evs.length - itens.length;
+  var lista = itens.length > 1 ? itens.slice(0, -1).join('; ') + '; e ' + itens[itens.length - 1] : itens[0];
+  return rotulo + ': ' + lista + (resto > 0 ? '; e mais ' + resto + '.' : '.');
+}
+
 /** Extrato falado, determinístico. */
 function _finFalarGastos(dias) {
   var g = consultarGastos({ dias: dias });
@@ -5866,6 +5951,7 @@ function _interpretarPerdi(msg) {
 function _preverRotaDeterministica(msg) {
   var m = String(msg || '');
   var r;
+  try { r = _interpretarFatoVoz(m); if (r) return r.via; } catch (e) {}   // vem antes de tudo, como na cadeia
   try { r = _interpretarFinanceiro(m); if (r !== null && r !== undefined) return 'financeiro'; } catch (e) {}
   try { r = _interpretarTurnoTrabalho(m); if (r !== null && r !== undefined) return 'turno'; } catch (e) {}
   try { r = _interpretarInsight(m); if (r) return 'insight_' + r.acao; } catch (e) {}
@@ -5898,6 +5984,12 @@ var _GOLDEN_VOZ = [
   ['boa ideia', 'nao_coberto'],
   // --- notificacoes
   ['o que eu perdi', 'notificacoes'],
+  ['que horas sao', 'relogio'],
+  ['me diga a data atual e a hora atual', 'relogio'],
+  ['que horas eu bato o ponto', 'nao_coberto'],    // ARMADILHA: 'que horas' que NAO e o relogio
+  ['o que eu tenho na agenda amanha', 'agenda'],
+  ['me fala minha agenda de hoje', 'agenda'],
+  ['marca uma reuniao amanha as 10h', 'nao_coberto'],
   ['me atualiza', 'notificacoes'],
   // --- rotina composta
   ['modo cinema', 'rotina:cinema'],

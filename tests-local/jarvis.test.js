@@ -1237,3 +1237,58 @@ test('Saldo: pedir as DUAS carteiras responde as duas (não para no voucher)', f
   assert.strictEqual(s._interpretarFinanceiro('qual o saldo do voucher').carteira, 'voucher');
   assert.strictEqual(s._interpretarFinanceiro('quanto tem na mobilidade').carteira, 'mobilidade');
 });
+
+// ───────────────────────── 🕐 Hora, data e agenda na voz: fatos, não LLM ─────────────────────────
+var T2208 = new Date(Date.UTC(2026, 8, 24, 1, 8));   // 23/09/2026 22:08 BRT (quarta)
+
+test('Relógio: hora e data saem do relógio, não do histórico (23/09: "São 21:29" às 22:08)', function () {
+  var s = code({});
+  assert.strictEqual(s._interpretarFatoVoz('que horas são').via, 'relogio');
+  assert.strictEqual(s._falarRelogio({ hora: true }, T2208), 'São 22h08.');
+  var f = s._interpretarFatoVoz('Me diga a data atual e a hora de atual');
+  assert.ok(f && f.hora && f.data);
+  assert.strictEqual(s._falarRelogio(f, T2208), 'Hoje é quarta-feira, 23 de setembro de 2026, e são 22h08.');
+  assert.strictEqual(s._falarRelogio({ data: true }, T2208), 'Hoje é quarta-feira, 23 de setembro de 2026.');
+  assert.strictEqual(s._falarRelogio({ hora: true }, new Date(Date.UTC(2026, 8, 24, 12, 0))), 'São 9h.', 'hora cheia sem "00"');
+});
+
+test('Relógio: armadilhas que NÃO são o relógio', function () {
+  var s = code({});
+  assert.strictEqual(s._interpretarFatoVoz('que horas eu bato o ponto'), null, 'é turno');
+  assert.strictEqual(s._interpretarFatoVoz('que horas é a reunião'), null, 'é agenda com assunto, fica com o modelo');
+  assert.strictEqual(s._interpretarFatoVoz('me lembra daqui a duas horas'), null);
+});
+
+test('Agenda: lê a agenda de verdade; vazia é dita como vazia (23/09: reunião inventada)', function () {
+  var s = code({});
+  var pedidos = [];
+  s.CalendarApp = { getDefaultCalendar: function () { return { getEvents: function (a, b) { pedidos.push([a, b]); return []; } }; } };
+  var f = s._interpretarFatoVoz('o que eu tenho na agenda amanhã');
+  assert.deepStrictEqual({ via: f.via, periodo: f.periodo }, { via: 'agenda', periodo: 'amanha' });
+  assert.strictEqual(s._falarAgenda('amanha', T2208), 'Amanhã você não tem nada na agenda.');
+  // Amanhã = 24/09 00:00 BRT até 25/09 00:00 BRT, mesmo sendo 22h do dia 23
+  assert.strictEqual(pedidos[0][0].toISOString(), '2026-09-24T03:00:00.000Z');
+  assert.strictEqual(pedidos[0][1].toISOString(), '2026-09-25T03:00:00.000Z');
+});
+
+test('Agenda: eventos falados com hora de Brasília, dia inteiro e excedente', function () {
+  var s = code({});
+  function ev(t, isoIni, diaTodo) { return { getTitle: function () { return t; }, getStartTime: function () { return new Date(isoIni); }, isAllDayEvent: function () { return !!diaTodo; } }; }
+  s.CalendarApp = { getDefaultCalendar: function () { return { getEvents: function () {
+    return [ev('Feriado', '2026-09-24T03:00:00Z', true), ev('Dentista', '2026-09-24T17:30:00Z'), ev('Mercado', '2026-09-24T21:00:00Z')];
+  } }; } };
+  assert.strictEqual(s._falarAgenda('amanha', T2208), 'Amanhã: o dia todo, Feriado; às 14h30, Dentista; e às 18h, Mercado.');
+});
+
+test('Agenda: pedido de MUDANÇA fica com o modelo', function () {
+  var s = code({});
+  assert.strictEqual(s._interpretarFatoVoz('marca uma reunião amanhã às 10h'), null);
+  assert.strictEqual(s._interpretarFatoVoz('cancela o compromisso de hoje'), null);
+  assert.strictEqual(s._interpretarFatoVoz('me fala minha agenda de hoje').via, 'agenda');
+});
+
+test('Golden set da voz continua 100% com as rotas de relógio e agenda', function () {
+  var s = code({});
+  var r = s.diagGoldenVoz({});
+  assert.strictEqual(r.falhou, 0, JSON.stringify(r.falhas));
+});

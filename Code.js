@@ -7406,7 +7406,14 @@ function _handleWhatsAppWebhook(e, body, json) {
   try {
     var p = PropertiesService.getScriptProperties();
     var secret = p.getProperty('WHATSAPP_WEBHOOK_SECRET');
-    if (secret && (!e.parameter || e.parameter.wh !== secret)) return json({ ok: false, error: 'Webhook não autorizado.' });
+    /* FAIL-CLOSED. Era `if (secret && ...)`: sem a property, o webhook aceitava QUALQUER um — e a URL
+     * /exec ficou exposta em commits órfãos servidos publicamente pelo GitHub (22-23/09). Sem o
+     * segredo, alguém podia forjar um messages.upsert "do dono" e o Jarvis o executaria com os
+     * privilégios dele. Conferido em 23/09: o segredo está definido e a checagem funciona. Esta
+     * mudança só vale no acidente — a property sumir — e aí a porta fica FECHADA, não aberta.
+     * Recuperar: configurarSegredoWebhookWhatsApp() e reapontar o webhook da Evolution. */
+    if (!secret) return json({ ok: false, error: 'Webhook bloqueado: WHATSAPP_WEBHOOK_SECRET não configurado.' });
+    if (!e.parameter || e.parameter.wh !== secret) return json({ ok: false, error: 'Webhook não autorizado.' });
 
     var w = WhatsApp.parseWebhook(body);
     if (w.evento.indexOf('messages.upsert') === -1 && w.evento.indexOf('messages_upsert') === -1) return json({ ok: true, ignored: w.evento });

@@ -408,4 +408,6 @@ var AlertasVoz = (function () {
 function tickAlertasVoz() {
   try { if (typeof Heartbeat !== 'undefined') Heartbeat.bater('alertasVoz'); } catch (e) {}
   try { AlertasVoz.tick(); } catch (e) { Logger.log('[tickAlertasVoz] ' + e.message); }
+  // Rede de segurança da fila de notificações (Code.js): o que o loopback não processou em 20 s.
+  try { if (typeof _notifProcessarPendentes === 'function') _notifProcessarPendentes(); } catch (e) { Logger.log('[tickAlertasVoz] notif: ' + e.message); }
 }

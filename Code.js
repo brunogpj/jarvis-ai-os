@@ -2707,6 +2707,7 @@ function doPost(e) {
       if (typeof brokerVerificarAssinatura !== 'function' || !brokerVerificarAssinatura(body)) return json({ ok: false, error: 'assinatura inválida' });
       if (body.__broker === 'DISPATCH') { _brokerDispatch(body.jobId); return json({ status: 'dispatch-ack' }); }
       if (body.__broker === 'WORKER') { _brokerWorker(body); return json({ status: 'worker-ack' }); }
+      if (body.__broker === 'NOTIF')  { var nNt = _notifProcessarLoopback(body); return json({ status: 'notif-ack', processadas: nNt }); }
       return json({ ok: false, error: 'broker op desconhecida' });
     }
 
@@ -3762,6 +3763,11 @@ var _ROTINAS = {
     acoes: [ { acao: 'naoperturbe', estado: 'on' }, { acao: 'volume', nivel: 'baixo' } ],
     resposta: 'Modo foco ativado: não perturbe ligado e som baixo.'
   },
+  foco_off: {
+    nome: 'Sair do modo foco',
+    acoes: [ { acao: 'naoperturbe', estado: 'off' }, { acao: 'volume', nivel: 'medio' } ],
+    resposta: 'Saindo do modo foco: não perturbe desligado e som no médio.'
+  },
   boa_noite: {
     nome: 'Rotina boa noite',
     acoes: [ { acao: 'falar', texto: 'Boa noite, Bruno. Vou silenciar o aparelho e baixar o brilho. Seus alertas de ponto continuam armados.' },
@@ -3806,9 +3812,14 @@ function _interpretarRotina(texto) {
   var s = String(texto || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
   var desliga = /desativ|deslig|sair|encerra|para o modo|fim do/.test(s);
   if (/modo\s+cinema/.test(s)) return desliga ? 'cinema_off' : 'cinema';
-  if (/modo\s+foco/.test(s)) return 'foco';
+  // "sair do modo foco" LIGAVA o foco: só o cinema tinha versão de desligar (achado em 24/09).
+  if (/modo\s+foco/.test(s)) return desliga ? 'foco_off' : 'foco';
   if (/\b(rotina|modo)\s+(de\s+)?boa\s+noite/.test(s)) return 'boa_noite';
   if (/\b(rotina|modo)\s+(de\s+)?bom\s+dia/.test(s)) return 'bom_dia';
+  // Frases naturais. "boa noite"/"bom dia" SOZINHOS continuam fora de propósito (golden set):
+  // cumprimento não pode silenciar o aparelho. Aqui a intenção de dormir/acordar é explícita.
+  if (/^(jarvis\s+)?(vou|to indo|estou indo|hora de)\s+(dormir|deitar)\b/.test(s)) return 'boa_noite';
+  if (/^(jarvis\s+)?(acordei|ja acordei|to acordado|estou acordado)\b/.test(s)) return 'bom_dia';
   return null;
 }
 
@@ -4563,25 +4574,129 @@ function registrarNotificacao(d) {
   // FALAR é opt-in: falar=1 na macro, ou app listado em NOTIF_FALAR_APPS.
   var querFalar = (String(d.falar || '') === '1' || d.falar === true) ||
                   (_notifNaLista(_notifListaProp('NOTIF_FALAR_APPS'), app, pacote) === true);
-  var falou = null;
-  if (querFalar && _notifPodeFalar()) {
-    var fala = 'Notificação do ' + (app || 'celular') + '. ' + _notifCorpoFalavel(titulo, texto, agora);
-    try {
-      var r = (typeof Jarvis !== 'undefined' && Jarvis.controlarDispositivo)
-        ? Jarvis.controlarDispositivo({ acao: 'falar', texto: fala }) : null;
-      falou = !!(r && r.status === 'success');
-    } catch (eV) { falou = false; }
-  }
   // Arma a cobrança de ponto na primeira notificação que vier do app de ponto.
   try {
     var _ap = String(p.getProperty('PONTO_APP') || 'sisponto').toLowerCase();
     if ((app + ' ' + pacote).toLowerCase().indexOf(_ap) !== -1) p.setProperty('PONTO_APP_VISTO', String(Date.now()));
   } catch (eA) {}
 
+  /* RESPONDE JÁ, AGE DEPOIS. Até 24/09 a fala e as regras (triagem JEV, escalada, lembretes)
+   * rodavam ANTES de responder à macro. Falar custa síntese + Drive + a fila da voz (até 75 s de
+   * espera), e a macro desistia: de 151 envios medidos entre 09 e 23/09, só 98 chegaram (p90 de
+   * 37 s, pior caso 6 min) — a catraca da escola entre os perdidos. O que a macro precisa saber é
+   * só "guardei". O resto vai para a fila: loopback assinado agora (AsyncBroker) e, se ele não
+   * pegar, o tick de 1 min (tickAlertasVoz) recolhe. d.sincrono mantém o caminho antigo (diag). */
+  if (d.sincrono === true) {
+    var rs = _notifProcessar({ doc: doc, querFalar: querFalar });
+    return { ok: true, guardado: true, app: app, titulo: titulo, falou: rs.falou, noDia: cont + 1, regra: rs.regra };
+  }
+  var idFila = _notifEnfileirar({ doc: doc, querFalar: querFalar });
+  if (idFila) _notifDisparar(idFila);
+  return { ok: true, guardado: true, app: app, titulo: titulo, noDia: cont + 1,
+           processamento: idFila ? 'fila' : 'fila_indisponivel' };
+}
+
+/* ── FILA DE PROCESSAMENTO DAS NOTIFICAÇÕES ─────────────────────────────────────────────────
+ * Script Property NOTIF_FILA: [{id, em, doc, querFalar}]. Pequena por natureza (esvazia em
+ * segundos); o teto protege o limite de 9 KB por property. Mexe com UserLock, não ScriptLock:
+ * a fala segura o ScriptLock por até 45 s, e esperar por ele aqui traria de volta a lentidão
+ * que a fila existe para tirar. O Web App roda como quem implantou, então o UserLock é
+ * compartilhado entre todas as execuções. Tirar da fila ANTES de processar = no máximo uma vez. */
+var _NOTIF_FILA_MAX = 15;
+
+function _notifFilaLer() {
+  try { return JSON.parse(PropertiesService.getScriptProperties().getProperty('NOTIF_FILA') || '[]'); } catch (e) { return []; }
+}
+function _notifFilaGravar(arr) {
+  PropertiesService.getScriptProperties().setProperty('NOTIF_FILA', JSON.stringify(arr || []));
+}
+function _notifComLock(fn) {
+  var lk = null;
+  try { lk = LockService.getUserLock(); if (!lk.tryLock(5000)) lk = null; } catch (e) { lk = null; }
+  try { return fn(); } finally { if (lk) { try { lk.releaseLock(); } catch (e2) {} } }
+}
+
+function _notifEnfileirar(job) {
+  var id = 'nf' + Date.now().toString(36) + Math.floor(Math.random() * 1296).toString(36);
+  var d = job.doc || {};
+  var item = { id: id, em: Date.now(), querFalar: !!job.querFalar,
+               doc: { app: d.app, pacote: d.pacote, titulo: String(d.titulo || '').substring(0, 200),
+                      texto: String(d.texto || '').substring(0, 600), em: d.em, dia: d.dia } };
+  try {
+    return _notifComLock(function () {
+      var fila = _notifFilaLer();
+      fila.push(item);
+      // Teto: descarta a MAIS ANTIGA (já teve o tick inteiro para ser processada) e deixa rastro.
+      while (fila.length > _NOTIF_FILA_MAX) {
+        var fora = fila.shift();
+        try { Jarvis.registrarEvento({ tool: 'notif:fila_cheia', ok: false, ms: 0, resumo: 'descartada ' + (fora.doc && fora.doc.app) }); } catch (eEv) {}
+      }
+      _notifFilaGravar(fila);
+      return id;
+    });
+  } catch (e) { return null; }
+}
+
+/** Tira da fila: um id específico (loopback) ou tudo que tem mais de `idadeMinMs` (tick). */
+function _notifTirarDaFila(id, idadeMinMs) {
+  return _notifComLock(function () {
+    var fila = _notifFilaLer(), agora = Date.now(), saem = [], ficam = [];
+    fila.forEach(function (x) {
+      var sai = id ? (x.id === id) : ((agora - Number(x.em || 0)) >= (idadeMinMs || 0));
+      (sai ? saem : ficam).push(x);
+    });
+    if (saem.length) _notifFilaGravar(ficam);
+    return saem;
+  });
+}
+
+/** Loopback de 1 s (mesmo mecanismo e assinatura do AsyncBroker). Falha aqui é inofensiva: o tick recolhe. */
+function _notifDisparar(id) {
+  try {
+    if (typeof _brokerUrl !== 'function' || typeof _brokerSig !== 'function') return;
+    UrlFetchApp.fetch(_brokerUrl(), {
+      method: 'post', contentType: 'application/json', muteHttpExceptions: true, timeoutSeconds: 1,
+      payload: JSON.stringify({ __broker: 'NOTIF', jobId: id, signature: _brokerSig('NOTIF', id, '') })
+    });
+  } catch (e) { /* timeout esperado — o alvo segue executando */ }
+}
+
+/** A parte lenta: fala opt-in + regras. Devolve {falou, regra}. */
+function _notifProcessar(job) {
+  var d = job.doc || {}, t0 = Date.now(), falou = null, regra = null;
+  if (job.querFalar && _notifPodeFalar()) {
+    var fala = 'Notificação do ' + (d.app || 'celular') + '. ' + _notifCorpoFalavel(d.titulo, d.texto, d.em || Date.now());
+    try {
+      var r = (typeof Jarvis !== 'undefined' && Jarvis.controlarDispositivo)
+        ? Jarvis.controlarDispositivo({ acao: 'falar', texto: fala }) : null;
+      falou = !!(r && r.status === 'success');
+    } catch (eV) { falou = false; }
+  }
   // REGRAS: guardar não é agir. A primeira regra que casar decide o que fazer com isto.
-  var acaoRegra = null;
-  try { acaoRegra = _notifAplicarRegras(doc); } catch (eR) { acaoRegra = { erro: eR.message }; }
-  return { ok: true, guardado: true, app: app, titulo: titulo, falou: falou, noDia: cont + 1, regra: acaoRegra };
+  try { regra = _notifAplicarRegras(d); } catch (eR) { regra = { erro: eR.message }; }
+  try {
+    if (typeof Jarvis !== 'undefined' && Jarvis.registrarEvento) Jarvis.registrarEvento({
+      tool: 'notif:processada', ok: !(regra && regra.erro), ms: Date.now() - t0,
+      resumo: (d.app || '?') + ' · ' + ((regra && (regra.acao || regra.modo)) || 'sem regra') +
+              (falou ? ' · falou' : '') + (job.via ? ' · via ' + job.via : '')
+    });
+  } catch (eEv) {}
+  return { falou: falou, regra: regra };
+}
+
+/** Rota do loopback (doPost, __broker === 'NOTIF'). */
+function _notifProcessarLoopback(body) {
+  var itens = _notifTirarDaFila(body.jobId);
+  itens.forEach(function (x) { x.via = 'loopback'; _notifProcessar(x); });
+  return itens.length;
+}
+
+/** Rede de segurança no tick de 1 min: o que o loopback não pegou em 20 s, o tick processa. */
+function _notifProcessarPendentes() {
+  if (!_notifFilaLer().length) return 0;   // caminho comum: fila vazia, uma leitura de property
+  var itens = _notifTirarDaFila(null, 20000);
+  itens.forEach(function (x) { x.via = 'tick'; _notifProcessar(x); });
+  return itens.length;
 }
 
 /* A janela de fala saiu da MACRO para cá. Na macro, a restrição 06:00–20:00 ficava no nível do
@@ -5995,6 +6110,10 @@ var _GOLDEN_VOZ = [
   ['modo cinema', 'rotina:cinema'],
   ['sair do modo cinema', 'rotina:cinema_off'],
   ['modo foco', 'rotina:foco'],
+  ['sair do modo foco', 'rotina:foco_off'],        // ligava o foco em vez de desligar (24/09)
+  ['vou dormir', 'rotina:boa_noite'],
+  ['acordei', 'rotina:bom_dia'],
+  ['boa noite', 'nao_coberto'],                    // ARMADILHA: cumprimento nao silencia o aparelho
   // --- biblia
   ['abre a biblia no salmo 23', 'biblia'],
   ['leia joao 3 versiculo 16', 'biblia'],

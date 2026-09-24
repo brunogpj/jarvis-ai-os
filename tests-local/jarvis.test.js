@@ -1292,3 +1292,64 @@ test('Golden set da voz continua 100% com as rotas de relógio e agenda', functi
   var r = s.diagGoldenVoz({});
   assert.strictEqual(r.falhou, 0, JSON.stringify(r.falhas));
 });
+
+// ───────────────────────── 📥 Notificações: responde já, fala depois (fila) ─────────────────────────
+function _sandboxNotif() {
+  var s = code({ props: { NOTIF_FALAR_JANELA: '00:00-23:59' } });
+  s.__falas = [];
+  s.Jarvis.controlarDispositivo = function (a) { s.__falas.push(a.texto); return { status: 'success' }; };
+  return s;
+}
+
+test('Notificação: a resposta à macro NÃO espera a fala (era a causa de 1/3 das perdidas)', function () {
+  var s = _sandboxNotif();
+  var r = s.registrarNotificacao({ app: 'Agenda Edu', titulo: 'Catraca', texto: 'Entrada registrada', falar: '1' });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.guardado, true);
+  assert.strictEqual(r.processamento, 'fila');
+  assert.strictEqual(s.__falas.length, 0, 'nada de síntese antes de responder');
+  var fila = JSON.parse(s.PropertiesService.getScriptProperties().getProperty('NOTIF_FILA'));
+  assert.strictEqual(fila.length, 1);
+  assert.strictEqual(fila[0].querFalar, true);
+});
+
+test('Notificação: o loopback processa a SUA notificação e ela sai da fila (no máximo uma vez)', function () {
+  var s = _sandboxNotif();
+  s.registrarNotificacao({ app: 'Agenda Edu', titulo: 'Catraca', texto: 'Entrada registrada', falar: '1' });
+  var id = JSON.parse(s.PropertiesService.getScriptProperties().getProperty('NOTIF_FILA'))[0].id;
+  assert.strictEqual(s._notifProcessarLoopback({ jobId: id }), 1);
+  assert.strictEqual(s.__falas.length, 1);
+  assert.match(s.__falas[0], /Agenda Edu/);
+  assert.strictEqual(s._notifProcessarLoopback({ jobId: id }), 0, 'segundo disparo não fala de novo');
+  assert.strictEqual(s.__falas.length, 1);
+});
+
+test('Notificação: o tick só recolhe o que o loopback deixou para trás (mais de 20 s)', function () {
+  var s = _sandboxNotif();
+  s.registrarNotificacao({ app: 'Swile', titulo: 'Compra', texto: 'R$ 10', falar: '1' });
+  assert.strictEqual(s._notifProcessarPendentes(), 0, 'recente: ainda é a vez do loopback');
+  var sp = s.PropertiesService.getScriptProperties();
+  var fila = JSON.parse(sp.getProperty('NOTIF_FILA'));
+  fila[0].em -= 25000;
+  sp.setProperty('NOTIF_FILA', JSON.stringify(fila));
+  assert.strictEqual(s._notifProcessarPendentes(), 1);
+  assert.strictEqual(s.__falas.length, 1);
+  assert.strictEqual(JSON.parse(sp.getProperty('NOTIF_FILA')).length, 0);
+});
+
+test('Notificação: fila tem teto (limite de 9 KB por property) e descarta a mais antiga', function () {
+  var s = _sandboxNotif();
+  for (var i = 0; i < 20; i++) s.registrarNotificacao({ app: 'App' + i, titulo: 't' + i, texto: 'x'.repeat(900) });
+  var raw = s.PropertiesService.getScriptProperties().getProperty('NOTIF_FILA');
+  var fila = JSON.parse(raw);
+  assert.strictEqual(fila.length, 15);
+  assert.strictEqual(fila[0].doc.app, 'App5', 'as 5 mais antigas saíram');
+  assert.ok(raw.length < 9000 * 1.2, 'texto é truncado na fila');
+});
+
+test('Notificação: modo síncrono (diag) continua falando na hora', function () {
+  var s = _sandboxNotif();
+  var r = s.registrarNotificacao({ app: 'Teste', titulo: 'T', texto: 'agora', falar: '1', sincrono: true });
+  assert.strictEqual(r.falou, true);
+  assert.strictEqual(s.__falas.length, 1);
+});

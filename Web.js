@@ -99,14 +99,14 @@ var Web = (function () {
 
   /** Tick (~15 min): verifica todos os monitores e avisa mudanças no WhatsApp do dono. */
   function verificarMudancas() {
-    var num = _p('WHATSAPP_OWNER_NUMBER'), avisos = 0;
+    var avisos = 0;
     Firestore.listDocs(COL, 50).forEach(function (m) {
       var d = m.dados || {};
       if (d.ativo === false) return;
       var h = _hashConteudo(d.url);
       if (h.erro) return; // ignora falha temporária de acesso
       if (d.hash && h.hash !== d.hash) {
-        try { if (num && typeof WhatsApp !== 'undefined') WhatsApp.enviar(num, '🌐 *Página monitorada mudou*\n' + (d.descricao || d.url) + '\n' + d.url); } catch (e) {}
+        try { if (typeof _avisarDono === 'function') _avisarDono({ origem: 'web-monitor', titulo: '🌐 Página monitorada mudou', texto: (d.descricao || d.url) + '\n' + d.url }); } catch (e) {}
         try { if (typeof WikiMemoryService !== 'undefined') WikiMemoryService.registrarNoLog('[web] mudança detectada: ' + d.url); } catch (e) {}
         avisos++;
       }

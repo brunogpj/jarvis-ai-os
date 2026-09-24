@@ -65,7 +65,6 @@ var Agenda = (function () {
       var dow = Number(Utilities.formatDate(agora, 'America/Sao_Paulo', 'u')) % 7; // 1=Seg..7=Dom → %7: Dom=0,Seg=1..Sáb=6
       var hoje = Utilities.formatDate(agora, 'America/Sao_Paulo', 'yyyy-MM-dd');
       var owner = _p('OWNER_EMAIL');
-      var num = _p('WHATSAPP_OWNER_NUMBER');
       Firestore.listDocs(COL, 100).forEach(function (t) {
         var d = t.dados;
         if (d.ativo === false) return;
@@ -75,7 +74,7 @@ var Agenda = (function () {
         var resp = '';
         try { resp = Jarvis.ask(d.email || owner, d.descricao, [], null, { interativo: false }); } catch (e) { resp = '⚠️ ' + e.message; }
         try { if (typeof WikiMemoryService !== 'undefined') WikiMemoryService.registrarNoLog('[tarefa] ' + d.descricao + ' → ' + String(resp).substring(0, 150)); } catch (e) {}
-        try { if (num && typeof WhatsApp !== 'undefined') WhatsApp.enviar(num, '⏰ Tarefa agendada — ' + d.descricao + ':\n\n' + String(resp).substring(0, 1500)); } catch (e) {}
+        try { if (typeof _avisarDono === 'function') _avisarDono({ origem: 'agenda', titulo: '⏰ ' + d.descricao, texto: resp }); } catch (e) {}
         var upd = { ultimaExecucao: hoje, ultimoResultado: String(resp).substring(0, 500) };
         if (d.frequencia === 'unico') upd.ativo = false;
         try { Firestore.updateDoc(COL, t.id, upd); } catch (e) {}

@@ -1174,3 +1174,57 @@ test('Cancelar tarefa agendada: nada encontrado NÃO é success', function () {
   assert.notStrictEqual(r.status, 'success', 'foi assim que "cancelou" uma tarefa que já não existia');
   assert.strictEqual(r.removidas, 0);
 });
+
+// ───────────────────────── 📲 Avisos proativos: celular, não WhatsApp (Evolution fora do ar desde 10/07) ─────────────────────────
+function _janelaSilencioAgora(dentro) {
+  var h = new Date().getHours();
+  return dentro ? (h + ':00-' + ((h + 1) % 24) + ':00') : (((h + 2) % 24) + ':00-' + ((h + 3) % 24) + ':00');
+}
+
+test('Aviso ao dono: sempre notificação, texto limpo e curto (cabe na URL do MacroDroid)', function () {
+  var s = code({ props: { PROATIVO_SILENCIO: _janelaSilencioAgora(false) } });
+  var cmds = [];
+  s.Jarvis.controlarDispositivo = function (a) { cmds.push(a); return { status: 'success' }; };
+  var r = s._avisarDono({ origem: 'agenda', titulo: '⏰ *Resumo*', texto: '*Negrito* e _itálico_ ' + 'x'.repeat(900) });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(cmds.length, 1, 'sem `falar`, só a notificação');
+  assert.strictEqual(cmds[0].acao, 'notificar');
+  assert.strictEqual(cmds[0].titulo, '⏰ Resumo', 'markdown do WhatsApp não vai para a notificação');
+  assert.ok(cmds[0].texto.indexOf('*') === -1 && cmds[0].texto.indexOf('_') === -1);
+  assert.ok(cmds[0].texto.length <= 400, 'texto longo estoura o teto de 2 KB da URL do UrlFetch');
+});
+
+test('Aviso ao dono: `falar` só fala fora da janela de silêncio', function () {
+  var cmds = [];
+  var s = code({ props: { PROATIVO_SILENCIO: _janelaSilencioAgora(false) } });
+  s.Jarvis.controlarDispositivo = function (a) { cmds.push(a.acao); return { status: 'success' }; };
+  s._avisarDono({ titulo: 'Segurança', texto: '3 tentativas', falar: 'Atenção, Bruno' });
+  assert.deepStrictEqual(cmds, ['notificar', 'falar']);
+
+  cmds = [];
+  var n = code({ props: { PROATIVO_SILENCIO: _janelaSilencioAgora(true) } });
+  n.Jarvis.controlarDispositivo = function (a) { cmds.push(a.acao); return { status: 'success' }; };
+  n._avisarDono({ titulo: 'Segurança', texto: '3 tentativas', falar: 'Atenção, Bruno' });
+  assert.deepStrictEqual(cmds, ['notificar'], 'de madrugada só notifica, não acorda ninguém');
+});
+
+test('Aviso ao dono: falha na entrega fica registrada, não some calada', function () {
+  var eventos = [];
+  var s = code({});
+  s.Jarvis.controlarDispositivo = function () { return { status: 'error', erro: 'macro ausente' }; };
+  s.Jarvis.registrarEvento = function (e) { eventos.push(e); };
+  var r = s._avisarDono({ origem: 'heartbeat', titulo: 'Rotina parada', texto: 'agenda' });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(eventos.length, 1);
+  assert.strictEqual(eventos[0].tool, 'aviso:heartbeat');
+  assert.match(eventos[0].resumo, /FALHOU: macro ausente/);
+});
+
+test('Nenhum aviso proativo ao dono depende mais do WhatsApp', function () {
+  var fs = require('fs'), path = require('path');
+  ['Agenda.js', 'AsyncBroker.js', 'Heartbeat.js', 'Jobs.js', 'Monitor.js', 'Objetivos.js', 'Web.js'].forEach(function (f) {
+    var src = fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
+    assert.ok(src.indexOf('WhatsApp.enviar(num') === -1, f + ' ainda avisa pelo WhatsApp — que está desligado');
+    assert.ok(src.indexOf('_avisarDono(') !== -1, f + ' deveria avisar pelo celular');
+  });
+});

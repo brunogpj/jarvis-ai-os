@@ -67,7 +67,6 @@ var Monitor = (function () {
 
     if (novos.length) {
       var owner = _p('OWNER_EMAIL');
-      var num = _p('WHATSAPP_OWNER_NUMBER');
       var lista = novos.slice(0, 5).map(function (n, i) {
         return (i + 1) + ') De: ' + n.de + '\n   Assunto: ' + n.assunto + '\n   Trecho: ' + n.trecho;
       }).join('\n\n');
@@ -75,7 +74,7 @@ var Monitor = (function () {
         cfg.acao + '\n\nE-mails:\n' + lista;
       var resp = '';
       try { resp = Jarvis.ask(owner, instrucao, [], null, { interativo: false }); } catch (e) { resp = '⚠️ ' + e.message; }
-      try { if (num && typeof WhatsApp !== 'undefined') WhatsApp.enviar(num, '📬 Monitor de e-mail — ' + novos.length + ' novo(s):\n\n' + String(resp).substring(0, 1500)); } catch (e) {}
+      try { if (typeof _avisarDono === 'function') _avisarDono({ origem: 'monitor-gmail', titulo: '📬 ' + novos.length + ' e-mail(s) novo(s)', texto: resp }); } catch (e) {}
       try { if (typeof WikiMemoryService !== 'undefined') WikiMemoryService.registrarNoLog('[monitor-gmail] ' + novos.length + ' e-mail(s) → ' + String(resp).substring(0, 150)); } catch (e) {}
     }
 

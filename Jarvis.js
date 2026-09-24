@@ -2466,13 +2466,14 @@ var Jarvis = (function () {
     } catch (e) { return { ok: false, erro: e.message }; }
   }
 
-  // Avisa o dono (WhatsApp, 1x por ID novo) que o arquivo de fala mudou de ID → a macro precisa da
+  // Avisa o dono (celular, 1x por ID novo) que o arquivo de fala mudou de ID → a macro precisa da
   // URL nova. Sem isso, a fala "corromperia" silenciosamente (a macro baixaria um arquivo morto).
   function _avisarDriftFala(novoId) {
     try { var ck = CacheService.getScriptCache(), k = 'driftFala_' + novoId; if (ck.get(k)) return; ck.put(k, '1', 86400); } catch (e) {}
     var url = _urlDownloadDrive(novoId);
     var msg = '⚠️ *Jarvis — atualize a macro de voz*\nO arquivo de fala mudou de ID no Drive. Na macro "Jarvis Falar" (ação Requisição HTTP GET), troque a URL para:\n' + url;
-    try { var num = _prop('WHATSAPP_OWNER_NUMBER'); if (num && typeof WhatsApp !== 'undefined') WhatsApp.enviar(num, msg); } catch (e) {}
+    // Notificação, não voz: é a própria voz que está quebrada quando este aviso é necessário.
+    try { if (typeof _avisarDono === 'function') _avisarDono({ origem: 'fala-drift', titulo: '⚠️ Atualize a macro Jarvis Falar', texto: 'O arquivo de fala mudou de ID. Nova URL: ' + url }); } catch (e) {}
     try { if (typeof WikiMemoryService !== 'undefined') WikiMemoryService.registrarNoLog('[fala] drift de ID → ' + url); } catch (e) {}
   }
 
@@ -2994,8 +2995,10 @@ var Jarvis = (function () {
       try { if (typeof WikiMemoryService !== 'undefined') WikiMemoryService.registrarNoLog('[SEGURANCA] guardrail disparado (' + motivo + '), hit #' + n); } catch (eLog) {}
       if (n >= 3 && !c.get('SEC_ALERTADO')) {
         c.put('SEC_ALERTADO', '1', 600);
-        var num = _prop('WHATSAPP_OWNER_NUMBER');
-        if (num && typeof WhatsApp !== 'undefined') WhatsApp.enviar(num, '🛡️ Jarvis (segurança): ' + n + ' tentativas de violação (' + motivo + ') nos últimos minutos.');
+        // Único aviso que também FALA: tentativa repetida de violação pede atenção agora, não depois.
+        if (typeof _avisarDono === 'function') _avisarDono({ origem: 'seguranca', titulo: '🛡️ Segurança do Jarvis',
+          texto: n + ' tentativas de violação (' + motivo + ') nos últimos minutos.',
+          falar: 'Atenção, Bruno: o Jarvis bloqueou ' + n + ' tentativas de violação nos últimos minutos.' });
       }
     } catch (e) {}
   }

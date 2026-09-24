@@ -114,14 +114,11 @@ var Jobs = (function () {
     return { resultado: 'Lote concluído: ' + enviados + ' enviados, ' + falhas + ' falhas (de ' + contatos.length + ').' };
   }
 
-  // Avisa o dono (log do wiki + WhatsApp, se configurado) ao concluir/errar um job.
+  // Avisa o dono (log do wiki + celular) ao concluir/errar um job.
   function _notificar(tipo, resultado) {
     var msg = String(resultado || 'concluída').substring(0, 300);
     try { if (typeof WikiMemoryService !== 'undefined') WikiMemoryService.registrarNoLog('[job:' + tipo + '] ' + msg); } catch (e) {}
-    try {
-      var num = PropertiesService.getScriptProperties().getProperty('WHATSAPP_OWNER_NUMBER');
-      if (num && typeof WhatsApp !== 'undefined') WhatsApp.enviar(num, '🤖 Jarvis (segundo plano · ' + tipo + '): ' + msg);
-    } catch (e) {}
+    try { if (typeof _avisarDono === 'function') _avisarDono({ origem: 'job', titulo: '🤖 Segundo plano · ' + tipo, texto: msg }); } catch (e) {}
   }
 
   return { enfileirar: enfileirar, processar: processar };

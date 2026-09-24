@@ -114,11 +114,9 @@ function doGet(e) {
         // Simula a fala do usuário na conversa atual (chama ask)
         var respLLM = Jarvis.ask(cbDoc.emailUser, textoResposta, null, null, { interativo: true, conversaId: cbDoc.conversaId });
         
-        // Se tiver WhatsApp configurado, envia a resposta de volta ao usuário para manter a conversa
-        var num = PropertiesService.getScriptProperties().getProperty('WHATSAPP_OWNER_NUMBER');
-        if (num && typeof WhatsApp !== 'undefined' && respLLM) {
-          WhatsApp.enviar(num, "🤖 *Jarvis:* " + respLLM);
-        }
+        // A resposta volta para o celular: ele acabou de tocar no botão e espera ouvir o retorno.
+        // (Ia para o WhatsApp, fora do ar desde 10/07 — a resposta simplesmente sumia.)
+        if (respLLM) { try { _avisarDono({ origem: 'interativa', titulo: '🤖 Jarvis', texto: respLLM, falar: respLLM }); } catch (eAv) {} }
         
         return ContentService.createTextOutput("Callback processado. Resposta enviada.").setMimeType(ContentService.MimeType.TEXT);
       } else {
@@ -132,13 +130,9 @@ function doGet(e) {
           Logger.log(logMsg);
         }
         
-        // Envia mensagem de sucesso via WhatsApp
-        var num = PropertiesService.getScriptProperties().getProperty('WHATSAPP_OWNER_NUMBER');
-        if (num && typeof WhatsApp !== 'undefined') {
-          var escolhaStr = (botao === '1' ? cbDoc.opcao1 : (botao === '2' ? cbDoc.opcao2 : resposta));
-          var msgSuccess = "✅ *Ação Executada com Sucesso!*\nNotificação: " + cbDoc.texto + "\nEscolha: " + escolhaStr;
-          WhatsApp.enviar(num, msgSuccess);
-        }
+        // Confirmação no celular (era WhatsApp, fora do ar desde 10/07).
+        var escolhaStr = (botao === '1' ? cbDoc.opcao1 : (botao === '2' ? cbDoc.opcao2 : resposta));
+        try { _avisarDono({ origem: 'interativa', titulo: '✅ Ação executada', texto: cbDoc.texto + '\nEscolha: ' + escolhaStr }); } catch (eAv) {}
         
         return ContentService.createTextOutput("Ação executada com sucesso.").setMimeType(ContentService.MimeType.TEXT);
       }
@@ -6294,6 +6288,42 @@ function _dentroDoSilencio(quando) {
   var atual = d.getHours() * 60 + d.getMinutes();
   var ini = Number(m[1]) * 60 + Number(m[2]), fim = Number(m[3]) * 60 + Number(m[4]);
   return (ini <= fim) ? (atual >= ini && atual < fim) : (atual >= ini || atual < fim);
+}
+
+/* AVISO PROATIVO AO DONO -- um caminho so, e ele vai para o CELULAR.
+ * Ate 23/09 cada modulo avisava por conta propria com WhatsApp.enviar: resultado de tarefa
+ * agendada, monitor de e-mail, Heartbeat, objetivo concluido, pagina monitorada, alerta de
+ * seguranca. A Evolution saiu do ar em 10/07 (o Railway removeu o servico) e o Bruno decidiu
+ * mante-la desligada -- desde entao TODOS esses avisos falhavam calados, dentro de try/catch
+ * vazio. O Heartbeat, que existe para avisar quando algo para, parou de avisar sem ninguem saber.
+ * Agora: notificacao silenciosa sempre (evento jarvis_notificar da macro Jarvis Notificar) e,
+ * so quando o chamador passa `falar`, voz tambem -- fora da janela de silencio. Texto de
+ * notificacao e curto por construcao: vai na query da URL do MacroDroid, e o UrlFetch tem teto
+ * de 2 KB de URL (acento vira %C3%A7, ate 6x o tamanho).
+ * o {origem, titulo, texto, falar?} → {ok, notificacao, fala} */
+function _avisarDono(o) {
+  o = o || {};
+  var limpar = function (s) {   // markdown do WhatsApp (*negrito*, _italico_, `codigo`) vira ruido na notificacao
+    return String(s || '').replace(/[*_`]/g, '').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  };
+  var titulo = limpar(o.titulo || 'Jarvis').substring(0, 60);
+  var texto = limpar(o.texto);
+  if (texto.length > 400) texto = texto.substring(0, 399).replace(/\s+\S*$/, '') + '…';
+  var r = { ok: false, notificacao: null, fala: null };
+  if (typeof Jarvis === 'undefined' || !Jarvis.controlarDispositivo) return r;
+  try { r.notificacao = Jarvis.controlarDispositivo({ acao: 'notificar', titulo: titulo, texto: texto }); } catch (eN) { r.notificacao = { status: 'error', erro: eN.message }; }
+  if (o.falar && !_dentroDoSilencio()) {
+    try { r.fala = Jarvis.controlarDispositivo({ acao: 'falar', texto: String(o.falar) }); } catch (eF) { r.fala = { status: 'error', erro: eF.message }; }
+  }
+  r.ok = !!(r.notificacao && r.notificacao.status === 'success');
+  // Rastro no mesmo log das ferramentas: aviso que nao chega precisa ser visivel em algum lugar.
+  try {
+    if (Jarvis.registrarEvento) Jarvis.registrarEvento({
+      tool: 'aviso:' + (o.origem || 'geral'), ok: r.ok, ms: 0,
+      resumo: r.ok ? (titulo + ' — ' + texto).substring(0, 160) : ('FALHOU: ' + ((r.notificacao && (r.notificacao.erro || r.notificacao.status)) || 'sem resposta'))
+    });
+  } catch (eEv) {}
+  return r;
 }
 
 /** Cria um lembrete condicional. args {gatilho, texto, validadeDias?, repetir?}. */

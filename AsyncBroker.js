@@ -207,11 +207,8 @@ function _brokerReduzir(jobId, meta, tasks) {
   // Limpeza: remove os docs de tarefa (mantém o META). Coleção enxuta.
   try { tasks.forEach(function (t) { Firestore.deleteDoc(BROKER_COL, jobId + '__' + t.taskId); }); } catch (e) {}
   try { if (typeof WikiMemoryService !== 'undefined') WikiMemoryService.registrarNoLog('[broker] job ' + jobId + ' concluído: ' + String(saida).substring(0, 120)); } catch (e) {}
-  // Notifica o dono no WhatsApp (preview).
-  try {
-    var p = PropertiesService.getScriptProperties(), num = p.getProperty('WHATSAPP_OWNER_NUMBER');
-    if (num && typeof WhatsApp !== 'undefined') WhatsApp.enviar(num, '🤖 *Broker — ' + (meta.title || jobId) + ' concluído*\n\n' + String(saida).substring(0, 700));
-  } catch (e) {}
+  // Notifica o dono no celular (preview). Era WhatsApp — fora do ar desde 10/07; ver _avisarDono.
+  try { if (typeof _avisarDono === 'function') _avisarDono({ origem: 'broker', titulo: '🤖 ' + (meta.title || jobId) + ' concluído', texto: saida }); } catch (e) {}
 }
 
 // ===================================================================================

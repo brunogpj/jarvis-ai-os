@@ -103,10 +103,7 @@ var Objetivos = (function () {
 
     Firestore.updateDoc(COL, id, { status: 'concluido', sintese: sintese.substring(0, 1500), atualizadoEm: Date.now() });
     try { if (typeof WikiMemoryService !== 'undefined') WikiMemoryService.registrarNoLog('[objetivo] ' + d.objetivo + ' → ' + sintese.substring(0, 150)); } catch (e) {}
-    try {
-      var num = _p('WHATSAPP_OWNER_NUMBER');
-      if (num && typeof WhatsApp !== 'undefined') WhatsApp.enviar(num, '🎯 Objetivo concluído — ' + String(d.objetivo).substring(0, 80) + ':\n\n' + sintese.substring(0, 1400));
-    } catch (e) {}
+    try { if (typeof _avisarDono === 'function') _avisarDono({ origem: 'objetivo', titulo: '🎯 Objetivo concluído', texto: String(d.objetivo).substring(0, 80) + ': ' + sintese }); } catch (e) {}
     return { status: 'success', plano: plano, resultados: resultados, sintese: sintese };
   }
 

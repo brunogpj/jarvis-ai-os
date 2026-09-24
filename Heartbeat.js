@@ -91,9 +91,8 @@ var Heartbeat = (function () {
       var quando = (a.idadeMin == null) ? 'sem registro de batida' : ('parado há ~' + a.idadeMin + ' min');
       return '• ' + a.nome + ' (' + quando + ')' + (a.rearmou ? ' — gatilho re-armado ✅' : '');
     });
-    var msg = '🩺 *Jarvis — saúde do motor*\nUm processo de fundo pode ter parado (cota de gatilhos?):\n'
-            + linhas.join('\n') + '\n\nSe persistir, rode `statusJarvis` / reinstale os gatilhos no editor.';
-    try { var num = P.getProperty('WHATSAPP_OWNER_NUMBER'); if (num && typeof WhatsApp !== 'undefined') WhatsApp.enviar(num, msg); } catch (e) { Logger.log('[Heartbeat] notificar: ' + e.message); }
+    // Ia para o WhatsApp — que caiu em 10/07 e levou junto justamente o aviso de que algo parou.
+    try { if (typeof _avisarDono === 'function') _avisarDono({ origem: 'heartbeat', titulo: '🩺 Rotina do Jarvis parada', texto: linhas.join('\n') }); } catch (e) { Logger.log('[Heartbeat] notificar: ' + e.message); }
     try { if (typeof WikiMemoryService !== 'undefined') WikiMemoryService.registrarNoLog('[heartbeat] ' + linhas.join(' | ')); } catch (e) {}
   }
 

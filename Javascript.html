@@ -1456,11 +1456,11 @@
           evento: eventoCardHtml(d.eventos || [], d.conflitoAgenda, esc),
           tarefa: tarefaCardHtml(d.tarefas || [], esc),
           autoriz: autorizCardHtml(d.autorizacoes || [], esc),
-          pendencia: pendenciaCardHtml(window.__pendLista, d.modoSecretaria, esc, d.emailsNaoLidos),
+          pendencia: pendenciaCardHtml(window.__pendLista, d.modoSecretaria, esc, d.emailsNaoLidos, d.whatsappAtivo === true),
           conhecimento: conhecimentoCardHtml(d, esc),
           objetivos: objetivosCardHtml(d, esc),
           midia: midiaCardHtml(d, esc),
-          agendada: agendadaCardHtml(d.agendadas || [], esc),
+          agendada: agendadaCardHtml(d.agendadas || [], esc, d.whatsappAtivo === true),
           monitor: monitorCardHtml(d.monitores || [], esc),
           atividade: atividadeCardHtml(at, esc),
           revisao: revisaoCardHtml(rv, esc),
@@ -1944,7 +1944,22 @@
           (rows ? '<ul class="dash-list av-ul">' + rows + '</ul>' : '<p class="dash-empty">Nenhum pedido aguardando</p>') + '</div>';
       }
 
-      function agendadaCardHtml(lista, esc) {
+      function agendadaCardHtml(lista, esc, waAtivo) {
+        // WhatsApp desligado: sem formulário (a mensagem nunca sairia). O que já estava agendado
+        // continua visível — com aviso de que não vai sair — para poder ser cancelado.
+        if (!waAtivo) {
+          var pend = (lista || []).map(function (m) {
+            var q = String(m.quando || "").substring(0, 16).replace("T", " ");
+            return '<li class="av-row" data-id="' + esc(m.id) + '"><div class="av-info"><div class="av-top"><b>' + esc(q) + '</b> → ' + esc(m.contato || "") + '</div>' +
+              '<div class="av-texto">' + esc(m.mensagem || "") + ' <i>(não será enviada)</i></div></div>' +
+              '<div class="av-acts"><button type="button" class="av-btn av-btn--del" data-act="cancelar" title="Cancelar">🗑️</button></div></li>';
+          }).join("");
+          return '<div class="dash-card dash-card--info act-card" data-cardkey="agendada">' +
+            '<div class="dash-card__head"><span class="dash-card__icon">⏰</span><h3>Mensagens agendadas</h3><span class="dash-card__count">' + (lista || []).length + '</span></div>' +
+            '<p class="dash-empty">WhatsApp desligado — agendamento indisponível.</p>' +
+            (pend ? '<ul class="dash-list av-ul">' + pend + '</ul>' : '') +
+            '</div>';
+        }
         var rows = (lista || []).map(function (m) {
           var quando = String(m.quando || "").substring(0, 16).replace("T", " ");
           var rep = (m.repete && m.repete !== "uma vez") ? (" · " + m.repete) : "";
@@ -2076,7 +2091,19 @@
       /* 🛡️ Modo Secretária — caixa de DECISÕES (aprovar/editar/ignorar rascunhos da IA) */
       function pendUrgente(txt) { return /(urgent|imediat|\bagora\b|emerg[êe]nc|problema|contrato|fechar neg|preciso j[áa]|hoje ainda|cobran[çc]a)/i.test(txt || ""); }
       
-      function pendenciaCardHtml(lista, modoOn, esc, emailsCount) {
+      function pendenciaCardHtml(lista, modoOn, esc, emailsCount, waAtivo) {
+        // WhatsApp desligado: o card mostrava "Modo Secretária 🟢 ON" e "0 pendências no WhatsApp",
+        // como se estivesse funcionando. Fica só o que funciona — e-mails e o Resumo Rápido.
+        if (!waAtivo) {
+          return '<div class="dash-card dash-card--info pend-card">' +
+            '<div class="dash-card__head"><span class="dash-card__icon">🛡️</span><h3>Comunicação</h3>' +
+            '<span class="pend-toggle" title="A Evolution API está desligada">⚪ WhatsApp desligado</span></div>' +
+            '<div class="pend-status-summary" style="margin-bottom:10px;"><div class="av-texto" style="font-size:12px;opacity:0.85;">📧 ' +
+              (emailsCount != null ? 'Emails não lidos: <b>' + emailsCount + '</b>' : 'E-mails') + '</div></div>' +
+            '<div class="briefing-box" id="briefingBox" hidden></div>' +
+            '<button type="button" class="dash-card-btn" data-act="resumorapido" style="margin-top:12px;" title="Resumo rápido das últimas 2 horas"><i class="fas fa-magic"></i> Resumo Rápido</button>' +
+            '</div>';
+        }
         var arr = (lista || []).slice().sort(function (a, b) { return (pendUrgente(b.recebida) ? 1 : 0) - (pendUrgente(a.recebida) ? 1 : 0); });
         var rows = arr.map(function (p) {
           var urg = pendUrgente(p.recebida);

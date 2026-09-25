@@ -1915,6 +1915,7 @@ function dashboardResumo(token) {
 
   // ⏰ Mensagens agendadas
   try { out.agendadas = (typeof WhatsApp !== 'undefined' ? WhatsApp.listarAgendadas() : []); } catch (e) { out.agendadas = []; }
+  out.whatsappAtivo = _whatsappAtivo();
 
   // 🌐 Monitores web
   try { out.monitores = (typeof Web !== 'undefined' ? Web.listar() : []); } catch (e) { out.monitores = []; }
@@ -2119,9 +2120,19 @@ function uiEventoExcluir(token, titulo) {
   }
 }
 
+/* WHATSAPP LIGADO OU NÃO — opt-in explícito (WHATSAPP_ATIVO=sim).
+ * A Evolution saiu do ar em 10/07 e o Bruno decidiu, em 23/09, mantê-la desligada. Mesmo assim o
+ * painel seguia mostrando "Modo Secretária: ON" e aceitando agendar mensagem — que nunca sairia.
+ * Padrão desligado: religar é decisão, não acidente (a URL da Evolution continua configurada). */
+function _whatsappAtivo() {
+  try { return String(PropertiesService.getScriptProperties().getProperty('WHATSAPP_ATIVO') || '').toLowerCase() === 'sim'; }
+  catch (e) { return false; }
+}
+
 // ⏰ Mensagens Agendadas (WhatsApp)
 function uiAgendarWhatsApp(token, contato, mensagem, dataISO, repetirDias, repetirMeses) {
   if (!_uiOwner(token)) return { ok: false, erro: 'Apenas o proprietário.' };
+  if (!_whatsappAtivo()) return { ok: false, erro: 'O WhatsApp está desligado — a mensagem nunca seria enviada. Para religar, grave WHATSAPP_ATIVO=sim.' };
   if (!contato || !mensagem || !dataISO) return { ok: false, erro: 'Contato, mensagem e data/hora são obrigatórios.' };
   try {
     var quando = new Date(dataISO).getTime();
@@ -2785,6 +2796,21 @@ function doPost(e) {
         return json({ ok: false, erro: 'não autorizado' });
       }
       try { return json(registrarAppsCelular(body)); } catch (eAp) { return json({ ok: false, erro: eAp.message }); }
+    }
+
+    // JANELA DE FALA DAS NOTIFICAÇÕES: só este ajuste, só no formato HH:MM-HH:MM. Existe para o
+    // dono (ou uma macro) mudar a hora sem abrir o editor; nada além da janela passa por aqui.
+    if (body && body.action === 'janela_notificacoes') {
+      if (!body.token || body.token !== PropertiesService.getScriptProperties().getProperty('VOICE_API_TOKEN')) {
+        return json({ ok: false, erro: 'não autorizado' });
+      }
+      var jn = String(body.janela || '').trim();
+      var mj = jn.match(/^([01]?\d|2[0-3]):([0-5]\d)-([01]?\d|2[0-3]):([0-5]\d)$/);
+      if (!mj) return json({ ok: false, erro: 'formato esperado HH:MM-HH:MM (ex.: 06:00-22:00)' });
+      var spJ = PropertiesService.getScriptProperties();
+      var antesJ = spJ.getProperty('NOTIF_FALAR_JANELA') || (_NOTIF_JANELA_PADRAO + ' (padrão)');
+      spJ.setProperty('NOTIF_FALAR_JANELA', jn);
+      return json({ ok: true, antes: antesJ, agora: jn });
     }
 
     // VIAGEM: a macro "Jarvis Viagem" manda velocidade/ETA e recebe de volta o que falar.
@@ -4758,9 +4784,11 @@ function _notifProcessarPendentes() {
 /* A janela de fala saiu da MACRO para cá. Na macro, a restrição 06:00–20:00 ficava no nível do
  * macro inteiro: fora dela o aparelho nem CAPTURAVA a notificação. Com a rota nova isso está errado
  * — perceber deve ser 24h (senão "o que eu perdi?" perde justamente a madrugada), e só a FALA tem
- * hora. Property NOTIF_FALAR_JANELA, padrão idêntico ao que ele já usava. */
+ * hora. Property NOTIF_FALAR_JANELA. Padrão estendido para 22:00 em 25/09, a pedido: o Mercado Pago
+ * das 20:51 de 24/09 ficou calado com ele em casa e acordado — a janela antiga vinha da macro. */
+var _NOTIF_JANELA_PADRAO = '06:00-22:00';
 function _notifPodeFalar() {
-  var j = String(PropertiesService.getScriptProperties().getProperty('NOTIF_FALAR_JANELA') || '06:00-20:00');
+  var j = String(PropertiesService.getScriptProperties().getProperty('NOTIF_FALAR_JANELA') || _NOTIF_JANELA_PADRAO);
   var m = j.match(/^(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})$/);
   if (!m) return !_dentroDoSilencio();
   var d = new Date(), atual = d.getHours() * 60 + d.getMinutes();
@@ -4906,7 +4934,7 @@ function configurarNotificacoes(args) {
   if (args.falarApps !== undefined) p.setProperty('NOTIF_FALAR_APPS', String(args.falarApps));
   if (args.falarJanela !== undefined) p.setProperty('NOTIF_FALAR_JANELA', String(args.falarJanela));
   return { ok: true, NOTIF_APPS: p.getProperty('NOTIF_APPS') || '', NOTIF_FALAR_APPS: p.getProperty('NOTIF_FALAR_APPS') || '',
-           NOTIF_FALAR_JANELA: p.getProperty('NOTIF_FALAR_JANELA') || '06:00-20:00 (padrão)' };
+           NOTIF_FALAR_JANELA: p.getProperty('NOTIF_FALAR_JANELA') || (_NOTIF_JANELA_PADRAO + ' (padrão)') };
 }
 
 
@@ -6428,7 +6456,7 @@ function diagAppsNotificacao(args) {
            nota: semTrafego.length ? 'Regra sem tráfego = app provavelmente fora do filtro da macro do MacroDroid.' : 'Toda regra ativa viu tráfego.',
            filtros: { NOTIF_APPS: p.getProperty('NOTIF_APPS') || '(vazio = aceita todos)',
                       NOTIF_FALAR_APPS: p.getProperty('NOTIF_FALAR_APPS') || '',
-                      NOTIF_FALAR_JANELA: p.getProperty('NOTIF_FALAR_JANELA') || '06:00-20:00 (padrão)' },
+                      NOTIF_FALAR_JANELA: p.getProperty('NOTIF_FALAR_JANELA') || (_NOTIF_JANELA_PADRAO + ' (padrão)') },
            ponto: { app: p.getProperty('PONTO_APP') || 'sisponto (padrão)',
                     armado: !!p.getProperty('PONTO_APP_VISTO'),
                     nota: p.getProperty('PONTO_APP_VISTO') ? 'cobrança de ausência ATIVA'

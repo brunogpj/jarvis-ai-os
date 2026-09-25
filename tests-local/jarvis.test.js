@@ -1470,3 +1470,29 @@ test('Status do celular: campo a campo e sem o token (voz sem bateria apagava o 
   assert.strictEqual(r.telemetria.token, undefined, 'token nunca vai para o navegador');
   assert.strictEqual(r.telemetria.message, undefined);
 });
+
+// ───────────────────────── 💬 WhatsApp desligado por padrão · janela de fala até 22h ─────────────────────────
+test('WhatsApp: desligado por padrão, e agendar mensagem é recusado com o motivo', function () {
+  var s = code({});
+  s._uiOwner = function () { return true; };
+  assert.strictEqual(s._whatsappAtivo(), false);
+  var r = s.uiAgendarWhatsApp('tok', 'Fulano', 'oi', '2099-01-01T10:00', 0, 0);
+  assert.strictEqual(r.ok, false);
+  assert.match(r.erro, /WhatsApp está desligado/);
+  var s2 = code({ props: { WHATSAPP_ATIVO: 'sim' } });
+  assert.strictEqual(s2._whatsappAtivo(), true, 'religar é decisão explícita');
+});
+
+test('Janela de fala: padrão vai até 22h; a rota aceita só HH:MM-HH:MM', function () {
+  var s = makeSandbox({ props: { VOICE_API_TOKEN: 'T' } });
+  s.ContentService = { MimeType: { TEXT: 'TEXT', JSON: 'JSON' }, createTextOutput: function (t) { return { setMimeType: function () { return { getContentText: function () { return t; } }; }, getContentText: function () { return t; } }; } };
+  loadGasFile('Code.js', s);
+  assert.strictEqual(s._NOTIF_JANELA_PADRAO, '06:00-22:00');
+  var post = function (b) { return JSON.parse(s.doPost({ postData: { contents: JSON.stringify(b) } }).getContentText()); };
+  assert.strictEqual(post({ action: 'janela_notificacoes', token: 'errado', janela: '06:00-22:00' }).ok, false);
+  assert.strictEqual(post({ action: 'janela_notificacoes', token: 'T', janela: '25:00-22:00' }).ok, false);
+  assert.strictEqual(post({ action: 'janela_notificacoes', token: 'T', janela: '06:00-22:00; rm' }).ok, false);
+  var ok = post({ action: 'janela_notificacoes', token: 'T', janela: '06:00-22:00' });
+  assert.strictEqual(ok.ok, true);
+  assert.strictEqual(s.PropertiesService.getScriptProperties().getProperty('NOTIF_FALAR_JANELA'), '06:00-22:00');
+});

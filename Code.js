@@ -2765,6 +2765,16 @@ function doPost(e) {
       } catch (eTel) { return json({ ok: false, erro: eTel.message }); }
     }
 
+    // APPS DO CELULAR: lista de apps instalados (pacote → Activity) + apelidos falados, para o
+    // "abre o X" alcançar qualquer app (Jarvis._resolverAppCelular). Vai para Script Properties —
+    // lista de apps é dado pessoal e não pode morar no código (repositório público).
+    if (body && body.action === 'apps_celular') {
+      if (!body.token || body.token !== PropertiesService.getScriptProperties().getProperty('VOICE_API_TOKEN')) {
+        return json({ ok: false, erro: 'não autorizado' });
+      }
+      try { return json(registrarAppsCelular(body)); } catch (eAp) { return json({ ok: false, erro: eAp.message }); }
+    }
+
     // VIAGEM: a macro "Jarvis Viagem" manda velocidade/ETA e recebe de volta o que falar.
     // Texto puro na resposta, para a macro falar direto pelo TTS do Android (sem round-trip de áudio).
     if (body && body.action === 'viagem') {
@@ -4594,6 +4604,31 @@ function registrarNotificacao(d) {
   if (idFila) _notifDisparar(idFila);
   return { ok: true, guardado: true, app: app, titulo: titulo, noDia: cont + 1,
            processamento: idFila ? 'fila' : 'fila_indisponivel' };
+}
+
+/** Grava a lista de apps do celular. body.apps {pacote: Activity}, body.apelidos {nome: pacote}.
+ *  Valida forma e tamanho (Script Property tem teto de 9 KB): pacote com cara de pacote, apelido
+ *  apontando para pacote que existe na lista. */
+function registrarAppsCelular(body) {
+  var PKG = /^[A-Za-z][\w]*(\.[\w]+)+$/;
+  var apps = {}, apelidos = {}, descartados = 0;
+  Object.keys(body.apps || {}).forEach(function (pkg) {
+    var cls = String(body.apps[pkg] || '');
+    if (PKG.test(pkg) && /^\.?[\w.$]+$/.test(cls)) apps[pkg] = cls; else descartados++;
+  });
+  Object.keys(body.apelidos || {}).forEach(function (nome) {
+    var n = String(nome).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');
+    var pkg = String(body.apelidos[nome] || '');
+    if (n && apps[pkg]) apelidos[n] = pkg; else descartados++;
+  });
+  var sApps = JSON.stringify(apps), sApel = JSON.stringify(apelidos);
+  if (sApps.length > 9000 || sApel.length > 9000) return { ok: false, erro: 'lista grande demais para uma Script Property (9 KB)' };
+  if (!Object.keys(apps).length) return { ok: false, erro: 'nenhum app válido' };
+  var sp = PropertiesService.getScriptProperties();
+  sp.setProperty('APPS_CELULAR', sApps);
+  sp.setProperty('APPS_APELIDOS', sApel);
+  return { ok: true, apps: Object.keys(apps).length, apelidos: Object.keys(apelidos).length, descartados: descartados,
+           bytes: { apps: sApps.length, apelidos: sApel.length } };
 }
 
 /* ── FILA DE PROCESSAMENTO DAS NOTIFICAÇÕES ─────────────────────────────────────────────────

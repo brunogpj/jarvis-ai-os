@@ -2477,6 +2477,41 @@ var Jarvis = (function () {
     try { if (typeof WikiMemoryService !== 'undefined') WikiMemoryService.registrarNoLog('[fala] drift de ID → ' + url); } catch (e) {}
   }
 
+  /* APPS INSTALADOS NO CELULAR — para abrir qualquer um, não só os ~20 do mapa fixo.
+   * APPS_CELULAR  = {pacote: Activity de lançamento} (de `cmd package query-activities` no aparelho;
+   *                 Activity relativa começa com '.').
+   * APPS_APELIDOS = {nome falado normalizado: pacote} ("agenda edu" → com.agendakidsdigital.app).
+   * Ficam em Script Properties, NUNCA no código: a lista de apps de alguém (bancos incluídos) é dado
+   * pessoal e o repositório é público. Chega pela rota apps_celular (VOICE_API_TOKEN).
+   * Ordem: apelido exato → pacote exato → pedaço do nome do pacote. Mais de um candidato = ambíguo
+   * (melhor perguntar que abrir o app errado). */
+  function _normApp(s) {
+    return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');
+  }
+  var _PKG_GENERICO = { com: 1, br: 1, org: 1, net: 1, android: 1, app: 1, apps: 1, mobile: 1, google: 1, gov: 1,
+                        digital: 1, md: 1, ch: 1, mi: 1, miui: 1, dev: 1, frontend: 1, wallet: 1, music: 1, ui: 1 };
+  function _resolverAppCelular(nome) {
+    var n = _normApp(nome);
+    if (!n) return null;
+    var apps = {}, apel = {};
+    try {
+      var sp = PropertiesService.getScriptProperties();
+      apps = JSON.parse(sp.getProperty('APPS_CELULAR') || '{}');
+      apel = JSON.parse(sp.getProperty('APPS_APELIDOS') || '{}');
+    } catch (e) { return null; }
+    function comp(pkg) { var c = apps[pkg]; return c ? { pkg: pkg, cls: c.charAt(0) === '.' ? pkg + c : c } : null; }
+    if (apel[n] && apps[apel[n]]) return comp(apel[n]);
+    if (apps[String(nome).trim()]) return comp(String(nome).trim());
+    var cands = Object.keys(apps).filter(function (pkg) {
+      return pkg.toLowerCase().split('.').some(function (t) {
+        if (_PKG_GENERICO[t]) return false;
+        return t === n || (n.length >= 4 && t.indexOf(n) !== -1) || (t.length >= 4 && n.indexOf(t) !== -1);
+      });
+    });
+    if (cands.length === 1) return comp(cands[0]);
+    return cands.length ? { ambiguo: cands.slice(0, 4) } : null;
+  }
+
   // Troca o último trecho da URL de webhook (.../<uuid>/<evento>) pelo evento da ação.
   // Ex.: base ".../84f1.../jarvis" + "jarvis_falar" => ".../84f1.../jarvis_falar".
   function _mdEvento(url, evento) {
@@ -2631,7 +2666,10 @@ var Jarvis = (function () {
             }
 
             // Traduz abrirApp em intent de abertura
-            if (acao === 'abrirApp') {
+            // 'abrirapp' em minúsculas: `acao` é normalizada com toLowerCase() no topo da função.
+            // Era `=== 'abrirApp'` — nunca casava, e o pedido saía como evento jarvis_abrirapp, que
+            // nenhuma macro escuta. Foi por isso que "abre o WhatsApp" nunca abriu nada (jul–set).
+            if (acao === 'abrirapp') {
               finalAcao = 'intent';
               args.intent_action = 'android.intent.action.MAIN';
               // Lançar por COMPONENTE (pacote + Activity de lançamento). No MIUI/Android 13, MAIN+LAUNCHER+
@@ -2666,9 +2704,18 @@ var Jarvis = (function () {
                 'ajustes':            { pkg: 'com.android.settings', cls: 'com.android.settings.MiuiSettings' }
               };
               var nomeApp = String(args.nome || '').toLowerCase().trim();
-              var _m = appMap[nomeApp];
-              args.intent_package = _m ? _m.pkg : (args.nome || '');
-              args.intent_class = _m ? (_m.cls || '') : '';  // componente de lançamento (resolvido via adb)
+              // Fora do mapa fixo, procura nos apps REALMENTE instalados (APPS_CELULAR, enviado do
+              // aparelho). Antes o nome cru virava "pacote" ("netflix") e a intent morria calada —
+              // com o Jarvis anunciando "Abrindo Netflix". Não achou = diz que não achou.
+              var _m = appMap[nomeApp] || _resolverAppCelular(nomeApp);
+              if (_m && _m.ambiguo) {
+                return { status: 'error', erro: 'Mais de um app combina com "' + args.nome + '": ' + _m.ambiguo.join(', ') + '. Diga o nome completo.' };
+              }
+              if (!_m) {
+                return { status: 'error', erro: 'Não encontrei o app "' + args.nome + '" no celular.' };
+              }
+              args.intent_package = _m.pkg;
+              args.intent_class = _m.cls || '';  // componente de lançamento (resolvido via adb)
               args.intent_data = '';   // launcher não herda data/mime de comando anterior
               args.intent_mime = '';
             }

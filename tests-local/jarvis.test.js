@@ -1353,3 +1353,73 @@ test('Notificação: modo síncrono (diag) continua falando na hora', function (
   assert.strictEqual(r.falou, true);
   assert.strictEqual(s.__falas.length, 1);
 });
+
+test('Abrir app: sai como jarvis_abrir_app com pacote e Activity (nunca abriu nada de jul a set)', function () {
+  var urls = [];
+  var s = makeSandbox({ props: { MACRODROID_WEBHOOK_URL: 'https://trigger.macrodroid.com/dev/jarvis' },
+                        fetch: function (u) { urls.push(u); return { code: 200 }; } });
+  loadGasFile('Jarvis.js', s);
+  var r = s.Jarvis.controlarDispositivo({ acao: 'abrirApp', nome: 'youtube' });
+  assert.strictEqual(r.status, 'success');
+  assert.strictEqual(urls.length, 1);
+  assert.match(urls[0], /\/jarvis_abrir_app\?/, 'era /jarvis_abrirapp — evento que nenhuma macro escuta');
+  assert.match(urls[0], /intent_package=com\.google\.android\.youtube/);
+  assert.match(urls[0], /intent_class=com\.google\.android\.youtube\.app\.honeycomb\.Shell%24HomeActivity/);
+});
+
+// ───────────────────────── 📱 Abrir QUALQUER app instalado (APPS_CELULAR) ─────────────────────────
+function _sandboxApps(props) {
+  var urls = [];
+  var p = Object.assign({ MACRODROID_WEBHOOK_URL: 'https://trigger.macrodroid.com/dev/jarvis',
+    APPS_CELULAR: JSON.stringify({ 'com.exemplo.streaming': '.ui.Launch', 'com.escola.agendadigital': '.MainActivity',
+                                   'com.ubercab': 'com.ubercab.UberActivity', 'com.banco.um': '.Main', 'com.banco.dois': '.Main' }),
+    APPS_APELIDOS: JSON.stringify({ agendaedu: 'com.escola.agendadigital' }) }, props || {});
+  var s = makeSandbox({ props: p, fetch: function (u) { urls.push(u); return { code: 200 }; } });
+  loadGasFile('Jarvis.js', s);
+  s.__urls = urls;
+  return s;
+}
+
+test('Abrir app: apelido falado resolve para o pacote e a Activity instalados', function () {
+  var s = _sandboxApps();
+  var r = s.Jarvis.controlarDispositivo({ acao: 'abrirApp', nome: 'Agenda Edu' });
+  assert.strictEqual(r.status, 'success');
+  assert.match(s.__urls[0], /jarvis_abrir_app\?/);
+  assert.match(s.__urls[0], /intent_package=com\.escola\.agendadigital/);
+  assert.match(s.__urls[0], /intent_class=com\.escola\.agendadigital\.MainActivity/, 'Activity relativa ganha o pacote na frente');
+});
+
+test('Abrir app: sem apelido, acha pelo pedaço do nome do pacote', function () {
+  var s = _sandboxApps();
+  assert.strictEqual(s.Jarvis.controlarDispositivo({ acao: 'abrirApp', nome: 'Uber' }).status, 'success');
+  assert.match(s.__urls[0], /intent_class=com\.ubercab\.UberActivity/);
+});
+
+test('Abrir app: app que não existe NÃO vira "Abrindo X" (era falso sucesso)', function () {
+  var s = _sandboxApps();
+  var r = s.Jarvis.controlarDispositivo({ acao: 'abrirApp', nome: 'Aplicativo Inexistente' });
+  assert.strictEqual(r.status, 'error');
+  assert.match(r.erro, /Não encontrei/);
+  assert.strictEqual(s.__urls.length, 0, 'nada disparado para o celular');
+});
+
+test('Abrir app: nome que casa com dois apps pergunta em vez de chutar', function () {
+  var s = _sandboxApps();
+  var r = s.Jarvis.controlarDispositivo({ acao: 'abrirApp', nome: 'banco' });
+  assert.strictEqual(r.status, 'error');
+  assert.match(r.erro, /Mais de um app/);
+});
+
+test('Rota apps_celular: grava só pacotes válidos e apelidos que apontam para eles', function () {
+  var s = code({});
+  var r = s.registrarAppsCelular({
+    apps: { 'com.exemplo.app': '.Main', 'nao eh pacote': '.Main', 'com.outro.app': 'rm -rf /' },
+    apelidos: { 'Meu App': 'com.exemplo.app', 'Fantasma': 'com.nao.instalado' }
+  });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.apps, 1);
+  assert.strictEqual(r.apelidos, 1);
+  assert.strictEqual(r.descartados, 3);
+  var sp = s.PropertiesService.getScriptProperties();
+  assert.deepStrictEqual(JSON.parse(sp.getProperty('APPS_APELIDOS')), { meuapp: 'com.exemplo.app' });
+});

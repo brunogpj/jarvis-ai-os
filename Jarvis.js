@@ -2433,9 +2433,13 @@ var Jarvis = (function () {
     if (!t) return { ok: false, erro: 'Texto vazio.', spans: _spans };
     var props = PropertiesService.getScriptProperties();
     // Ganho de volume na fonte (o stream de Mídia do celular costuma ficar baixo). Ajustável sem deploy
-    // via Script Property FALA_VOLUME_DB (padrão +6 dB; Cloud TTS aceita até +16).
-    var ganho = Number(props.getProperty('FALA_VOLUME_DB'));
-    if (!isFinite(ganho)) ganho = 6;
+    // via Script Property FALA_VOLUME_DB (padrão +10 dB; Cloud TTS aceita até +16).
+    // O PADRÃO NUNCA TINHA VALIDO: era Number(getProperty(...)) e Number(null) é 0 — finito —, então sem a
+    // property o ganho era 0 dB, não os +6 anunciados. Em 25/09 o Bruno "quase não conseguiu ouvir" as
+    // respostas (Cloud TTS, com o Gemini sem cota). Agora: property ausente = +10 dB.
+    var _rawGanho = props.getProperty('FALA_VOLUME_DB');
+    var ganho = (_rawGanho === null || _rawGanho === '') ? 10 : Number(_rawGanho);
+    if (!isFinite(ganho)) ganho = 10;
     // Engine: TTS_ENGINE=gemini → Gemini TTS (estilo natural, ex.: tom caloroso), saída WAV. Senão Cloud TTS
     // EM WAV (mesmo formato → a macro do Android toca um único formato). voz opcional (ex.: Sulafat p/ contato f).
     var engine = (props.getProperty('TTS_ENGINE') || 'cloud').toLowerCase();

@@ -1588,3 +1588,16 @@ test('Volume: PCM do Gemini é normalizado (saía baixo) sem distorcer nem infla
   var amostras = [0, 1, 2, 3].map(function (i) { return wav.readInt16LE(44 + i * 2); });
   assert.deepStrictEqual(amostras, [16000, -16000, 4000, 0], 'ganho de 4x (teto) aplicado igual em todas');
 });
+
+test('Volume: sem FALA_VOLUME_DB o ganho é +10 dB (Number(null) = 0 zerava o padrão desde sempre)', function () {
+  var s = makeSandbox({}); loadGasFile('Jarvis.js', s);
+  var pedido = null;
+  s.Voz = { temChave: function () { return true; }, sintetizar: function (t, o) { pedido = o; return { status: 'error', erro: 'parar aqui' }; } };
+  s.Jarvis.prepararVozCelular('teste de volume');
+  assert.ok(pedido, 'chegou a sintetizar');
+  assert.strictEqual(pedido.volume, 10);
+  var s2 = makeSandbox({ props: { FALA_VOLUME_DB: '4' } }); loadGasFile('Jarvis.js', s2);
+  s2.Voz = { temChave: function () { return true; }, sintetizar: function (t, o) { pedido = o; return { status: 'error', erro: 'x' }; } };
+  s2.Jarvis.prepararVozCelular('x');
+  assert.strictEqual(pedido.volume, 4, 'property explícita continua mandando');
+});

@@ -3223,7 +3223,7 @@ function doPost(e) {
         var _lembC = _livre ? _interpretarLembreteCondicional(msgVoz) : null;
         var _rot   = (_livre && !_lembC) ? _interpretarRotina(msgVoz) : null;
         if (_fato !== null) {
-          try { respVoz = (_fato.via === 'agenda') ? _falarAgenda(_fato.periodo) : _falarRelogio(_fato); }
+          try { respVoz = (_fato.via === 'agenda') ? _falarAgenda(_fato.periodo) : (_fato.via === 'emails') ? _falarEmails() : _falarRelogio(_fato); }
           catch (eFt) { respVoz = 'Não consegui consultar isso agora.'; }
         } else if (_fin !== null) {
           try {
@@ -3261,7 +3261,7 @@ function doPost(e) {
               if (!_ip) { respVoz = 'Ainda não tenho uma ideia pronta hoje. Eu gero uma por dia, de manhã.'; }
               else {
                 try { marcarInsightEntregue('voz'); } catch (eM) {}
-                respVoz = _ip.insight + (_ip.acao ? ' Primeiro passo: ' + _ip.acao : '');
+                respVoz = _insSegundaPessoa(_ip.insight + (_ip.acao ? ' Primeiro passo: ' + _ip.acao : ''));
               }
             }
           } catch (eIn) { respVoz = 'Não consegui trazer a ideia agora.'; }
@@ -4157,6 +4157,8 @@ var _INS_SYS =
   'ideia já existe implementada lá, NÃO a proponha como novidade — ou fale do que FALTA além do que já ' +
   'existe, ou escolha outro ângulo do mesmo tema. Proponha do zero algo já pronto é o pior tipo de erro aqui.\n' +
   '· `insight` será FALADO em voz alta: no máximo 45 palavras, português coloquial, sem markdown.\n' +
+  // Em 25/09 a ideia saiu "O Bruno pode criar um sistema..." — falado PARA ele, soava como sobre outro.
+  '· Fale DIRETAMENTE com ele, em segunda pessoa ("você pode…", "crie…"). NUNCA "o Bruno", "ele" ou "o usuário".\n' +
   'Responda SÓ com JSON: {"titulo","insight","porque","acao"} — `porque` = por que isso importa pra ' +
   'ele agora (1 frase); `acao` = o primeiro passo concreto (1 frase, começando com verbo).';
 
@@ -4482,7 +4484,15 @@ function _responderOfertaInsight(aceitou) {
     return 'Sem problema. Guardei para depois.';
   }
   marcarInsightEntregue('voz');
-  return ins.insight + (ins.acao ? ' Primeiro passo: ' + ins.acao : '');
+  return _insSegundaPessoa(ins.insight + (ins.acao ? ' Primeiro passo: ' + ins.acao : ''));
+}
+
+/* A ideia é FALADA para o Bruno, e saía em terceira pessoa ("O Bruno pode criar...", 25/09). O prompt já
+ * pede segunda pessoa; isto cobre as ideias geradas antes da regra, que ficam guardadas. Só o sujeito da
+ * frase — trocar todo "Bruno" estragaria "do Bruno"/"ao Bruno" no meio do texto. */
+function _insSegundaPessoa(txt) {
+  return String(txt || '').replace(/(^|[.!?]\s+)(o\s+)?Bruno\s+(pode|poderia|deve|deveria|precisa|consegue|conseguiria|tem|teria|vai|quer)\b/gi,
+    function (m, ini, o, verbo) { return ini + 'Você ' + verbo.toLowerCase(); });
 }
 
 /** Diag da entrega: {} decisão agora | {simular:false} entrega de verdade | {responder:'sim'|'nao'}. */
@@ -5341,6 +5351,15 @@ function _interpretarFatoVoz(msg) {
     data = data || /data|dia/.test(pedidos);
   }
   if ((hora || data) && !mexe) return { via: 'relogio', hora: hora, data: data };
+  // E-MAILS NÃO LIDOS — leitura, sem LLM. Em 25/09 "resuma meus e-mails não lidos" pelo modelo levou
+  // 353 s, listou 3 vezes, pesquisou na web sem motivo e devolveu lista em markdown para ser FALADA.
+  // Ação sobre e-mail (enviar, responder, apagar, arquivar) continua com o modelo — e com o gate P2.
+  if (/\b(e-?mails?|emails?|caixa de entrada)\b/.test(s) &&
+      /\b(resum\w*|l[eê]\w*|leia|quais|tenho|chegou|chegaram|novos?|n[aã]o lidos?)\b/.test(s) &&
+      !/\b(envi\w*|mand\w*|respond\w*|encaminh\w*|apag\w*|exclu\w*|arquiv\w*|marc\w*|escrev\w*|rascunh\w*|busc\w*|procur\w*|pesquis\w*)\b/.test(s) &&
+      !/\be-?mails? (do|da|dos|das|sobre) /.test(s)) {   // "o e-mail do banco" = um específico → modelo
+    return { via: 'emails' };
+  }
   if (mexe) return null;
   var falaDeAgenda = /\b(agenda|compromissos?|eventos?|reunio(es)?|reuniao)\b/.test(s);
   var tenho = /\bo que (eu )?tenho\b/.test(s);
@@ -5357,6 +5376,26 @@ function _falarRelogio(f, agora) {
   if (f.hora && f.data) return 'Hoje é ' + dataTxt + ', e são ' + _horaFalada(p.h, p.m) + '.';
   if (f.data) return 'Hoje é ' + dataTxt + '.';
   return 'São ' + _horaFalada(p.h, p.m) + '.';
+}
+
+/** Não lidos da caixa de entrada, em frase falável: remetente (sem o endereço) e assunto. */
+function _falarEmails() {
+  var threads, total;
+  try { threads = GmailApp.search('is:unread in:inbox', 0, 5) || []; }
+  catch (e) { return 'Não consegui ler seus e-mails agora.'; }
+  try { total = GmailApp.getInboxUnreadCount(); } catch (e2) { total = threads.length; }
+  if (!threads.length || !total) return 'Você não tem e-mails não lidos na caixa de entrada.';
+  var itens = threads.map(function (t) {
+    var de = '';
+    try { de = String(t.getMessages()[0].getFrom() || ''); } catch (e3) {}
+    de = de.replace(/<[^>]*>/g, '').replace(/["']/g, '').trim() || 'remetente desconhecido';
+    var ass = String(t.getFirstMessageSubject() || 'sem assunto').replace(/\s+/g, ' ').trim();
+    if (ass.length > 70) ass = ass.slice(0, 70).replace(/\s+\S*$/, '') + '…';
+    return 'de ' + de + ', sobre ' + ass;
+  });
+  var plural = total > 1;
+  return 'Você tem ' + total + ' e-mail' + (plural ? 's' : '') + ' não lido' + (plural ? 's' : '') + '. ' +
+         (total > itens.length ? 'Os ' + itens.length + ' mais recentes: ' : '') + itens.join('; ') + '.';
 }
 
 /** Lê a agenda de verdade (CalendarApp) e fala o resultado. Agenda vazia é dito como vazia. */

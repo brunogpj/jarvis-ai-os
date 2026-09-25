@@ -230,6 +230,38 @@ var Voz = (function () {
     // free-first: prioriza as chaves free (mesma lógica do modo 100% free do projeto).
     return _p('GEMINI_API_KEY_FALLBACK') || _p('GEMINI_API_KEY_FALLBACK2') || _p('GEMINI_API_KEY') || '';
   }
+  /* NORMALIZAÇÃO DE PICO do PCM do Gemini. O Cloud TTS recebe +6 dB (FALA_VOLUME_DB) na própria
+   * requisição; o Gemini TTS não tem esse parâmetro e saía no volume nativo, baixo — em 25/09 o Bruno
+   * "quase não conseguiu ouvir" as respostas (a maioria vai pelo Gemini). Leva o pico a ~-1 dBFS,
+   * com ganho máximo em FALA_GEMINI_GANHO_MAX (padrão 4x = +12 dB) para não inflar ruído de fundo.
+   * PCM L16 little-endian, mono, em signed Byte[] (o que o Utilities.base64Decode devolve). */
+  function _normalizarPcm(pcm) {
+    try {
+      var n = pcm.length - (pcm.length % 2), pico = 0, i, s;
+      for (i = 0; i < n; i += 2) {
+        s = ((pcm[i + 1] << 8) | (pcm[i] & 255));
+        if (s > 32767) s -= 65536;
+        if (s < 0) s = -s;
+        if (s > pico) pico = s;
+      }
+      if (pico < 64) return pcm;                                   // silêncio: nada a fazer
+      var maxG = Number(_p('FALA_GEMINI_GANHO_MAX') || 4);
+      var ganho = Math.min(29200 / pico, isFinite(maxG) && maxG > 0 ? maxG : 4);   // 29200 ≈ -1 dBFS
+      if (ganho <= 1.05) return pcm;                               // já está alto
+      var out = pcm.slice(0);
+      for (i = 0; i < n; i += 2) {
+        s = ((pcm[i + 1] << 8) | (pcm[i] & 255));
+        if (s > 32767) s -= 65536;
+        s = Math.round(s * ganho);
+        if (s > 32767) s = 32767; else if (s < -32768) s = -32768;
+        var lo = s & 255, hi = (s >> 8) & 255;
+        out[i] = lo > 127 ? lo - 256 : lo;
+        out[i + 1] = hi > 127 ? hi - 256 : hi;
+      }
+      return out;
+    } catch (e) { return pcm; }                                    // nunca derruba a fala por isso
+  }
+
   // Embrulha PCM L16 mono (signed Byte[]) num WAV (header RIFF de 44 bytes). @return base64.
   function _pcmParaWav(pcm, rate) {
     rate = rate || 24000;
@@ -276,7 +308,7 @@ var Voz = (function () {
     if (!inline || !inline.data) return { status: 'error', erro: 'Gemini TTS não retornou áudio (resposta sem inlineData).' };
     // rate do mimeType (ex.: "audio/L16;codec=pcm;rate=24000")
     var rate = 24000; var mm = String(inline.mimeType || inline.mime_type || '').match(/rate=(\d+)/); if (mm) rate = Number(mm[1]);
-    var pcm = Utilities.base64Decode(inline.data);
+    var pcm = _normalizarPcm(Utilities.base64Decode(inline.data));
     return { status: 'success', base64: _pcmParaWav(pcm, rate), mime: 'audio/wav', ext: 'wav', voz: voz, estilo: estilo, model: model };
   }
 

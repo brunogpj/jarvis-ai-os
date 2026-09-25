@@ -1543,3 +1543,48 @@ test('WhatsApp desligado: ferramenta chamada devolve o motivo verdadeiro', funct
   assert.match(jv, /\/WhatsApp\/\.test\(name\) && typeof _whatsappAtivo === 'function' && !_whatsappAtivo\(\)/);
   assert.match(jv, /listaCompleta = listaCompleta\.filter\(function \(t\) \{ return !\/WhatsApp\/\.test\(t\.name\); \}\)/);
 });
+
+// ───────────────────────── 📧 E-mails pela voz, ideia em 2ª pessoa, volume do Gemini ─────────────────────────
+test('E-mails: "resuma meus e-mails não lidos" vira rota direta (era 353 s pelo modelo)', function () {
+  var s = code({});
+  assert.strictEqual(s._interpretarFatoVoz('resuma meus e-mails não lidos').via, 'emails');
+  assert.strictEqual(s._interpretarFatoVoz('quais e-mails chegaram').via, 'emails');
+  assert.strictEqual(s._interpretarFatoVoz('manda um e-mail pro João'), null, 'ação fica com o modelo (e o gate)');
+  assert.strictEqual(s._interpretarFatoVoz('lê o e-mail do banco'), null, 'e-mail específico fica com o modelo');
+  assert.strictEqual(s._interpretarFatoVoz('apaga meus e-mails'), null);
+});
+
+test('E-mails: frase falável com remetente sem endereço e total real', function () {
+  var s = code({});
+  function th(de, ass) { return { getMessages: function () { return [{ getFrom: function () { return de; } }]; }, getFirstMessageSubject: function () { return ass; } }; }
+  s.GmailApp = { search: function () { return [th('"Loja X" <promo@loja.com>', 'Oferta de hoje'), th('Banco <aviso@banco.com>', 'Fatura fechada')]; },
+                 getInboxUnreadCount: function () { return 8; } };
+  var t = s._falarEmails();
+  assert.match(t, /^Você tem 8 e-mails não lidos\. Os 2 mais recentes: de Loja X, sobre Oferta de hoje; de Banco, sobre Fatura fechada\.$/);
+  assert.ok(t.indexOf('@') === -1 && t.indexOf('*') === -1, 'nada de endereço nem markdown na fala');
+  s.GmailApp = { search: function () { return []; }, getInboxUnreadCount: function () { return 0; } };
+  assert.match(s._falarEmails(), /não tem e-mails não lidos/);
+});
+
+test('Ideia: falada em segunda pessoa ("O Bruno pode criar..." saía assim em 25/09)', function () {
+  var s = code({});
+  assert.strictEqual(s._insSegundaPessoa('O Bruno pode criar um sistema. Primeiro passo: liste.'), 'Você pode criar um sistema. Primeiro passo: liste.');
+  assert.strictEqual(s._insSegundaPessoa('Isso ajuda. Bruno deve testar hoje.'), 'Isso ajuda. Você deve testar hoje.');
+  assert.strictEqual(s._insSegundaPessoa('Mostre ao time do Bruno.'), 'Mostre ao time do Bruno.', 'meio de frase não é sujeito');
+});
+
+test('Volume: PCM do Gemini é normalizado (saía baixo) sem distorcer nem inflar silêncio', function () {
+  var s = makeSandbox({ props: { GEMINI_API_KEY: 'k' }, fetch: function () {
+    // 4 amostras L16: pico 4000 → ganho limitado a 4x → 16000
+    var pcm = Buffer.from([0xA0, 0x0F, 0x60, 0xF0, 0xE8, 0x03, 0x00, 0x00]);   // 4000, -4000, 1000, 0
+    return { code: 200, body: { candidates: [{ content: { parts: [{ inlineData: { mimeType: 'audio/L16;rate=24000', data: pcm.toString('base64') } }] } }] } };
+  } });
+  s.Utilities.base64Decode = function (b) { return Array.from(Buffer.from(b, 'base64')).map(function (x) { return x > 127 ? x - 256 : x; }); };
+  s.Utilities.base64Encode = function (arr) { return Buffer.from(arr.map(function (x) { return x & 255; })).toString('base64'); };
+  loadGasFile('Voz.js', s);
+  var r = s.Voz.sintetizarGemini('oi', {});
+  assert.strictEqual(r.status, 'success');
+  var wav = Buffer.from(r.base64, 'base64');
+  var amostras = [0, 1, 2, 3].map(function (i) { return wav.readInt16LE(44 + i * 2); });
+  assert.deepStrictEqual(amostras, [16000, -16000, 4000, 0], 'ganho de 4x (teto) aplicado igual em todas');
+});

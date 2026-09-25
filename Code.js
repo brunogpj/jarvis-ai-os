@@ -3384,7 +3384,7 @@ function doPost(e) {
           } catch (eLc) { respVoz = Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false, canal: 'voz' }); }
         } else if (_lembR) {
           try {
-            var _rr0 = AlertasVoz.criar({ emMinutos: _lembR.minutos, texto: _lembR.texto, tag: 'avulso' });
+            var _rr0 = AlertasVoz.criar({ emMinutos: _lembR.minutos, texto: 'Lembrete: ' + _lembR.texto + '.', tag: 'avulso' });   // só o conteúdo, falado do nada, soava solto
             var _qdo = _lembR.minutos % 60 === 0 ? (_lembR.minutos / 60) + (_lembR.minutos === 60 ? ' hora' : ' horas')
                      : _lembR.minutos + (_lembR.minutos === 1 ? ' minuto' : ' minutos');
             respVoz = _rr0.ok

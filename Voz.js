@@ -98,14 +98,26 @@ var Voz = (function () {
       voice: { languageCode: idioma, name: voz },
       audioConfig: audioConfig
     };
+    // Perfil de dispositivo do próprio Cloud TTS (ex.: 'handset-class-device' = alto-falante de celular):
+    // corta graves que o alto-falante não reproduz e realça a faixa da fala.
+    if (opts.perfil) audioConfig.effectsProfileId = [String(opts.perfil)];
     var token;
     try { token = _saToken(); } catch (e) { return { status: 'error', erro: e.message }; }
-    var res = UrlFetchApp.fetch('https://texttospeech.googleapis.com/v1/text:synthesize', {
-      method: 'post', contentType: 'application/json',
-      headers: { Authorization: 'Bearer ' + token },
-      payload: JSON.stringify(payload), muteHttpExceptions: true
-    });
+    function _chamar() {
+      return UrlFetchApp.fetch('https://texttospeech.googleapis.com/v1/text:synthesize', {
+        method: 'post', contentType: 'application/json',
+        headers: { Authorization: 'Bearer ' + token },
+        payload: JSON.stringify(payload), muteHttpExceptions: true
+      });
+    }
+    var res = _chamar();
     var code = res.getResponseCode();
+    // Voz que não aceita o perfil (ou o ganho) devolve 400: tenta sem os dois antes de desistir —
+    // uma fala sem realce é melhor que fala nenhuma.
+    if (code === 400 && (audioConfig.effectsProfileId || audioConfig.volumeGainDb != null)) {
+      delete audioConfig.effectsProfileId; delete audioConfig.volumeGainDb;
+      res = _chamar(); code = res.getResponseCode();
+    }
     if (code !== 200) {
       var msg = res.getContentText();
       try { var j = JSON.parse(msg); if (j.error && j.error.message) msg = j.error.message; } catch (e) {}
@@ -262,6 +274,65 @@ var Voz = (function () {
     } catch (e) { return pcm; }                                    // nunca derruba a fala por isso
   }
 
+  /* MAXIMIZAÇÃO PARA ALTO-FALANTE DE CELULAR (25/09). O arquivo do Cloud MEDIA alto (RMS -12,8 dBFS,
+   * pico 0) e mesmo assim soava "muito baixo" no Redmi, com mídia 15/15 no alto-falante e sem ducking
+   * (conferido no dumpsys). Voz tem dinâmica larga: as sílabas fracas ficam 15-25 dB abaixo do pico e
+   * somem no alto-falante pequeno, que ainda gasta margem com graves que não reproduz. Cadeia:
+   *   passa-alta 150 Hz → compressor (limiar -26 dBFS, 4:1, ataque 5 ms, soltura 90 ms)
+   *   → ganho até RMS alvo (FALA_RMS_ALVO, padrão -10 dBFS; teto 6x) → limitador suave em -1 dBFS.
+   * Só WAV PCM 16 bits (o que o celular toca). Qualquer erro devolve o áudio original. */
+  function maximizarWav(base64) {
+    try {
+      if (String(_p('FALA_MAXIMIZAR') || 'sim').toLowerCase() === 'nao') return base64;
+      var b = Utilities.base64Decode(base64);
+      function u8(i) { return b[i] & 255; }
+      function u16(i) { return u8(i) | (u8(i + 1) << 8); }
+      function u32(i) { return (u8(i) | (u8(i + 1) << 8) | (u8(i + 2) << 16)) + u8(i + 3) * 16777216; }
+      if (String.fromCharCode(u8(0), u8(1), u8(2), u8(3)) !== 'RIFF') return base64;
+      var o = 12, rate = 24000, bits = 16, ch = 1, ini = -1, fim = -1;
+      while (o + 8 <= b.length) {
+        var id = String.fromCharCode(u8(o), u8(o + 1), u8(o + 2), u8(o + 3)), sz = u32(o + 4);
+        if (id === 'fmt ') { ch = u16(o + 10); rate = u32(o + 12); bits = u16(o + 22); }
+        if (id === 'data') { ini = o + 8; fim = Math.min(b.length, ini + sz); break; }
+        o += 8 + sz + (sz % 2);
+      }
+      if (ini < 0 || bits !== 16 || ch !== 1) return base64;
+      var n = Math.floor((fim - ini) / 2), x = new Array(n), i, s;
+      for (i = 0; i < n; i++) { s = u8(ini + 2 * i) | (u8(ini + 2 * i + 1) << 8); if (s > 32767) s -= 65536; x[i] = s / 32768; }
+      // 1) passa-alta Butterworth 2ª ordem (RBJ) em 150 Hz
+      var w = 2 * Math.PI * 150 / rate, cw = Math.cos(w), al = Math.sin(w) / (2 * Math.SQRT1_2), a0 = 1 + al;
+      var b0 = (1 + cw) / 2 / a0, b1 = -(1 + cw) / a0, b2 = b0, a1 = -2 * cw / a0, a2 = (1 - al) / a0;
+      var x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+      for (i = 0; i < n; i++) { var y = b0 * x[i] + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2; x2 = x1; x1 = x[i]; y2 = y1; y1 = y; x[i] = y; }
+      // 2) compressor por envelope de pico
+      var lim = Math.pow(10, -26 / 20), razao = 4, env = 0;
+      var at = Math.exp(-1 / (0.005 * rate)), rl = Math.exp(-1 / (0.090 * rate));
+      for (i = 0; i < n; i++) {
+        var a = Math.abs(x[i]);
+        env = a > env ? at * env + (1 - at) * a : rl * env + (1 - rl) * a;
+        if (env > lim) x[i] *= Math.pow(env / lim, 1 / razao - 1);
+      }
+      // 3) ganho até o RMS alvo (medido só nos trechos com voz, > -40 dBFS)
+      var soma = 0, cont = 0, pisoV = Math.pow(10, -40 / 20);
+      for (i = 0; i < n; i++) { if (Math.abs(x[i]) > pisoV) { soma += x[i] * x[i]; cont++; } }
+      if (!cont) return base64;
+      var alvoDb = Number(_p('FALA_RMS_ALVO') || -10); if (!isFinite(alvoDb)) alvoDb = -10;
+      var ganho = Math.min(Math.pow(10, alvoDb / 20) / Math.sqrt(soma / cont), 6);
+      // 4) limitador suave: linear até -3 dBFS, curva tanh até o teto de -1 dBFS
+      var teto = Math.pow(10, -1 / 20), joelho = Math.pow(10, -3 / 20), faixa = teto - joelho;
+      for (i = 0; i < n; i++) {
+        var v = x[i] * ganho, av = Math.abs(v);
+        if (av > joelho) v = (v < 0 ? -1 : 1) * (joelho + faixa * Math.tanh((av - joelho) / faixa));
+        s = Math.round(v * 32767);
+        if (s > 32767) s = 32767; else if (s < -32768) s = -32768;
+        var lo = s & 255, hi = (s >> 8) & 255;
+        b[ini + 2 * i] = lo > 127 ? lo - 256 : lo;
+        b[ini + 2 * i + 1] = hi > 127 ? hi - 256 : hi;
+      }
+      return Utilities.base64Encode(b);
+    } catch (e) { return base64; }
+  }
+
   // Embrulha PCM L16 mono (signed Byte[]) num WAV (header RIFF de 44 bytes). @return base64.
   function _pcmParaWav(pcm, rate) {
     rate = rate || 24000;
@@ -408,7 +479,7 @@ var Voz = (function () {
     return resultado;
   }
 
-  return { sintetizar: sintetizar, sintetizarLongo: sintetizarLongo, sintetizarGemini: sintetizarGemini, sintetizarDialogo: sintetizarDialogo, temChave: temChave, listarVozes: listarVozes, transcrever: transcrever };
+  return { sintetizar: sintetizar, sintetizarLongo: sintetizarLongo, sintetizarGemini: sintetizarGemini, sintetizarDialogo: sintetizarDialogo, temChave: temChave, listarVozes: listarVozes, transcrever: transcrever, maximizarWav: maximizarWav };
 })();
 
 /** Setup/diagnóstico: configura a voz (opcional) e confirma a SA. Rode no editor.

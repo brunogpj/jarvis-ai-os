@@ -2469,13 +2469,30 @@ var Jarvis = (function () {
       var vg = voz ? String(voz).split('-').pop() : null;   // "pt-BR-Chirp3-HD-Sulafat" → "Sulafat" (voz do Gemini)
       try { var rg = Voz.sintetizarGemini(t, vg ? { voz: vg } : {}); if (rg.status === 'success') { r = rg; _spans.engine = 'gemini'; } } catch (eG) {}
     }
-    if (!r) { var optTTS = { formato: 'wav', volume: ganho }; if (voz) optTTS.voz = voz; r = Voz.sintetizar(t, optTTS); _spans.engine = 'cloud'; }
+    /* FORMATO DO ARQUIVO DECIDE POR ONDE O ANDROID TOCA (25/09, medido no Redmi com dumpsys + scrcpy).
+     * WAV é PCM, e o MediaPlayer da macro manda PCM de música para a saída DIRECT (AudioOut_19D), que
+     * vai ao alto-falante POR FORA do mixer principal — onde o Xiaomi aplica o reforço de alto-falante.
+     * A voz do Google (o "ok") passa pelo mixer. Resultado: o áudio da nuvem chegava ao HAL MAIS alto
+     * (-10 a -12 dB) e soava "muito baixo". OGG Opus não tem perfil direto neste aparelho: é decodificado
+     * e cai no mixer. FALA_FORMATO=wav volta ao comportamento antigo sem deploy. */
+    if (!r) {
+      var _fmtFala = String(props.getProperty('FALA_FORMATO') || 'ogg').toLowerCase();
+      var optTTS = { formato: _fmtFala === 'wav' ? 'wav' : 'ogg', volume: ganho,
+                     perfil: props.getProperty('FALA_PERFIL_AUDIO') || 'handset-class-device' };
+      if (voz) optTTS.voz = voz;
+      r = Voz.sintetizar(t, optTTS); _spans.engine = 'cloud';
+    }
     _spans.sintese = Date.now() - _tSint;
     if (r.status !== 'success') return { ok: false, erro: r.erro, spans: _spans };
+    // WAV (Gemini nos briefings, ou FALA_FORMATO=wav): compressor + limitador para o alto-falante.
+    if (r.ext === 'wav' && Voz.maximizarWav) { try { r.base64 = Voz.maximizarWav(r.base64); } catch (eMx) {} }
+    _spans.formato = r.ext || 'wav';
     var _tDrive = Date.now();
     try {
       var bytes = Utilities.base64Decode(r.base64);
-      var mime = 'audio/wav', nomeArq = 'jarvis-fala.wav';
+      // O NOME e o ID do arquivo ficam fixos (a macro baixa pelo ID e toca "jarvis-fala.wav"); o tipo real
+      // vai no mime. O Android identifica OGG pelo conteúdo, não pela extensão.
+      var mime = r.mime || 'audio/wav', nomeArq = 'jarvis-fala.wav';
       var idAntigo = props.getProperty('JARVIS_FALA_FILE_ID');
       var id = idAntigo;
       // Se o formato do arquivo de fala mudou (ex.: mp3 → wav), força RECRIAÇÃO (não dá p/ PATCH wav sobre mp3).

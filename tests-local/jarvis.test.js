@@ -1636,3 +1636,34 @@ test('Gastos: período com quantidade ("últimas duas semanas" respondia 7 dias)
   assert.strictEqual(s._interpretarFinanceiro('quanto eu gastei essa semana').dias, 7);
   assert.strictEqual(s._interpretarFinanceiro('quanto eu gastei hoje').dias, 1);
 });
+
+// ───────────────────────── 🔊 Formato da fala: OGG (mixer do Android), não WAV (saída DIRECT) ─────────────────────────
+test('Fala da nuvem sai em OGG com perfil de alto-falante (WAV ia para a saída DIRECT e soava baixo)', function () {
+  var pedido = null;
+  var s = makeSandbox({}); loadGasFile('Jarvis.js', s);
+  s.Voz = { temChave: function () { return true; }, sintetizar: function (t, o) { pedido = o; return { status: 'error', erro: 'parar' }; } };
+  s.Jarvis.prepararVozCelular('resumo de e-mails');
+  assert.strictEqual(pedido.formato, 'ogg');
+  assert.strictEqual(pedido.perfil, 'handset-class-device');
+  var s2 = makeSandbox({ props: { FALA_FORMATO: 'wav' } }); loadGasFile('Jarvis.js', s2);
+  s2.Voz = { temChave: function () { return true; }, sintetizar: function (t, o) { pedido = o; return { status: 'error', erro: 'x' }; } };
+  s2.Jarvis.prepararVozCelular('x');
+  assert.strictEqual(pedido.formato, 'wav', 'chave de volta sem deploy');
+});
+
+test('maximizarWav: sobe as partes fracas sem passar do teto de -1 dBFS', function () {
+  var s = makeSandbox({});
+  s.Utilities.base64Decode = function (b) { return Array.from(Buffer.from(b, 'base64')).map(function (x) { return x > 127 ? x - 256 : x; }); };
+  s.Utilities.base64Encode = function (a) { return Buffer.from(a.map(function (x) { return x & 255; })).toString('base64'); };
+  loadGasFile('Voz.js', s);
+  // WAV 24 kHz mono: 1 s de tom de 1 kHz com metade forte (0,5) e metade fraca (0,05)
+  var n = 24000, pcm = Buffer.alloc(n * 2);
+  for (var i = 0; i < n; i++) { var amp = i < n / 2 ? 0.5 : 0.05; pcm.writeInt16LE(Math.round(amp * 32767 * Math.sin(2 * Math.PI * 1000 * i / 24000)), i * 2); }
+  var h = Buffer.alloc(44); h.write('RIFF', 0); h.writeUInt32LE(36 + pcm.length, 4); h.write('WAVE', 8); h.write('fmt ', 12); h.writeUInt32LE(16, 16);
+  h.writeUInt16LE(1, 20); h.writeUInt16LE(1, 22); h.writeUInt32LE(24000, 24); h.writeUInt32LE(48000, 28); h.writeUInt16LE(2, 32); h.writeUInt16LE(16, 34); h.write('data', 36); h.writeUInt32LE(pcm.length, 40);
+  var out = Buffer.from(s.Voz.maximizarWav(Buffer.concat([h, pcm]).toString('base64')), 'base64');
+  function pico(a, b) { var p = 0; for (var i = a; i < b; i++) p = Math.max(p, Math.abs(out.readInt16LE(44 + i * 2))); return p / 32768; }
+  var forte = pico(2000, n / 2), fraca = pico(n / 2 + 2000, n);
+  assert.ok(forte <= Math.pow(10, -1 / 20) + 0.001, 'nunca passa de -1 dBFS');
+  assert.ok(fraca / forte > 0.05 / 0.5 * 2, 'a parte fraca chega mais perto da forte (compressão)');
+});

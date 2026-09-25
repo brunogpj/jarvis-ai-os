@@ -3516,7 +3516,14 @@ function doPost(e) {
         var _viaBase = String((typeof _viaVoz !== 'undefined') ? _viaVoz : '').split(':')[0];
         var _rotaEhLocal = _rotasLocais.indexOf(_viaBase) !== -1;
         var _curto = String(textoLimpo || '').length <= 240;
-        var _falarLocal = (_modoCfg === 'local') || (_modoCfg === 'auto' && _rotaEhLocal && _curto);
+        /* RESPOSTA DE VOZ = TTS DO PRÓPRIO CELULAR (25/09). Medido no Redmi: o áudio da nuvem, tocado pelo
+         * MediaPlayer da macro Falar, vai para a saída DIRECT do Android (fora do mixer onde o Xiaomi
+         * aplica o reforço de alto-falante, e ainda com -6 dB na faixa) — seja WAV ou OGG. Chegava mais
+         * alto ao hardware e soava "muito baixo". A voz do Google no aparelho passa pelo mixer: é a que o
+         * Bruno ouve bem ("ok", hora, data). Quando a macro Conversa está esperando a resposta, ela fala o
+         * texto — mais alto e sem os 8-15 s de síntese + Drive. FALA_RESPOSTAS_LOCAL=nao volta ao antigo. */
+        var _respLocal = String(PropertiesService.getScriptProperties().getProperty('FALA_RESPOSTAS_LOCAL') || 'sim').toLowerCase() !== 'nao';
+        var _falarLocal = (_modoCfg === 'local') || (_respLocal && _modoCfg !== 'nao') || (_modoCfg === 'auto' && _rotaEhLocal && _curto);
         var _falarNuvem = (_modoCfg !== 'local' && _modoCfg !== 'nao' && !_falarLocal);
 
         // _falarNuvem/_falarLocal dizem a INTENÇÃO; _entregou diz o que de fato saiu. A distinção

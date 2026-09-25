@@ -1667,3 +1667,17 @@ test('maximizarWav: sobe as partes fracas sem passar do teto de -1 dBFS', functi
   assert.ok(forte <= Math.pow(10, -1 / 20) + 0.001, 'nunca passa de -1 dBFS');
   assert.ok(fraca / forte > 0.05 / 0.5 * 2, 'a parte fraca chega mais perto da forte (compressão)');
 });
+
+test('Resposta de voz vai no corpo para o TTS do celular (a da nuvem ia para a saída DIRECT e soava baixa)', function () {
+  var s = _vozSandbox();
+  s.Jarvis.ask = function () { return 'Canberra é a capital da Austrália.'; };
+  var corpo = s.__voz('qual a capital da Austrália');
+  assert.strictEqual(corpo, 'Canberra é a capital da Austrália.');
+  assert.strictEqual(s.__cmds.filter(function (c) { return c.acao === 'falar'; }).length, 0, 'sem síntese na nuvem');
+  var s2 = _vozSandbox();
+  s2.PropertiesService.getScriptProperties().setProperty('FALA_RESPOSTAS_LOCAL', 'nao');
+  s2.PropertiesService.getScriptProperties().setProperty('MODO_FALA_VOZ', 'auto');   // o modo configurado em produção
+  s2.Jarvis.ask = function () { return 'Canberra.'; };
+  assert.strictEqual(s2.__voz('qual a capital da Austrália'), '', 'chave de volta: corpo vazio e fala pela nuvem');
+  assert.strictEqual(s2.__cmds.filter(function (c) { return c.acao === 'falar'; }).length, 1);
+});

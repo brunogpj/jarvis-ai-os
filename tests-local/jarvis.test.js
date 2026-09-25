@@ -1423,3 +1423,50 @@ test('Rota apps_celular: grava só pacotes válidos e apelidos que apontam para 
   var sp = s.PropertiesService.getScriptProperties();
   assert.deepStrictEqual(JSON.parse(sp.getProperty('APPS_APELIDOS')), { meuapp: 'com.exemplo.app' });
 });
+
+// ───────────────────────── 🧭 Rota: "me direcione" e o status do celular ─────────────────────────
+function _vozSandbox() {
+  var s = makeSandbox({ props: { VOICE_API_TOKEN: 'T', OWNER_EMAIL: 'o@x' } });
+  s.ContentService = { MimeType: { TEXT: 'TEXT', JSON: 'JSON' }, createTextOutput: function (t) { return { setMimeType: function () { return { getContentText: function () { return t; } }; }, getContentText: function () { return t; } }; } };
+  loadGasFile('Code.js', s);
+  s.__cmds = [];
+  s.Jarvis.controlarDispositivo = function (a) { s.__cmds.push(a); return { status: 'success' }; };
+  s.Jarvis.ask = function () { return 'LLM'; };
+  s.__voz = function (m) { return s.doPost({ postData: { contents: JSON.stringify({ action: 'voice_command', message: m, token: 'T' }) } }).getContentText(); };
+  return s;
+}
+
+test('Rota: "me direcione para X" traça a rota sem passar pelo modelo (24/09: disse que traçou e não traçou)', function () {
+  var s = _vozSandbox();
+  s.__voz('me direcione para Rua José Rodrigues Pereira 185');
+  var nav = s.__cmds.filter(function (c) { return c.acao === 'navegar'; });
+  assert.strictEqual(nav.length, 1);
+  assert.strictEqual(nav[0].destino, 'Rua José Rodrigues Pereira 185');
+});
+
+test('Rota: "em direção é para X" e "me direcione para o trabalho" também', function () {
+  var s = _vozSandbox();
+  s.__voz('em direção é para Rua José Rodrigues 183');
+  s.__voz('me direcione para o trabalho');
+  var nav = s.__cmds.filter(function (c) { return c.acao === 'navegar'; }).map(function (c) { return c.destino; });
+  assert.deepStrictEqual(nav, ['Rua José Rodrigues 183', 'Trabalho']);
+});
+
+test('Status do celular: campo a campo e sem o token (voz sem bateria apagava o status real)', function () {
+  var s = code({});
+  s.getSessionUser = function () { return { email: 'o@x' }; };
+  s.Firestore.listDocs = function (col) {
+    if (col !== 'telemetria_dispositivo') return [];
+    return [
+      { id: 'a', dados: { recebidoEm: '2026-09-24T22:57:00Z', body: { action: 'voice_command', message: 'abre o LinkedIn', token: 'SEGREDO' } } },
+      { id: 'b', dados: { recebidoEm: '2026-09-24T22:17:00Z', body: { bateria_nivel: '19', carregando: 'Desligar', wifi_nome: 'Casa', token: 'SEGREDO' } } }
+    ];
+  };
+  var r = s.obterStatusDispositivo('tok');
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.telemetria.bateria_nivel, '19');
+  assert.strictEqual(r.telemetria.wifi_nome, 'Casa');
+  assert.strictEqual(r.telemetria.recebidoEm, '2026-09-24T22:17:00Z', 'a hora é a do último dado do aparelho');
+  assert.strictEqual(r.telemetria.token, undefined, 'token nunca vai para o navegador');
+  assert.strictEqual(r.telemetria.message, undefined);
+});

@@ -1747,15 +1747,27 @@ function obterStatusDispositivo(token) {
         var tb = (b.dados && b.dados.recebidoEm) ? new Date(b.dados.recebidoEm).getTime() : 0;
         return tb - ta;
       });
-      var d = docsTel[0].dados || docsTel[0];
-      if (d) {
-        telemetria = { recebidoEm: d.recebidoEm || '' };
-        if (d.body) {
-          Object.keys(d.body).forEach(function (k) {
-            telemetria[k] = _limparValorTelemetria(d.body[k]);
-          });
-        }
-      }
+      /* CAMPO A CAMPO, do mais novo para o mais antigo. Só o registro mais novo não basta: comando
+       * de voz também grava aqui, e um sem bateria/Wi-Fi (em 24/09, um teste pelo terminal) apagava o
+       * status real — o card mostrava "indisponível" com a telemetria de 10 min antes intacta.
+       * "Última atualização" = o registro mais novo que trouxe DADO DO APARELHO, não qualquer um. */
+      var CAMPOS_APARELHO = { bateria_nivel: 1, bateria: 1, carregando: 1, modo_som: 1, wifi_nome: 1, volume_toque: 1 };
+      telemetria = { recebidoEm: '' };
+      docsTel.forEach(function (doc) {
+        var d = doc.dados || doc;
+        if (!d || !d.body) return;
+        var trouxe = false;
+        Object.keys(d.body).forEach(function (k) {
+          // O voice_command grava o corpo inteiro — com o VOICE_API_TOKEN e o texto falado. Isso não
+          // vai para o navegador (a sessão aqui não precisa nem ser do dono).
+          if (/^(token|message|mensagem|action|sig)$/i.test(k)) return;
+          var v = _limparValorTelemetria(d.body[k]);
+          if (v === '' || v === null || v === undefined) return;
+          if (telemetria[k] === undefined) telemetria[k] = v;
+          if (CAMPOS_APARELHO[k]) trouxe = true;
+        });
+        if (trouxe && !telemetria.recebidoEm) telemetria.recebidoEm = d.recebidoEm || '';
+      });
     }
     // Logs: SÓ eventos ligados ao DISPOSITIVO (o card é "Logs do Celular", não a telemetria geral do agente).
     var DISPOSITIVO_TOOLS = { controlardispositivo: 1, falar: 1, notificar: 1, navegar: 1, voice_command: 1, briefing: 1 };
@@ -2859,9 +2871,12 @@ function doPost(e) {
       try {
         try {
           var idTel = String(1e13 - Date.now());
+          // Sem o token: o registro é telemetria, e credencial não mora em banco de telemetria.
+          var bodySemToken = {};
+          Object.keys(body).forEach(function (k) { if (k !== 'token') bodySemToken[k] = body[k]; });
           Firestore.setDoc('telemetria_dispositivo', idTel, {
             recebidoEm: new Date().toISOString(),
-            body: body
+            body: bodySemToken
           });
         } catch (eDb) {
           Logger.log("Erro ao salvar telemetria_dispositivo: " + eDb.message);
@@ -3036,7 +3051,9 @@ function doPost(e) {
         var _gg = (msgVoz.match(/(?:pesquis\w*|procur\w*|busq\w*)\s+(?:por\s+|sobre\s+)?(.+?)\s+n[oa]\s+google/i) || msgVoz.match(/(?:pesquis\w*|procur\w*)\s+(?:por\s+|sobre\s+)?(.+?)\s+na\s+web/i));
         // (v) ROTA/NAVEGAÇÃO → ação "navegar" (determinístico; bypassa o LLM p/ não contaminar/errar).
         var _rota = (function () {
-          var m = msgVoz.trim().match(/^(?:tra[çc]ar?\s+(?:a\s+)?rota|rota|navegue?|navegar|me\s+lev[ae]|como\s+(?:eu\s+)?(?:ir|chego|chegar))\s*(?:at[eé]|para|pro|pra|ao|no|na|em|a)?\s+(?:o |a |os |as )?(.+?)[\s\.!?]*$/i);
+          // "me direcione para X" é a frase que o Bruno MAIS usa (dezenas no log da macro) e não estava
+          // aqui: caía no LLM, levava ~1 min e, em 24/09 07:10, disse "estou traçando a rota" sem traçar.
+          var m = msgVoz.trim().match(/^(?:tra[çc]ar?\s+(?:a\s+)?rota|rota|navegue?|navegar|me\s+lev[ae]|me\s+direcion[ae]r?|direcion[ae]-?me|me\s+gui[ae]|em\s+dire[çc][aã]o(?:\s+[eé])?|como\s+(?:eu\s+)?(?:ir|chego|chegar))\s*(?:at[eé]|para|pro|pra|ao|no|na|em|a|à)?\s+(?:o |a |os |as )?(.+?)[\s\.!?]*$/i);
           if (!m) return null;
           var d = m[1].trim();
           if (/^(trabalho|servi[çc]o|firma|emprego)$/i.test(d)) d = 'Trabalho';
@@ -3305,7 +3322,11 @@ function doPost(e) {
             var _rAb = Jarvis.controlarDispositivo({ acao: 'abrirApp', nome: _appNome });
             respVoz = (_rAb && _rAb.status === 'success')
               ? ('Abrindo ' + _appNome + ' para você.')
-              : ('Não consegui abrir ' + _appNome + ' agora, Bruno.');
+              // O motivo diz o que fazer: "não encontrei o app" (não está instalado) e "mais de um app"
+              // (fale o nome completo) pedem respostas diferentes de "tente de novo".
+              : (_rAb && /Não encontrei|Mais de um app/.test(String(_rAb.erro || '')))
+                ? String(_rAb.erro).replace(/ no celular\.$/, ' instalado no seu celular.')
+                : ('Não consegui abrir ' + _appNome + ' agora, Bruno.');
           } catch (eAb) {
             respVoz = Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false });
           }

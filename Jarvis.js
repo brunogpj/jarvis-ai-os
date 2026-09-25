@@ -690,6 +690,14 @@ var Jarvis = (function () {
         }
       },
       {
+        // O chat não recebe o bloco "[Contexto do Aparelho]" (só a voz recebe) e não tinha como ler o
+        // celular: "qual o status do meu celular?" — sugestão da própria tela do chat — respondia
+        // "não tenho acesso" (25/09), com a telemetria de 15 min atrás no banco.
+        name: 'statusCelular',
+        description: 'Lê o ESTADO ATUAL do celular Android do dono pela telemetria que o aparelho envia (a cada ~15 min e a cada comando de voz): nível da bateria, se está carregando, rede Wi-Fi, volume do toque e quando foi a última leitura. Use para "status do celular", "como está a bateria", "estou no Wi-Fi?". Somente leitura.',
+        parameters: { type: 'OBJECT', properties: {} }
+      },
+      {
         name: 'controlarDispositivo',
         description: 'Executa uma AÇÃO NATIVA no CELULAR Android do dono (enviada ao app de automação no aparelho). Use quando ele pedir algo DO APARELHO/celular ou para notificações interativas de confirmação/resposta. AÇÕES: alarme(hora) · timer(minutos) · brilho(nivel 0-100) · volume(nivel 0-100 ou "alto"/"medio"/"baixo"/"mudo") · midia(comando:"pausar"/"tocar"/"proxima"/"anterior" — controla a música/vídeo em reprodução) · lanterna() (alterna liga/desliga) · tela(estado:"desligar") · tema(modo:"claro"/"escuro") · naoperturbe(estado:"on"/"off") · notificar(titulo,texto) · notificacao_interativa(titulo,texto,opcao1,opcao2,modo,metadata?) · abrirApp(nome) · wifi(estado) · bluetooth(estado) · navegar(destino,origem?) · abrirUrl(url) · intent(intent_action,intent_package?,intent_data?,intent_mime?,intent_extra_key_1?,intent_extra_val_1?,...).',
         parameters: {
@@ -1143,6 +1151,10 @@ var Jarvis = (function () {
         nomes: ['controlarDispositivo']
       },
       {
+        re: /(celular|aparelho|telefone|bateria|carregando|carregador|wi-?fi|rede|conectad|status do|volume do)/,
+        nomes: ['statusCelular']
+      },
+      {
         re: /(pagina|site|url|\bweb\b|link|http|monitor)/,
         nomes: ['lerPagina', 'monitorarPagina', 'listarMonitoresPagina', 'pararMonitorPagina']
       },
@@ -1273,6 +1285,10 @@ var Jarvis = (function () {
     // Proprietário: constrói a lista COMPLETA e depois filtra por intenção (TSI-1).
     var listaCompleta = wiki.concat(_conhecimentoDecl).concat(_memoriaConvDecl).concat(_prefsDecl).concat(_semanticaDecl).concat(_webDecl).concat(_youtubeDecl).concat(_autorizacaoDecl).concat(_workspaceToolDecls()).concat(_gmailToolDecls()).concat(SkillsManager.getToolDeclarations());
 
+    // WhatsApp desligado → as ferramentas dele nem são oferecidas (o modelo não tenta e não inventa motivo).
+    if (typeof _whatsappAtivo === 'function' && !_whatsappAtivo()) {
+      listaCompleta = listaCompleta.filter(function (t) { return !/WhatsApp/.test(t.name); });
+    }
     // Sem mensagem (ex.: chamada do default de _execTool) → retorna todas.
     if (!mensagem) return listaCompleta;
 
@@ -1348,6 +1364,11 @@ var Jarvis = (function () {
     // Tolera erros comuns de nome (o modelo às vezes alucina variações).
     var _alias = { ingestirFonte: 'ingerirFonte', ingerirfonte: 'ingerirFonte', registrarLog: 'registrarNoLog', escreverwiki: 'escreverWiki' };
     if (_alias[name]) name = _alias[name];
+    // WhatsApp desligado: o motivo VERDADEIRO. Em 25/09 "manda mensagem pro Douglas" falhou e o
+    // modelo disse que o Douglas "não está nos contatos" — a Evolution está desligada desde julho.
+    if (/WhatsApp/.test(name) && typeof _whatsappAtivo === 'function' && !_whatsappAtivo()) {
+      return { status: 'error', erro: 'O WhatsApp do Jarvis está DESLIGADO por decisão do dono. Diga exatamente isso ao usuário — não culpe o contato nem sugira tentar de novo.' };
+    }
 
     // ── Camada de CONFIRMAÇÃO (P2): só no chat interativo; contextos autônomos (agenda/monitor/
     // jobs/inbound) são pré-autorizados e não passam por aqui. Pede preview antes de executar.
@@ -1444,6 +1465,7 @@ var Jarvis = (function () {
       case 'prepararBriefingNotebookLM': return isOwner ? _prepararBriefingNotebookLM(args) : _denied(name);
       case 'promoverRawParaWiki':  return isOwner ? WikiMemoryService.promoverRawParaWiki(args.caminhoRawOuId, args.subpastaWiki) : _denied(name);
       case 'controlarDispositivo': return isOwner ? _controlarDispositivo(args) : _denied(name);
+      case 'statusCelular':        return isOwner ? _statusCelular() : _denied(name);
       case 'lerPagina':            return isOwner ? _lerPagina(args) : _denied(name);
       case 'monitorarPagina':      return isOwner ? Web.monitorar(args.url, args.descricao) : _denied(name);
       case 'listarMonitoresPagina': return isOwner ? { status: 'success', monitores: Web.listar() } : _denied(name);
@@ -2480,6 +2502,25 @@ var Jarvis = (function () {
     try { if (typeof WikiMemoryService !== 'undefined') WikiMemoryService.registrarNoLog('[fala] drift de ID → ' + url); } catch (e) {}
   }
 
+  /** Estado do celular pela telemetria mesclada (mesma leitura da aba Dispositivo). Idade explícita:
+   *  bateria de 3 h atrás não é "a bateria agora" — o modelo precisa saber para não afirmar como atual. */
+  function _statusCelular() {
+    if (typeof _telemetriaMesclada !== 'function') return { status: 'error', erro: 'Telemetria indisponível.' };
+    var t = _telemetriaMesclada();
+    if (!t || !t.recebidoEm) return { status: 'error', erro: 'O celular ainda não enviou telemetria.' };
+    var idadeMin = Math.round((Date.now() - new Date(t.recebidoEm).getTime()) / 60000);
+    var carreg = String(t.carregando || '').toLowerCase();
+    return {
+      status: 'success',
+      bateria: t.bateria_nivel || t.bateria || null,
+      carregando: /^(ligar|sim|true|1|charging|carregando|ac|usb)/.test(carreg) ? true : (carreg ? false : null),
+      wifi: t.wifi_nome || null,
+      volumeToque: t.volume_toque || null,
+      leituraHaMinutos: idadeMin,
+      nota: idadeMin > 30 ? 'Leitura de ' + idadeMin + ' min atrás — diga que pode ter mudado.' : 'Leitura recente.'
+    };
+  }
+
   /* APPS INSTALADOS NO CELULAR — para abrir qualquer um, não só os ~20 do mapa fixo.
    * APPS_CELULAR  = {pacote: Activity de lançamento} (de `cmd package query-activities` no aparelho;
    *                 Activity relativa começa com '.').
@@ -3158,6 +3199,11 @@ var Jarvis = (function () {
     _ativoConversaId = (opts && opts.conversaId) || '';
     _ativoUserEmail = userEmail || '';
     var interativo = !(opts && opts.interativo === false);
+    // GATE P2 TAMBÉM NA VOZ. A voz roda com interativo:false (sem chips, sem cache), e o gate só olhava
+    // `interativo` — então por voz, ações sensíveis (enviar, excluir, script dinâmico) executavam SEM
+    // confirmação. Em 25/09 "apaga todos os meus e-mails" só não apagou porque o modelo recusou sozinho.
+    // A voz CONVERSA: "confirma?" → "sim" no turno seguinte funciona como no chat.
+    var gateP2 = interativo || !!(opts && opts.canal === 'voz');
     // MULTI-ANEXO: aceita array (ou {tipo:'multi',anexos:[...]}) — o 1º vira o anexo "principal"
     // (OCR/transcrição/base p/ gerarImagem, fluxos existentes); os demais viram parts EXTRAS.
     var _na = _normalizarAnexos(anexo);
@@ -3395,7 +3441,7 @@ var Jarvis = (function () {
           _registrarEvento({ tool: 'loop:orcamento', ms: 0, ok: false, resumo: fc.name, userEmail: userEmail, interativo: interativo, turnId: _turnId });
         } else {
           var _t0 = Date.now();
-          try { result = _execTool(fc.name, fc.args || {}, userEmail, isOwner, interativo); }
+          try { result = _execTool(fc.name, fc.args || {}, userEmail, isOwner, gateP2); }
           catch (e) { result = { status: 'error', erro: e.message }; }
           _sigVistas[_sig] = 1; _orcTools++;
           // L1 · FEEDBACK ESTRUTURADO: erro repetido na mesma ferramenta ganha dica p/ adaptar.

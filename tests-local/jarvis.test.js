@@ -1519,3 +1519,27 @@ test('Rota JEV: "que horas eu bato o ponto" traz os HORÁRIOS, não só o nome d
   assert.match(r, /manhã/);
   assert.match(r, /Pontos: \d+h/, 'em 25/09 respondia só "Seu turno atual é o da manhã"');
 });
+
+test('Chat: "qual o status do meu celular?" oferece a ferramenta statusCelular (respondia "não tenho acesso")', function () {
+  var s = makeSandbox({}); loadGasFile('Jarvis.js', s);
+  var p = s.Jarvis._toolsPermitidas('qual o status do meu celular?');
+  assert.ok(p && p.statusCelular, 'sugestão da própria tela do chat');
+  assert.ok(s.Jarvis._toolsPermitidas('como está a bateria').statusCelular);
+});
+
+test('Gate P2 vale na voz: ações sensíveis pedem confirmação também por voz', function () {
+  var fs = require('fs'), path = require('path');
+  var jv = fs.readFileSync(path.join(__dirname, '..', 'Jarvis.js'), 'utf8');
+  var cd = fs.readFileSync(path.join(__dirname, '..', 'Code.js'), 'utf8');
+  assert.match(jv, /var gateP2 = interativo \|\| !!\(opts && opts\.canal === 'voz'\)/);
+  assert.match(jv, /_execTool\(fc\.name, fc\.args \|\| \{\}, userEmail, isOwner, gateP2\)/, 'a execução recebe o gate, não o "interativo" cru');
+  assert.strictEqual((cd.match(/instrucaoVoz, historico, null, \{ interativo: false \}\)/g) || []).length, 0,
+    'nenhuma chamada de voz ao modelo sem canal:voz (era por onde "apaga meus e-mails" passaria sem confirmar)');
+});
+
+test('WhatsApp desligado: ferramenta chamada devolve o motivo verdadeiro', function () {
+  var fs = require('fs'), path = require('path');
+  var jv = fs.readFileSync(path.join(__dirname, '..', 'Jarvis.js'), 'utf8');
+  assert.match(jv, /\/WhatsApp\/\.test\(name\) && typeof _whatsappAtivo === 'function' && !_whatsappAtivo\(\)/);
+  assert.match(jv, /listaCompleta = listaCompleta\.filter\(function \(t\) \{ return !\/WhatsApp\/\.test\(t\.name\); \}\)/);
+});

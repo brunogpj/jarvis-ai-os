@@ -1747,7 +1747,19 @@ function obterStatusDispositivo(token) {
   var sessao = getSessionUser(token);
   if (!sessao) return { ok: false, erro: 'não autorizado' };
   try {
-    var telemetria = null;
+    var telemetria = _telemetriaMesclada();
+    // Logs: SÓ eventos ligados ao DISPOSITIVO (o card é "Logs do Celular", não a telemetria geral do agente).
+    return _obterStatusDispositivoLogs(telemetria);
+  } catch (e) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+/** Telemetria do celular, mesclada campo a campo (a MESMA leitura da aba Dispositivo e da ferramenta
+ *  statusCelular do agente — antes o chat nem tinha como ler: "não tenho acesso ao seu celular"). */
+function _telemetriaMesclada() {
+  var telemetria = null;
+  {
     // Pega o registro MAIS RECENTE (listDocs não garante ordem) e limpa magic-text não substituído.
     var docsTel = Firestore.listDocs('telemetria_dispositivo', 20);
     if (docsTel && docsTel.length > 0) {
@@ -1778,7 +1790,12 @@ function obterStatusDispositivo(token) {
         if (trouxe && !telemetria.recebidoEm) telemetria.recebidoEm = d.recebidoEm || '';
       });
     }
-    // Logs: SÓ eventos ligados ao DISPOSITIVO (o card é "Logs do Celular", não a telemetria geral do agente).
+  }
+  return telemetria;
+}
+
+function _obterStatusDispositivoLogs(telemetria) {
+  {
     var DISPOSITIVO_TOOLS = { controlardispositivo: 1, falar: 1, notificar: 1, navegar: 1, voice_command: 1, briefing: 1 };
     var logs = [];
     var docsLogs = Firestore.listDocs('agente_eventos', 80);
@@ -1797,8 +1814,6 @@ function obterStatusDispositivo(token) {
       });
     }
     return { ok: true, telemetria: telemetria, logs: logs };
-  } catch (e) {
-    return { ok: false, erro: e.message };
   }
 }
 
@@ -3277,17 +3292,17 @@ function doPost(e) {
             respVoz = _rl.ok
               ? ('Combinado. Quando você ' + _quandoL + ' ' + _ondeL + ', eu te lembro de ' + _lembC.texto + '.')
               : ('Não consegui criar o lembrete: ' + (_rl.erro || 'erro') + '.');
-          } catch (eLc) { respVoz = Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false }); }
+          } catch (eLc) { respVoz = Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false, canal: 'voz' }); }
         } else if (_rot) {
           try {
             var _rr = executarRotina(_rot);
             respVoz = _rr.ok ? _rr.resposta : ('Não consegui executar o ' + (_rr.nome || _rot) + ' agora.');
-          } catch (eRt) { respVoz = Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false }); }
+          } catch (eRt) { respVoz = Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false, canal: 'voz' }); }
         } else if (_ctl && typeof Jarvis !== 'undefined' && Jarvis.controlarDispositivo) {
           try {
             var _rCtl = Jarvis.controlarDispositivo(_ctl.args);
             respVoz = (_rCtl && _rCtl.status === 'success') ? _ctl.resp : ('Não consegui agora: ' + ((_rCtl && _rCtl.erro) || 'falha no envio ao celular') + '.');
-          } catch (eCt) { respVoz = Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false }); }
+          } catch (eCt) { respVoz = Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false, canal: 'voz' }); }
         } else if (_bib && typeof Jarvis !== 'undefined' && Jarvis.controlarDispositivo) {
           try {
             if (_bib.falar && !_bib.ver) {
@@ -3310,30 +3325,30 @@ function doPost(e) {
               respVoz = 'Abrindo a Bíblia em ' + _bib.ref + '.';
             }
           } catch (eBi) {
-            respVoz = Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false });
+            respVoz = Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false, canal: 'voz' });
           }
         } else if (_spot && typeof Jarvis !== 'undefined' && Jarvis.controlarDispositivo) {
           try {
             Jarvis.controlarDispositivo({ acao: 'abrirUrl', url: 'https://open.spotify.com/search/' + encodeURIComponent(_spot) });
             respVoz = 'Tocando ' + _spot + ' no Spotify.';
           } catch (eSp) {
-            respVoz = Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false });
+            respVoz = Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false, canal: 'voz' });
           }
         } else if (_yt && typeof Jarvis !== 'undefined' && Jarvis.controlarDispositivo) {
           try {
             Jarvis.controlarDispositivo({ acao: 'abrirUrl', url: 'https://www.youtube.com/results?search_query=' + encodeURIComponent(_yt[1].trim()) });
             respVoz = 'Pesquisando ' + _yt[1].trim() + ' no YouTube.';
-          } catch (eYt) { respVoz = Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false }); }
+          } catch (eYt) { respVoz = Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false, canal: 'voz' }); }
         } else if (_gg && typeof Jarvis !== 'undefined' && Jarvis.controlarDispositivo) {
           try {
             Jarvis.controlarDispositivo({ acao: 'abrirUrl', url: 'https://www.google.com/search?q=' + encodeURIComponent(_gg[1].trim()) });
             respVoz = 'Pesquisando ' + _gg[1].trim() + ' no Google.';
-          } catch (eGg) { respVoz = Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false }); }
+          } catch (eGg) { respVoz = Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false, canal: 'voz' }); }
         } else if (_rota && typeof Jarvis !== 'undefined' && Jarvis.controlarDispositivo) {
           try {
             Jarvis.controlarDispositivo({ acao: 'navegar', destino: _rota });
             respVoz = 'Traçando a rota para ' + _rota + '.';
-          } catch (eRt) { respVoz = Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false }); }
+          } catch (eRt) { respVoz = Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false, canal: 'voz' }); }
         } else if (_pod && typeof Jarvis !== 'undefined' && Jarvis.gerarPodcastWiki) {
           try {
             var _rPod = Jarvis.gerarPodcastWiki({ topico: _pod }, emailUser);
@@ -3347,7 +3362,7 @@ function doPost(e) {
           try {
             Jarvis.controlarDispositivo({ acao: 'abrirUrl', url: _loja.url });
             respVoz = 'Pesquisando ' + _loja.q + ' no ' + _loja.loja + '.';
-          } catch (eLo) { respVoz = Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false }); }
+          } catch (eLo) { respVoz = Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false, canal: 'voz' }); }
         } else if (_lig && typeof Jarvis !== 'undefined' && Jarvis.controlarDispositivo) {
           try {
             // Único caminho confiável no MIUI = abrirUrl (OpenWebPage). O tel: é "web-ificado" (abre no
@@ -3355,7 +3370,7 @@ function doPost(e) {
             // (componente) é bloqueado pelo congelamento da MIUI; auto-discar exigiria ação nativa na macro.
             Jarvis.controlarDispositivo({ acao: 'abrirUrl', url: 'tel:' + _lig });
             respVoz = 'Preparei a ligação para ' + _lig.replace(/(\d{2})(\d{4,5})(\d{4})/, '$1 $2-$3') + ' — é só tocar em Ligar.';
-          } catch (eLi) { respVoz = Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false }); }
+          } catch (eLi) { respVoz = Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false, canal: 'voz' }); }
         } else if (_appNome && _appSimples && !_acaoComposta && typeof Jarvis !== 'undefined' && Jarvis.controlarDispositivo) {
           try {
             var _rAb = Jarvis.controlarDispositivo({ acao: 'abrirApp', nome: _appNome });
@@ -3367,7 +3382,7 @@ function doPost(e) {
                 ? String(_rAb.erro).replace(/ no celular\.$/, ' instalado no seu celular.')
                 : ('Não consegui abrir ' + _appNome + ' agora, Bruno.');
           } catch (eAb) {
-            respVoz = Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false });
+            respVoz = Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false, canal: 'voz' });
           }
         } else {
           // A cadeia determinística inteira passou batido. ANTES de gastar 20-40 s no LLM, o JEV
@@ -3376,7 +3391,7 @@ function doPost(e) {
           var _sem = null;
           try { _sem = _rotaSemantica(msgVoz, emailUser, true); } catch (eSem) { _sem = null; }
           _viaJev = !!_sem;
-          respVoz = _sem || Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false });
+          respVoz = _sem || Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false, canal: 'voz' });
         }
         // QUAL ROTA ATENDEU. Sem isto não dá para saber, depois, se um pedido caiu num atalho
         // determinístico ou no LLM — que é exatamente a pergunta que apareceu em toda investigação

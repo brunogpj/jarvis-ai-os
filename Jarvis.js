@@ -2611,6 +2611,7 @@ var Jarvis = (function () {
         a = { acao: 'abrirUrl', url: String(a.intent_data) };
         acao = 'abrirurl';
       }
+      if (acao === 'abrirurl' && a.url) a = Object.assign({}, a, { url: _urlParaMacro(String(a.url)) });
       // 🛡️ DEDUPE de FALA (cross-execução): a MESMA fala empurrada em ~20s (webhook/trigger repetido,
       // pós-passo + tool, etc.) é ignorada → nunca toca áudio duplicado no celular.
       if (acao === 'falar') {

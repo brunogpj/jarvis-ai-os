@@ -3239,7 +3239,9 @@ function doPost(e) {
           var s2 = msgVoz.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
           if (/\b(pausa\w*|pause)\b/.test(s2) || /\bpar[ae]\s+(a\s+)?(musica|som|midia|video)/.test(s2))
             return { args: { acao: 'midia', comando: 'pausar' }, resp: 'Pausando a mídia.' };
-          if (/\b(continua\w*|retoma\w*|despausa\w*)\b/.test(s2) && /musica|som|midia|video|tocar|toca/.test(s2))
+          // "dê o play na música do Nickelback" (25/09) foi ao modelo, que abriu spotify:search no Edge.
+          if ((/\b(continua\w*|retoma\w*|despausa\w*)\b/.test(s2) && /musica|som|midia|video|tocar|toca/.test(s2)) ||
+              /\b(d[aeê]|aperta|aperte|clica|clique)\s+(o\s+|um\s+)?play\b/.test(s2) || /^\s*play\b/.test(s2))
             return { args: { acao: 'midia', comando: 'tocar' }, resp: 'Retomando a mídia.' };
           if (/\b(proxima|prox)\s+(faixa|musica|cancao)\b/.test(s2) || /\bpul[ae]\s+(a\s+|essa\s+)?(faixa|musica)/.test(s2))
             return { args: { acao: 'midia', comando: 'proxima' }, resp: 'Próxima faixa.' };
@@ -3618,7 +3620,7 @@ function doPost(e) {
             // dá para escolher a correção. spans vem do controlarDispositivo('falar').
             ok: _entregou || !_falarNuvem, ms: (_rEnt && _rEnt.spans) ? (Number(_rEnt.spans.lock || 0) + Number(_rEnt.spans.espera || 0) + Number(_rEnt.spans.sintese || 0) + Number(_rEnt.spans.drive || 0)) : 0,
             spans: (typeof _rEnt !== 'undefined' && _rEnt && _rEnt.spans) ? _rEnt.spans : null,
-            resumo: (typeof _viaVoz !== 'undefined' ? _viaVoz : '?') + ' · ' + String(textoLimpo).length + ' car.' +
+            resumo: (typeof _viaVoz !== 'undefined' ? _viaVoz : '?') + ' · ' + String(textoLimpo).length + ' car.' + (_ridKey ? ' · rid' : ' · sem rid') +
                     ((typeof _rEnt !== 'undefined' && _rEnt && _rEnt.spans) ? (' · motor ' + (_rEnt.spans.engine || '?') + ' · síntese ' + Math.round((_rEnt.spans.sintese || 0) / 1000) + ' s · fila ' + Math.round(((_rEnt.spans.lock || 0) + (_rEnt.spans.espera || 0)) / 1000) + ' s') : '')
           });
         } catch (eEnt) {}
@@ -6962,6 +6964,25 @@ function _interpretarLembreteCondicional(msg) {
     return t2.length >= 2 ? { gatilho: alvo(m[2], m[3]), texto: t2 } : null;
   }
   return null;
+}
+
+/* URL PARA A MACRO (abrirUrl). A ação "Abrir página" do MacroDroid CODIFICA a URL de novo
+ * (m_disableUrlEncode=false): o %20 que o servidor mandava virava %2520, e em 25/09 o Spotify
+ * abriu a busca literal "Nickelback%20Heroes" — em todo pedido de música. Testado no aparelho:
+ * termo cru com + nos espaços chega certo, inclusive acento ("Canção"). Então aqui cada trecho
+ * percent-encoded é desfeito: espaço vira +, caractere reservado (/?#&=+%) continua codificado,
+ * o resto volta cru. E spotify:search:X vira o App Link https — o esquema puro, montado pelo
+ * modelo, caiu no Edge como http://spotify:search:... no mesmo dia. */
+function _urlParaMacro(url) {
+  var u = String(url || '').trim();
+  var sp = u.match(/^spotify:search:(.+)$/i);
+  if (sp) u = 'https://open.spotify.com/search/' + sp[1];
+  return u.replace(/(?:%[0-9A-Fa-f]{2})+/g, function (seq) {
+    var d; try { d = decodeURIComponent(seq); } catch (e) { return seq; }
+    return d.split('').map(function (c) {
+      return c === ' ' ? '+' : /[\/?#&=+%:;@]/.test(c) ? encodeURIComponent(c) : c;
+    }).join('');
+  }).replace(/ /g, '+');
 }
 
 /* LEMBRETE RELATIVO ("me lembre daqui a 5 minutos de beber água") — determinístico.

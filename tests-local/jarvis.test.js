@@ -1770,3 +1770,15 @@ test('alerta de uma vez só com data passada sai da lista sem falar', function (
   assert.strictEqual(falas.length, 0);
   assert.strictEqual(s.AlertasVoz.listar().length, 0);
 });
+
+// ───────────────────────── URL para a macro (25/09: Spotify abria "Nickelback%20Heroes") ─────────────────────────
+test('_urlParaMacro: termo cru com + (a macro codifica de novo), spotify: vira App Link', function () {
+  var s = code();
+  assert.strictEqual(s._urlParaMacro('https://open.spotify.com/search/Nickelback%20Heroes'), 'https://open.spotify.com/search/Nickelback+Heroes');
+  assert.strictEqual(s._urlParaMacro('https://open.spotify.com/search/' + encodeURIComponent('Aline Barros Canção')), 'https://open.spotify.com/search/Aline+Barros+Canção');
+  assert.strictEqual(s._urlParaMacro('spotify:search:Nickelback'), 'https://open.spotify.com/search/Nickelback');
+  assert.strictEqual(s._urlParaMacro('spotify:search:Nickelback Heroes'), 'https://open.spotify.com/search/Nickelback+Heroes');
+  assert.strictEqual(s._urlParaMacro('https://www.youtube.com/results?search_query=' + encodeURIComponent('jev & claude')), 'https://www.youtube.com/results?search_query=jev+%26+claude');
+  assert.strictEqual(s._urlParaMacro('tel:31999999999'), 'tel:31999999999');
+  assert.strictEqual(s._urlParaMacro('https://www.bible.com/bible/212/JHN.3.16'), 'https://www.bible.com/bible/212/JHN.3.16');
+});

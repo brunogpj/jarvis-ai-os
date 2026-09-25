@@ -1010,7 +1010,16 @@ function _rotaSemantica(mensagem, email, isOwner) {
       resp = _finFalarGastos(per === 'hoje' ? 1 : (per === 'semana' ? 7 : 30));
     } else if (intencao === 'turno_consultar') {
       var ta = (typeof AlertasVoz !== 'undefined' && AlertasVoz.turnoAtual) ? AlertasVoz.turnoAtual() : null;
-      resp = ta ? ('Seu turno atual é o da ' + (ta === 'manha' ? 'manhã' : 'tarde') + '.')
+      // "que horas eu bato o ponto" respondia só "Seu turno atual é o da manhã" (25/09) — a pergunta
+      // era pelos HORÁRIOS. Eles vêm dos próprios alertas de ponto (tag 'ponto'), a fonte que dispara.
+      var _pts = [];
+      try {
+        _pts = AlertasVoz.listar().filter(function (a) { return a.tag === 'ponto'; })
+          .sort(function (a, b) { return (a.hora * 60 + (a.minuto || 0)) - (b.hora * 60 + (b.minuto || 0)); })
+          .map(function (a) { return _horaFalada(Number(a.hora), Number(a.minuto || 0)) + ', ' + String(a.texto || '').replace(/^.*ponto de /i, '').replace(/\.$/, ''); });
+      } catch (ePt) { _pts = []; }
+      resp = ta ? ('Seu turno atual é o da ' + (ta === 'manha' ? 'manhã' : 'tarde') + '.' +
+                   (_pts.length ? ' Pontos: ' + _pts.join('; ') + '.' : ''))
                 : 'Nenhum turno definido ainda. Diga "essa semana vou trabalhar no turno da manhã" (ou da tarde).';
     } else if (intencao === 'turno_definir') {
       var tv = arg('turno', 'indefinido');
@@ -3479,7 +3488,13 @@ function doPost(e) {
         try {
           if (typeof Jarvis !== 'undefined' && Jarvis.registrarEvento) Jarvis.registrarEvento({
             tool: 'voz:entrega:' + (_falarLocal ? 'local' : (_falarNuvem ? 'nuvem' : 'nenhuma')),
-            ok: true, ms: 0, resumo: (typeof _viaVoz !== 'undefined' ? _viaVoz : '?') + ' · ' + String(textoLimpo).length + ' car.'
+            // ONDE O TEMPO FOI. Em 25/09 falas de 50 e 278 caracteres levaram 93 s e 4 min na nuvem, e
+            // o evento não dizia se era fila (lock/espera), síntese (motor) ou Drive — sem isso não
+            // dá para escolher a correção. spans vem do controlarDispositivo('falar').
+            ok: _entregou || !_falarNuvem, ms: (_rEnt && _rEnt.spans) ? (Number(_rEnt.spans.lock || 0) + Number(_rEnt.spans.espera || 0) + Number(_rEnt.spans.sintese || 0) + Number(_rEnt.spans.drive || 0)) : 0,
+            spans: (typeof _rEnt !== 'undefined' && _rEnt && _rEnt.spans) ? _rEnt.spans : null,
+            resumo: (typeof _viaVoz !== 'undefined' ? _viaVoz : '?') + ' · ' + String(textoLimpo).length + ' car.' +
+                    ((typeof _rEnt !== 'undefined' && _rEnt && _rEnt.spans) ? (' · motor ' + (_rEnt.spans.engine || '?') + ' · síntese ' + Math.round((_rEnt.spans.sintese || 0) / 1000) + ' s · fila ' + Math.round(((_rEnt.spans.lock || 0) + (_rEnt.spans.espera || 0)) / 1000) + ' s') : '')
           });
         } catch (eEnt) {}
 

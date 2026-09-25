@@ -1511,3 +1511,11 @@ test('Prompt: a hora real vem do sistema, não do histórico', function () {
   var src = require('fs').readFileSync(require('path').join(__dirname, '..', 'Jarvis.js'), 'utf8');
   assert.match(src, /NUNCA um horário ou data citado em mensagens anteriores/);
 });
+
+test('Rota JEV: "que horas eu bato o ponto" traz os HORÁRIOS, não só o nome do turno', function () {
+  var s = rotaSandbox({ props: { TYPESAFE_API_KEY: 'k' }, fetch: function () { return respostaJev('turno_consultar', 1.0); } });
+  s.AlertasVoz.definirTurno('manha');
+  var r = s._rotaSemantica('que horas eu bato o ponto', 'dono@exemplo.com', true);
+  assert.match(r, /manhã/);
+  assert.match(r, /Pontos: \d+h/, 'em 25/09 respondia só "Seu turno atual é o da manhã"');
+});

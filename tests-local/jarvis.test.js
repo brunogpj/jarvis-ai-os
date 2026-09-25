@@ -566,7 +566,7 @@ test('Rota JEV: UMA requisição carrega seletor + argumentos de todos os ramos 
   });
   s._rotaSemantica('qualquer coisa', 'dono@exemplo.com', true);
   assert.strictEqual(chamadas, 1, 'duas idas à rede seria o dobro da latência pela mesma informação');
-  assert.deepStrictEqual(Object.keys(corpo.questions).sort(), ['carteira', 'intencao', 'periodo', 'turno']);
+  assert.deepStrictEqual(Object.keys(corpo.questions).sort(), ['carteira', 'intencao', 'periodo', 'periodo_agenda', 'relogio', 'turno']);
   assert.ok(corpo.questions.intencao.criteria.nenhuma, 'a opção de escape TEM que existir');
 });
 
@@ -1600,4 +1600,31 @@ test('Volume: sem FALA_VOLUME_DB o ganho é +10 dB (Number(null) = 0 zerava o pa
   s2.Voz = { temChave: function () { return true; }, sintetizar: function (t, o) { pedido = o; return { status: 'error', erro: 'x' }; } };
   s2.Jarvis.prepararVozCelular('x');
   assert.strictEqual(pedido.volume, 4, 'property explícita continua mandando');
+});
+
+// ───────────────────────── ⚡ Agilidade: motor por papel da fala e JEV nas rotas diretas ─────────────────────────
+test('Motor da fala: respostas vão pelo Cloud mesmo com TTS_ENGINE=gemini; briefing usa o Gemini', function () {
+  var usado = [];
+  var s = makeSandbox({ props: { TTS_ENGINE: 'gemini' } }); loadGasFile('Jarvis.js', s);
+  s.Voz = { temChave: function () { return true; },
+            sintetizar: function () { usado.push('cloud'); return { status: 'error', erro: 'x' }; },
+            sintetizarGemini: function () { usado.push('gemini'); return { status: 'error', erro: 'x' }; } };
+  s.Jarvis.prepararVozCelular('resposta');                 // resposta: 103 s no Gemini em 25/09
+  s.Jarvis.prepararVozCelular('briefing', null, 'briefing');
+  assert.deepStrictEqual(usado, ['cloud', 'gemini', 'cloud'], 'briefing tenta o Gemini e, se falhar, cai para o Cloud');
+});
+
+test('JEV: hora, agenda e e-mails caem nas respostas diretas (sem ir ao modelo)', function () {
+  function rodar(intencao, extras, prep) {
+    var s = rotaSandbox({ props: { TYPESAFE_API_KEY: 'k' }, fetch: function () { return respostaJev(intencao, 0.95, extras); } });
+    if (prep) prep(s);
+    return s._rotaSemantica('pedido qualquer', 'dono@exemplo.com', true);
+  }
+  assert.match(rodar('hora_data', { relogio: 'hora' }), /^São \d+h/);
+  assert.match(rodar('agenda_consultar', { periodo_agenda: 'amanha' }, function (s) {
+    s.CalendarApp = { getDefaultCalendar: function () { return { getEvents: function () { return []; } }; } };
+  }), /^Amanhã você não tem nada na agenda/);
+  assert.match(rodar('emails_nao_lidos', {}, function (s) {
+    s.GmailApp = { search: function () { return []; }, getInboxUnreadCount: function () { return 0; } };
+  }), /não tem e-mails não lidos/);
 });

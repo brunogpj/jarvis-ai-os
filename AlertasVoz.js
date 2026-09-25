@@ -124,7 +124,7 @@ var AlertasVoz = (function () {
     var fala = a.texto;
     if (a.dinamico) { try { fala = String(Jarvis.ask(_owner(), a.texto, [], null, { interativo: false }) || a.texto); } catch (e) { fala = a.texto; } }
     try { if (typeof _prepararTextoFala === 'function') fala = _prepararTextoFala(fala); } catch (e) {}
-    var r; try { r = Jarvis.controlarDispositivo({ acao: 'falar', texto: fala }); } catch (e) { return { ok: false, erro: e.message }; }
+    var r; try { r = Jarvis.controlarDispositivo({ acao: 'falar', texto: fala, motor: _motorDaFala(a) }); } catch (e) { return { ok: false, erro: e.message }; }
     return { ok: !!(r && r.status === 'success'), enviado: true };
   }
 
@@ -253,7 +253,7 @@ var AlertasVoz = (function () {
         // nem o Bruno (que não ouviu), nem o log (que não registrava). Foi o buraco que impediu de
         // diagnosticar o ponto perdido das 19:00 de 12/08: o `ult` dizia "disparou", sem provar nada.
         var _t0 = Date.now(), _res = null, _erro = null;
-        try { _res = Jarvis.controlarDispositivo({ acao: 'falar', texto: fala }); }
+        try { _res = Jarvis.controlarDispositivo({ acao: 'falar', texto: fala, motor: _motorDaFala(a) }); }
         catch (eF) { _erro = eF.message; }
         // 'dedupe' conta como sucesso: quer dizer que a MESMA fala acabou de sair por outro caminho.
         var _ok = !!(_res && (_res.status === 'success' || _res.via === 'dedupe'));
@@ -285,6 +285,10 @@ var AlertasVoz = (function () {
       }
     } finally { if (lock) { try { lock.releaseLock(); } catch (eRl) {} } }   // lock pode ser null: o tick segue sem ele
   }
+
+  // Briefing (tag briefing, briefing_manha, briefing_noite...) usa o motor de briefing (voz calorosa, sem
+  // pressa); qualquer outro alerta — ponto, lembrete — usa o de respostas (Cloud, segundos). Ver _falarNoCelular.
+  function _motorDaFala(a) { return String((a && a.tag) || '').indexOf('briefing') === 0 ? 'briefing' : null; }
 
   function _hhmm(h, m) { return (h < 10 ? '0' + h : h) + ':' + (m < 10 ? '0' + m : m); }
   function _nomeDia(d) { return ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'][d] || d; }

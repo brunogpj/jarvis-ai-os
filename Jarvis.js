@@ -2426,7 +2426,7 @@ var Jarvis = (function () {
   // a serialização são medidas em _controlarDispositivo e juntadas lá. Sem separar, "a API do
   // Gemini está lenta" e "estou esperando a fala anterior terminar" são indistinguíveis — e o
   // conserto de cada uma é oposto.
-  function _falarNoCelular(texto, voz) {
+  function _falarNoCelular(texto, voz, motor) {
     var _spans = { sintese: 0, drive: 0, engine: null, bytes: 0 };
     if (typeof Voz === 'undefined' || !Voz.temChave()) return { ok: false, erro: 'Cloud TTS indisponível (service account ausente).', spans: _spans };
     var t = String(texto || '').trim();
@@ -2442,7 +2442,15 @@ var Jarvis = (function () {
     if (!isFinite(ganho)) ganho = 10;
     // Engine: TTS_ENGINE=gemini → Gemini TTS (estilo natural, ex.: tom caloroso), saída WAV. Senão Cloud TTS
     // EM WAV (mesmo formato → a macro do Android toca um único formato). voz opcional (ex.: Sulafat p/ contato f).
-    var engine = (props.getProperty('TTS_ENGINE') || 'cloud').toLowerCase();
+    /* MOTOR POR PAPEL DA FALA (25/09). Com TTS_ENGINE=gemini valendo para tudo, uma resposta de 264
+     * caracteres levou 103 s de síntese (93 s e 4 min no mesmo dia); o Cloud TTS fez o mesmo em 5 s.
+     * Resposta, aviso, notificação e alerta → Cloud (TTS_ENGINE_RESPOSTAS, padrão cloud).
+     * Briefing agendado (motor 'briefing') → TTS_ENGINE_BRIEFING, senão TTS_ENGINE: ali a voz calorosa
+     * vale a espera, porque ninguém está aguardando a resposta. */
+    var engine = (motor === 'briefing')
+      ? (props.getProperty('TTS_ENGINE_BRIEFING') || props.getProperty('TTS_ENGINE') || 'cloud')
+      : (props.getProperty('TTS_ENGINE_RESPOSTAS') || 'cloud');
+    engine = String(engine).toLowerCase();
     var r = null;
     var _tSint = Date.now();
     /* TETO DO GEMINI TTS POR TAMANHO — medido, não chutado (22-23/09):
@@ -2678,7 +2686,7 @@ var Jarvis = (function () {
               var _livreEm = Number(_pFala.getProperty('FALA_LIVRE_EM') || 0);
               var _espera = _livreEm - Date.now();
               if (_espera > 0) { var _tEsp = Date.now(); Utilities.sleep(Math.min(_espera, 30000)); _spansFala.espera = Date.now() - _tEsp; }
-              var fala = _falarNoCelular(args.texto, a.voz);
+              var fala = _falarNoCelular(args.texto, a.voz, a.motor);
               if (fala && fala.spans) { _spansFala.sintese = fala.spans.sintese; _spansFala.drive = fala.spans.drive; _spansFala.engine = fala.spans.engine; _spansFala.bytes = fala.spans.bytes; _spansFala.chars = fala.spans.chars; if (fala.spans.motivoCloud) _spansFala.motivoCloud = fala.spans.motivoCloud; }
               if (!fala.ok) { if (_lockFala) _lockFala.releaseLock(); return { status: 'error', erro: 'Falha ao gerar a voz na nuvem: ' + fala.erro }; }
               // Duração estimada: ~14 caracteres/s em pt-BR, + 4 s de download e partida do player.

@@ -958,8 +958,20 @@ function _rotaSemantica(mensagem, email, isOwner) {
                             examples: ['essa semana vou trabalhar de tarde', 'mudei pro turno da manhã'] },
         notificacoes:     { what: 'Pedir o resumo do que chegou no celular enquanto ele não estava olhando.',
                             examples: ['o que eu perdi', 'chegou alguma coisa?', 'me atualiza'] },
-        nenhuma:          { what: 'Qualquer outra coisa: conversa, pergunta geral, pedido de ação, redação, busca na web, agenda, e-mail, WhatsApp.',
-                            examples: ['resuma meus e-mails', 'que horas são', 'manda oi pro Douglas', 'explica o que é RAG'] }
+        // 25/09 — as três abaixo já tinham resposta direta por regex; o JEV pega as FORMAS que a regex
+        // não pega ("tenho algum compromisso amanhã?", "já deu meio-dia?", "chegou e-mail novo?") e evita
+        // a ida ao modelo, que hoje custou de 20 a 160 s em pedidos desse tipo.
+        hora_data:        { what: 'Perguntar a hora atual e/ou a data/dia da semana de hoje.',
+                            not_for: 'Horário de um compromisso ou do ponto — isso é agenda_consultar ou turno_consultar.',
+                            examples: ['que horas são', 'que dia é hoje', 'já é meio-dia?', 'hoje é sexta?'] },
+        agenda_consultar: { what: 'CONSULTAR os compromissos/eventos da agenda de hoje, de amanhã ou da semana.',
+                            not_for: 'Marcar, mudar ou cancelar compromisso, ou um dia específico do mês — isso é nenhuma.',
+                            examples: ['o que eu tenho hoje', 'tenho algum compromisso amanhã?', 'como está minha semana'] },
+        emails_nao_lidos: { what: 'Pedir o resumo geral dos e-mails NÃO LIDOS da caixa de entrada.',
+                            not_for: 'Um e-mail específico, buscar, responder, enviar ou apagar — isso é nenhuma.',
+                            examples: ['resuma meus e-mails', 'chegou e-mail novo?', 'tem algo importante na caixa de entrada?'] },
+        nenhuma:          { what: 'Qualquer outra coisa: conversa, pergunta geral, pedido de ação, redação, busca na web, criar/mudar compromisso, e-mail específico, WhatsApp.',
+                            examples: ['manda oi pro Douglas', 'explica o que é RAG', 'marca reunião amanhã às 10', 'lê o e-mail do banco'] }
       }
     },
     // ── especulativas: rodam sempre, mas só a do ramo escolhido é lida ──
@@ -976,6 +988,16 @@ function _rotaSemantica(mensagem, email, isOwner) {
       criteria: { voucher: 'Voucher / alimentação / refeição.',
                   mobilidade: 'Mobilidade / transporte / combustível.',
                   ambas: 'As duas, ou ele não especificou.' }
+    },
+    periodo_agenda: {
+      type: 'choice',
+      instructions: 'SUPONDO que o pedido seja CONSULTAR a agenda: de qual período?',
+      criteria: { hoje: 'Hoje, o resto do dia, ou não disse.', amanha: 'Amanhã.', semana: 'Esta semana / próximos dias.' }
+    },
+    relogio: {
+      type: 'choice',
+      instructions: 'SUPONDO que o pedido seja sobre hora/data: ele quer saber o quê?',
+      criteria: { hora: 'Só a hora.', data: 'Só a data ou o dia da semana.', ambos: 'Hora e data.' }
     },
     periodo: {
       type: 'choice',
@@ -1028,6 +1050,13 @@ function _rotaSemantica(mensagem, email, isOwner) {
       resp = (rt && rt.ok) ? rt.resumo : null;
     } else if (intencao === 'notificacoes') {
       resp = resumirNotificacoes({ horas: 12, marcarLidas: true }).resumo;
+    } else if (intencao === 'hora_data') {
+      var rl = arg('relogio', 'hora');
+      resp = _falarRelogio({ hora: rl !== 'data', data: rl !== 'hora' });
+    } else if (intencao === 'agenda_consultar') {
+      resp = _falarAgenda(arg('periodo_agenda', 'hoje'));
+    } else if (intencao === 'emails_nao_lidos') {
+      resp = _falarEmails();
     }
   } catch (e) { return null; }                  // handler falhou → LLM, nunca uma resposta pela metade
 
@@ -3481,7 +3510,7 @@ function doPost(e) {
          * Ajustável sem deploy pela property FALA_LOCAL_ROTAS (lista separada por vírgula).
          * O teto de caracteres continua como rede de segurança: resposta de ação que venha longa
          * (um extrato inteiro, por exemplo) volta para a nuvem. */
-        var _ROTAS_LOCAIS_PADRAO = 'relogio,agenda,financeiro,turno,rotina,controle_nativo,abrir_app,spotify,youtube,google,navegar,compras,ligar,biblia,insight_gravar,voto_insight';
+        var _ROTAS_LOCAIS_PADRAO = 'relogio,agenda,emails,jev,financeiro,turno,rotina,controle_nativo,abrir_app,spotify,youtube,google,navegar,compras,ligar,biblia,insight_gravar,voto_insight';
         var _rotasLocais = String(PropertiesService.getScriptProperties().getProperty('FALA_LOCAL_ROTAS') || _ROTAS_LOCAIS_PADRAO)
           .split(',').map(function (x) { return x.trim(); }).filter(function (x) { return x; });
         var _viaBase = String((typeof _viaVoz !== 'undefined') ? _viaVoz : '').split(':')[0];

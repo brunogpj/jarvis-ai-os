@@ -1496,3 +1496,18 @@ test('Janela de fala: padrão vai até 22h; a rota aceita só HH:MM-HH:MM', func
   assert.strictEqual(ok.ok, true);
   assert.strictEqual(s.PropertiesService.getScriptProperties().getProperty('NOTIF_FALAR_JANELA'), '06:00-22:00');
 });
+
+test('Relógio: pedidos compostos ("me diga a data e a hora") não escapam para o modelo', function () {
+  var s = code({});
+  var f = s._interpretarFatoVoz('me diga a data e a hora');
+  assert.ok(f && f.via === 'relogio' && f.hora && f.data, 'em 25/09 foi ao LLM e voltou a hora velha');
+  assert.ok(s._interpretarFatoVoz('fala a hora').hora);
+  assert.ok(s._interpretarFatoVoz('qual a data de hoje').data);
+  assert.strictEqual(s._interpretarFatoVoz('me diga a hora da reunião'), null, 'hora de algo específico fica com o modelo');
+});
+
+test('Prompt: a hora real vem do sistema, não do histórico', function () {
+  var s = makeSandbox({}); loadGasFile('Jarvis.js', s);
+  var src = require('fs').readFileSync(require('path').join(__dirname, '..', 'Jarvis.js'), 'utf8');
+  assert.match(src, /NUNCA um horário ou data citado em mensagens anteriores/);
+});

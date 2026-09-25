@@ -5297,6 +5297,15 @@ function _interpretarFatoVoz(msg) {
              /\b(fala|diz|diga|informa|fale)\w* (a |que )?horas?$/.test(s) || /^horas?$/.test(s);
   var data = /\bque dia (e|eh) hoje$/.test(s) || /\bhoje e que dia$/.test(s) || /\bque data e hoje$/.test(s) ||
              /\b(data|dia) (de hoje|atual)\b/.test(s) || /\b(fala|diz|diga|informa|fale)\w* (a )?data$/.test(s);
+  // Pedido composto: "me diga a data e a hora", "fala o dia e a hora", "qual a data de hoje".
+  // Em 25/09 o "me diga a data e a hora" escapou das regras acima, foi ao LLM (162 s) e voltou
+  // "São 8h40" às 8h53 — hora copiada do histórico de novo.
+  var comp = s.match(/^(me )?(diga|fala|diz|informa|fale|qual|quais)\w*( me)? (a |o |qual |que )?(data|dia|hora|horas)( atual| certa| de hoje| agora)?( e (a |o )?(data|dia|hora|horas)( atual| certa| de hoje| agora)?)?$/);
+  if (comp && !mexe) {
+    var pedidos = [comp[5], comp[9]].filter(Boolean).join(' ');
+    hora = hora || /hora/.test(pedidos);
+    data = data || /data|dia/.test(pedidos);
+  }
   if ((hora || data) && !mexe) return { via: 'relogio', hora: hora, data: data };
   if (mexe) return null;
   var falaDeAgenda = /\b(agenda|compromissos?|eventos?|reunio(es)?|reuniao)\b/.test(s);

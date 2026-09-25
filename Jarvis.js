@@ -247,7 +247,10 @@ var Jarvis = (function () {
           '. Se o usuário pedir para mudar como você o trata (como chamá-lo, tom, idioma, formato), use definirPreferencia para PERSISTIR; use esquecerPreferencia para remover.'
         : 'PREFERÊNCIAS: você ainda não tem preferências salvas deste usuário. Quando ele expressar uma (ex.: "me chame de X", "prefiro respostas curtas", "responda em inglês"), PERSISTA com definirPreferencia para lembrar nas próximas conversas.'),
       '',
-      'Data/hora: ' + dataHora + ' | Usuário: ' + (userEmail || 'Bruno') + (isOwner ? ' (PROPRIETÁRIO)' : '')
+      'Data/hora: ' + dataHora + ' | Usuário: ' + (userEmail || 'Bruno') + (isOwner ? ' (PROPRIETÁRIO)' : ''),
+      // Duas vezes (23 e 25/09) o modelo respondeu a hora COPIANDO uma resposta anterior do histórico
+      // ("São 8h40" às 8h53). A linha acima é a única fonte válida de "agora".
+      'HORA E DATA: a linha "Data/hora" acima é o AGORA real. Para dizer hora, data ou "hoje/amanhã", use SÓ ela — NUNCA um horário ou data citado em mensagens anteriores desta conversa (esses já ficaram velhos).'
     ].join('\n');
   }
 

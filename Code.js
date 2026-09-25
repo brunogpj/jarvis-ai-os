@@ -3067,7 +3067,11 @@ function doPost(e) {
           + '  • SÓ ABRIR um app ("abra o WhatsApp", "abra o Bradesco", "abra o Telegram", "abra as Configurações", "abra a Bíblia Sagrada") → controlarDispositivo com acao:"abrirApp" e nome=<nome do app>.\n'
           + '  • ABRIR e AGIR ("abra o YouTube e pesquise X", "toque Y no Spotify", "abra a Bíblia no João 3:16") → controlarDispositivo com acao:"intent" (VIEW + intent_data deep-link + intent_package). Para músicas Spotify / vídeos YouTube use SEMPRE isto, nunca pesquisarWeb/pesquisarYouTube.\n'
           + '  • ROTA → controlarDispositivo acao:"navegar" (cite origem bairro/cidade e destino, conforme o Contexto do Aparelho).\n'
-          + 'TELEMETRIA: NÃO mencione bateria, Wi-Fi nem modo de som por conta própria; só fale disso se o usuário PERGUNTAR explicitamente OU se a bateria estiver abaixo de 20%.]';
+          + 'TELEMETRIA: NÃO mencione bateria, Wi-Fi nem modo de som por conta própria; só fale disso se o usuário PERGUNTAR explicitamente OU se a bateria estiver abaixo de 20%.]'
+          // A fala ia só no INÍCIO, seguida de ~1.500 caracteres de regras: o último texto que o modelo
+          // lia era regra, não pergunta. Em 25/09 "qual a capital da Austrália e por quê" foi respondida
+          // com outra curiosidade sobre o espaço — o assunto do turno anterior. Repetir no fim ancora.
+          + '\n\nPEDIDO ATUAL (responda a ESTE, e só a ele): "' + String(msgVoz).replace(/"/g, "'") + '"';
         // ATALHO DETERMINÍSTICO p/ "abra/abre o <app>" PURO: o modelo de voz (flash) às vezes só
         // responde "abrindo..." SEM chamar a ferramenta. Aqui chamamos controlarDispositivo DIRETO,
         // garantindo a abertura. Compostos (abrir+pesquisar/tocar/versículo/rota, "gmail e mostre…")

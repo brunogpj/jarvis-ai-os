@@ -5311,7 +5311,16 @@ function _interpretarFinanceiro(msg) {
   if (!marca && !pareceGasto && !/\bsaldo\b/.test(s)) return null;
   if (pareceGasto) {
     var dias = 30;
-    if (/hoje/.test(s)) dias = 1; else if (/semana/.test(s)) dias = 7; else if (/m[eê]s/.test(s)) dias = 30;
+    // Quantidade antes da unidade ("duas semanas", "3 dias", "15 dias"). Em 25/09 "nas últimas duas semanas"
+    // respondia 7 dias: só a palavra "semana" era olhada.
+    var _nums = { um: 1, uma: 1, dois: 2, duas: 2, tres: 3, 'três': 3, quatro: 4, cinco: 5, seis: 6, sete: 7, dez: 10, quinze: 15, trinta: 30 };
+    var _q = s.match(/\b(\d{1,3}|um|uma|dois|duas|tr[eê]s|quatro|cinco|seis|sete|dez|quinze|trinta)\s+(dias?|semanas?|m[eê]s(es)?)\b/);
+    if (_q) {
+      var _n = /^\d/.test(_q[1]) ? Number(_q[1]) : (_nums[_q[1]] || _nums[_q[1].replace('ê', 'e')] || 1);
+      dias = /^dia/.test(_q[2]) ? _n : (/^semana/.test(_q[2]) ? _n * 7 : _n * 30);
+      dias = Math.max(1, Math.min(dias, 365));
+    }
+    else if (/hoje/.test(s)) dias = 1; else if (/ontem/.test(s)) dias = 2; else if (/semana/.test(s)) dias = 7; else if (/m[eê]s/.test(s)) dias = 30;
     return { tipo: 'gastos', dias: dias };
   }
   /* DECLARAR o saldo, não perguntar. Até aqui o único jeito de atualizar era o painel interativo

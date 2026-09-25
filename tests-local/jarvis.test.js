@@ -1628,3 +1628,11 @@ test('JEV: hora, agenda e e-mails caem nas respostas diretas (sem ir ao modelo)'
     s.GmailApp = { search: function () { return []; }, getInboxUnreadCount: function () { return 0; } };
   }), /não tem e-mails não lidos/);
 });
+
+test('Gastos: período com quantidade ("últimas duas semanas" respondia 7 dias)', function () {
+  var s = code({});
+  assert.strictEqual(s._interpretarFinanceiro('quanto gastei nas últimas duas semanas').dias, 14);
+  assert.strictEqual(s._interpretarFinanceiro('quanto eu gastei nos últimos 3 dias').dias, 3);
+  assert.strictEqual(s._interpretarFinanceiro('quanto eu gastei essa semana').dias, 7);
+  assert.strictEqual(s._interpretarFinanceiro('quanto eu gastei hoje').dias, 1);
+});

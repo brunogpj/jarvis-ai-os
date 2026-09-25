@@ -2684,7 +2684,29 @@ var Jarvis = (function () {
           // premium configurada), salva no Drive público e manda só o ID → o MacroDroid TOCA o áudio
           // de https://drive.google.com/uc?export=download&{webhook_query_params}. Demais ações: campo=val...
           var alvo, qs;
-          if (acao === 'falar') {
+          /* FALA PROATIVA PELA VOZ DO CELULAR (25/09). O áudio da nuvem, tocado pelo MediaPlayer da macro,
+           * ia para a saída DIRECT do Android — fora do reforço de alto-falante do Xiaomi e com -6 dB —
+           * e soava "muito baixo" (catraca, ponto, avisos, briefings). Agora o Jarvis guarda o TEXTO com
+           * um id (CacheService, 10 min) e dispara jarvis_falar?id=...; a macro Falar v3 busca o texto em
+           * /exec?action=fala_texto e fala com o TTS do celular, que passa pelo mixer. Id por fala: duas
+           * falas seguidas não se sobrescrevem (era o motivo das esperas de até 75 s abaixo), e o TTS da
+           * macro enfileira. FALA_PROATIVA_LOCAL=nao volta ao arquivo de áudio sem deploy. */
+          var _falaLocal = (acao === 'falar') &&
+            String(PropertiesService.getScriptProperties().getProperty('FALA_PROATIVA_LOCAL') || 'sim').toLowerCase() !== 'nao';
+          if (_falaLocal) {
+            var _txtF = String(args.texto || '')
+              .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').replace(/https?:\/\/\S+/g, '')   // link → só o texto
+              .replace(/[*_`#>]+/g, '').replace(/\s+/g, ' ').trim().substring(0, 3900); // teto do TTS do Android
+            if (!_txtF) return { status: 'error', erro: 'Texto vazio para falar.' };
+            var _idF = 'f' + Date.now().toString(36) + Math.floor(Math.random() * 1296).toString(36);
+            try { CacheService.getScriptCache().put('fala_' + _idF, _txtF, 600); }
+            catch (eCf) { return { status: 'error', erro: 'Não consegui preparar a fala: ' + eCf.message }; }
+            var _spansFala = { lock: 0, espera: 0, sintese: 0, drive: 0, engine: 'celular', bytes: 0, chars: _txtF.length };
+            // Evento PRÓPRIO: a macro Falar antiga (v2) não o escuta e fica muda, em vez de tocar o
+            // último arquivo de áudio (que seria a fala ERRADA) até a v3 ser importada.
+            alvo = _mdEvento(url, 'jarvis_falar_texto');
+            qs = 'id=' + encodeURIComponent(_idF);
+          } else if (acao === 'falar') {
             // SERIALIZAÇÃO DA FALA. A macro Jarvis Falar baixa SEMPRE o mesmo arquivo (ID fixo no
             // Drive) para /Download/jarvis-fala.wav e toca. Se uma segunda fala chega enquanto a
             // primeira ainda toca, o arquivo é sobrescrito no meio da reprodução — o áudio sai

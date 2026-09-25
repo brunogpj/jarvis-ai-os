@@ -1681,3 +1681,27 @@ test('Resposta de voz vai no corpo para o TTS do celular (a da nuvem ia para a s
   assert.strictEqual(s2.__voz('qual a capital da Austrália'), '', 'chave de volta: corpo vazio e fala pela nuvem');
   assert.strictEqual(s2.__cmds.filter(function (c) { return c.acao === 'falar'; }).length, 1);
 });
+
+// ───────────────────────── 🗣️ Fala proativa pelo TTS do celular (macro Falar v3) ─────────────────────────
+test('Fala proativa: guarda o texto com id e dispara jarvis_falar?id= (sem sintetizar áudio)', function () {
+  var urls = [];
+  var s = makeSandbox({ props: { MACRODROID_WEBHOOK_URL: 'https://trigger.macrodroid.com/dev/jarvis' }, fetch: function (u) { urls.push(u); return { code: 200 }; } });
+  loadGasFile('Jarvis.js', s);
+  s.Voz = { temChave: function () { return true; }, sintetizar: function () { throw new Error('não deveria sintetizar'); } };
+  var r = s.Jarvis.controlarDispositivo({ acao: 'falar', texto: 'Catraca da escola: **entrada** às 07:02. Veja https://x.y/z' });
+  assert.strictEqual(r.status, 'success');
+  var m = urls[0].match(/\/jarvis_falar_texto\?id=(f[a-z0-9]+)/);
+  assert.ok(m, 'dispara com o id da fala');
+  var guardado = s.CacheService.getScriptCache().get('fala_' + m[1]);
+  assert.strictEqual(guardado, 'Catraca da escola: entrada às 07:02. Veja', 'sem markdown nem link na fala');
+});
+
+test('Rota fala_texto: devolve o texto só com token e id válidos', function () {
+  var s = code({ props: { VOICE_API_TOKEN: 'T' } });
+  s.ContentService = { MimeType: { TEXT: 'TEXT', JSON: 'JSON' }, createTextOutput: function (t) { return { setMimeType: function () { return { getContentText: function () { return t; } }; } }; } };
+  s.CacheService.getScriptCache().put('fala_fabc1234', 'Olá, Bruno.', 600);
+  var get = function (p) { return s.doGet({ parameter: p }).getContentText(); };
+  assert.strictEqual(get({ action: 'fala_texto', token: 'T', id: 'fabc1234' }), 'Olá, Bruno.');
+  assert.strictEqual(get({ action: 'fala_texto', token: 'errado', id: 'fabc1234' }), '');
+  assert.strictEqual(get({ action: 'fala_texto', token: 'T', id: '../x' }), '');
+});

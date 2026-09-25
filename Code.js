@@ -28,6 +28,15 @@ function responderCallbackInterativo(id, botao, resposta) {
 }
 
 function doGet(e) {
+  // FALA PROATIVA (macro Falar v3): devolve o TEXTO guardado por Jarvis._controlarDispositivo('falar')
+  // para o celular falar com o próprio TTS. Texto puro; vazio = nada a falar (id vencido ou inválido).
+  if (e && e.parameter && e.parameter.action === 'fala_texto') {
+    var txtOut = function (s) { return ContentService.createTextOutput(String(s || '')).setMimeType(ContentService.MimeType.TEXT); };
+    if (!e.parameter.token || e.parameter.token !== PropertiesService.getScriptProperties().getProperty('VOICE_API_TOKEN')) return txtOut('');
+    var idF = String(e.parameter.id || '');
+    if (!/^f[a-z0-9]{6,20}$/.test(idF)) return txtOut('');
+    try { return txtOut(CacheService.getScriptCache().get('fala_' + idF) || ''); } catch (eFt) { return txtOut(''); }
+  }
   if (e && e.parameter && e.parameter.action === 'ler_debug') {
     var jsonOut = function (obj) { return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON); };
     var tokDb = e.parameter.token;

@@ -1705,3 +1705,68 @@ test('Rota fala_texto: devolve o texto só com token e id válidos', function ()
   assert.strictEqual(get({ action: 'fala_texto', token: 'errado', id: 'fabc1234' }), '');
   assert.strictEqual(get({ action: 'fala_texto', token: 'T', id: '../x' }), '');
 });
+
+// ───────────────────────── LEMBRETE RELATIVO (25/09: "daqui a 5 minutos" virou alerta diário às 11:05) ─────────────────────────
+// formatDate de verdade (fuso fixo -03:00) para o AlertasVoz fazer a conta do horário.
+function _fmtBRT(d, tz, p) {
+  var x = new Date(d.getTime() - 3 * 3600e3), z = function (n) { return (n < 10 ? '0' : '') + n; };
+  var dow = x.getUTCDay() || 7;
+  return String(p).replace('yyyy', x.getUTCFullYear()).replace('MM', z(x.getUTCMonth() + 1)).replace('dd', z(x.getUTCDate()))
+    .replace(/^HH:mm:ss$/, z(x.getUTCHours()) + ':' + z(x.getUTCMinutes()) + ':' + z(x.getUTCSeconds()))
+    .replace(/^H$/, String(x.getUTCHours())).replace(/^m$/, String(x.getUTCMinutes())).replace(/^u$/, String(dow))
+    .replace(/HH:mm:ss$/, z(x.getUTCHours()) + ':' + z(x.getUTCMinutes()) + ':' + z(x.getUTCSeconds()));
+}
+function _sandboxAlertas(falas) {
+  var s = makeSandbox({});
+  s.Utilities.formatDate = _fmtBRT;
+  s.Jarvis.controlarDispositivo = function (a) { falas.push(a.texto); return { status: 'success' }; };
+  loadGasFile('AlertasVoz.js', s);
+  return s;
+}
+
+test('lembrete relativo: extrai minutos e o conteúdo, inclusive por extenso', function () {
+  var s = code();
+  assert.strictEqual(JSON.stringify(s._interpretarLembreteRelativo('Me lembre daqui 5 minutos de beber água')), JSON.stringify({ minutos: 5, texto: 'beber água' }));
+  assert.strictEqual(JSON.stringify(s._interpretarLembreteRelativo('me lembra de tirar o bolo do forno daqui a dez minutos')), JSON.stringify({ minutos: 10, texto: 'tirar o bolo do forno' }));
+  assert.strictEqual(s._interpretarLembreteRelativo('me avisa daqui a meia hora de ligar pro Emerson').minutos, 30);
+  assert.strictEqual(s._interpretarLembreteRelativo('me lembre em 2 horas de buscar a encomenda').minutos, 120);
+  assert.strictEqual(s._interpretarLembreteRelativo('me lembre daqui a uma hora e meia de sair').minutos, 90);
+  assert.strictEqual(s._interpretarLembreteRelativo('todo dia às 8h me lembre de beber água'), null);
+  assert.strictEqual(s._interpretarLembreteRelativo('daqui a 5 minutos eu saio'), null);
+});
+
+test('alerta emMinutos: horário calculado pelo servidor, data fixa, uma vez só', function () {
+  var falas = [], s = _sandboxAlertas(falas);
+  var r = s.AlertasVoz.criar({ emMinutos: 5, texto: 'beber água' });
+  assert.ok(r.ok);
+  var alvo = new Date(Date.now() + 5 * 60000);
+  assert.strictEqual(r.alerta.hora, Number(_fmtBRT(alvo, '', 'H')));
+  assert.strictEqual(r.alerta.minuto, Number(_fmtBRT(alvo, '', 'm')));
+  assert.strictEqual(r.alerta.data, _fmtBRT(alvo, '', 'yyyy-MM-dd'));
+  assert.match(r.info, /uma vez só/);
+});
+
+test('alerta de uma vez só: tick fala e REMOVE; diário continua na lista', function () {
+  var falas = [], s = _sandboxAlertas(falas);
+  var agora = new Date();
+  var h = Number(_fmtBRT(agora, '', 'H')), m = Number(_fmtBRT(agora, '', 'm'));
+  s.AlertasVoz.criar({ hora: h, minuto: m, texto: 'diário de teste' });
+  s.AlertasVoz.criar({ hora: h, minuto: m, texto: 'uma vez de teste', unico: true });
+  // unico com horário já no minuto atual cai para amanhã; força a data de hoje para o teste do tick.
+  var arr = JSON.parse(s.PropertiesService.getScriptProperties().getProperty('ALERTAS_VOZ'));
+  arr.forEach(function (a) { if (a.data) a.data = _fmtBRT(agora, '', 'yyyy-MM-dd'); });
+  s.PropertiesService.getScriptProperties().setProperty('ALERTAS_VOZ', JSON.stringify(arr));
+  s.AlertasVoz.tick();
+  assert.strictEqual(JSON.stringify(falas.sort()), JSON.stringify(['diário de teste', 'uma vez de teste']));
+  var resta = s.AlertasVoz.listar().map(function (a) { return a.texto; });
+  assert.strictEqual(JSON.stringify(resta), JSON.stringify(['diário de teste']));
+});
+
+test('alerta de uma vez só com data passada sai da lista sem falar', function () {
+  var falas = [], s = _sandboxAlertas(falas);
+  s.PropertiesService.getScriptProperties().setProperty('ALERTAS_VOZ', JSON.stringify([
+    { id: 'velho', hora: 0, minuto: 0, dias: [], texto: 'x', ativo: true, ult: '', tag: 'avulso', data: '2020-01-01' }]));
+  s.AlertasVoz.tick();
+  assert.strictEqual(falas.length, 0);
+  assert.strictEqual(s.AlertasVoz.listar().length, 0);
+});

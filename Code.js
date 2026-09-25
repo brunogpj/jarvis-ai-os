@@ -2875,6 +2875,20 @@ function doPost(e) {
       return json({ ok: true, antes: antesJ, agora: jn });
     }
 
+    // FALA DIRETA (texto no próprio webhook): liga/desliga FALA_TEXTO_DIRETO. Só faz sentido depois de
+    // importar a Falar v4, que escuta jarvis_falar_direto — por isso nasce desligada e vira por aqui.
+    if (body && body.action === 'fala_direta') {
+      if (!body.token || body.token !== PropertiesService.getScriptProperties().getProperty('VOICE_API_TOKEN')) {
+        return json({ ok: false, erro: 'não autorizado' });
+      }
+      var vFd = String(body.valor || '').toLowerCase();
+      if (vFd !== 'sim' && vFd !== 'nao') return json({ ok: false, erro: 'valor esperado: sim ou nao' });
+      var spFd = PropertiesService.getScriptProperties();
+      var antesFd = spFd.getProperty('FALA_TEXTO_DIRETO') || 'nao (padrão)';
+      spFd.setProperty('FALA_TEXTO_DIRETO', vFd);
+      return json({ ok: true, antes: antesFd, agora: vFd });
+    }
+
     // VIAGEM: a macro "Jarvis Viagem" manda velocidade/ETA e recebe de volta o que falar.
     // Texto puro na resposta, para a macro falar direto pelo TTS do Android (sem round-trip de áudio).
     if (body && body.action === 'viagem') {
@@ -2955,7 +2969,43 @@ function doPost(e) {
       if (!msgVoz.trim()) {
         return ContentService.createTextOutput("Erro: Mensagem vazia").setMimeType(ContentService.MimeType.TEXT);
       }
-      
+
+      /* REPETIÇÃO SEGURA (rid). O /exec responde com 302 para script.googleusercontent.com, e em
+       * 25/09 esse segundo salto devolveu 404 ("Não foi possível abrir o arquivo") em 4 de 10
+       * pedidos — DEPOIS de o comando já ter executado. A ideia das 11:10 foi assim: gerada,
+       * entregue ao corpo, perdida no caminho. Repetir o POST às cegas re-executa a ação (o resumo
+       * de e-mails já saiu 3x por isso). Com rid, a repetição da macro é idempotente: o mesmo rid
+       * devolve a resposta guardada, e se o primeiro ainda estiver rodando, espera por ele. */
+      var _rid = String(body.rid || '').replace(/[^A-Za-z0-9_-]/g, '').substring(0, 40);
+      // O rid vem de um texto mágico do MacroDroid ({system_time_ms}). Se o aparelho não o expandir,
+      // chega o literal — IGUAL em todo pedido — e a idempotência viraria cache de respostas velhas.
+      // Só vale rid numérico longo, e a chave leva também a mensagem: rid repetido com outra frase
+      // nunca devolve a resposta de outro pedido.
+      if (_rid && !/^[0-9]{10,}$/.test(_rid)) {
+        try { if (typeof Jarvis !== 'undefined' && Jarvis.registrarEvento) Jarvis.registrarEvento({ tool: 'voz:rid_invalido', ok: false, ms: 0, resumo: 'rid "' + _rid + '" ignorado — texto mágico não expandiu' }); } catch (eRi) {}
+        _rid = '';
+      }
+      var _ridKey = _rid ? 'vc_' + _rid + '_' + Utilities.base64EncodeWebSafe(Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, msgVoz, Utilities.Charset.UTF_8)).substring(0, 12) : '';
+      var _RID_ANDAMENTO = '\u0001andamento';
+      if (_ridKey) {
+        try {
+          var _ridC = CacheService.getScriptCache();
+          var _ridV = _ridC.get(_ridKey);
+          if (_ridV !== null) {
+            for (var _rw = 0; _ridV === _RID_ANDAMENTO && _rw < 90; _rw++) { Utilities.sleep(1000); _ridV = _ridC.get(_ridKey); }
+            try {
+              if (typeof Jarvis !== 'undefined' && Jarvis.registrarEvento) Jarvis.registrarEvento({
+                tool: 'voz:repeticao', ok: _ridV !== _RID_ANDAMENTO && _ridV !== null, ms: 0,
+                resumo: 'rid ' + _rid + ' → ' + (_ridV === _RID_ANDAMENTO ? 'original ainda rodando' : _ridV === null ? 'expirou' : 'resposta guardada, sem re-executar')
+              });
+            } catch (eRp) {}
+            var _ridCorpo = (_ridV === _RID_ANDAMENTO || _ridV === null) ? '' : _ridV;
+            return ContentService.createTextOutput(_ridCorpo).setMimeType(ContentService.MimeType.TEXT);
+          }
+          _ridC.put(_ridKey, _RID_ANDAMENTO, 600);
+        } catch (eRid) { _ridKey = ''; }
+      }
+
       try {
         try {
           var idTel = String(1e13 - Date.now());
@@ -3190,7 +3240,7 @@ function doPost(e) {
           if (/\b(pausa\w*|pause)\b/.test(s2) || /\bpar[ae]\s+(a\s+)?(musica|som|midia|video)/.test(s2))
             return { args: { acao: 'midia', comando: 'pausar' }, resp: 'Pausando a mídia.' };
           if (/\b(continua\w*|retoma\w*|despausa\w*)\b/.test(s2) && /musica|som|midia|video|tocar|toca/.test(s2))
-            return { args: { acao: 'midia', comando: 'pausar' }, resp: 'Retomando a mídia.' };
+            return { args: { acao: 'midia', comando: 'tocar' }, resp: 'Retomando a mídia.' };
           if (/\b(proxima|prox)\s+(faixa|musica|cancao)\b/.test(s2) || /\bpul[ae]\s+(a\s+|essa\s+)?(faixa|musica)/.test(s2))
             return { args: { acao: 'midia', comando: 'proxima' }, resp: 'Próxima faixa.' };
           if (/\b(faixa|musica)\s+anterior\b/.test(s2) || /\banterior\s+(faixa|musica)\b/.test(s2) || /\bvolta\w*\s+(a\s+|uma\s+)?(faixa|musica)/.test(s2))
@@ -3259,7 +3309,8 @@ function doPost(e) {
         var _viaJev = false;   // marcado se o roteamento semântico (JEV) atender no lugar do LLM
         var _notifPendentes = null;  // notificações do "o que eu perdi" AGUARDANDO confirmação de entrega
         var _lembC = _livre ? _interpretarLembreteCondicional(msgVoz) : null;
-        var _rot   = (_livre && !_lembC) ? _interpretarRotina(msgVoz) : null;
+        var _lembR = (_livre && !_lembC) ? _interpretarLembreteRelativo(msgVoz) : null;
+        var _rot   = (_livre && !_lembC && !_lembR) ? _interpretarRotina(msgVoz) : null;
         if (_fato !== null) {
           try { respVoz = (_fato.via === 'agenda') ? _falarAgenda(_fato.periodo) : (_fato.via === 'emails') ? _falarEmails() : _falarRelogio(_fato); }
           catch (eFt) { respVoz = 'Não consegui consultar isso agora.'; }
@@ -3331,6 +3382,15 @@ function doPost(e) {
               ? ('Combinado. Quando você ' + _quandoL + ' ' + _ondeL + ', eu te lembro de ' + _lembC.texto + '.')
               : ('Não consegui criar o lembrete: ' + (_rl.erro || 'erro') + '.');
           } catch (eLc) { respVoz = Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false, canal: 'voz' }); }
+        } else if (_lembR) {
+          try {
+            var _rr0 = AlertasVoz.criar({ emMinutos: _lembR.minutos, texto: _lembR.texto, tag: 'avulso' });
+            var _qdo = _lembR.minutos % 60 === 0 ? (_lembR.minutos / 60) + (_lembR.minutos === 60 ? ' hora' : ' horas')
+                     : _lembR.minutos + (_lembR.minutos === 1 ? ' minuto' : ' minutos');
+            respVoz = _rr0.ok
+              ? ('Combinado. Daqui a ' + _qdo + ', às ' + _rr0.hhmm + ', eu te lembro de ' + _lembR.texto + '.')
+              : ('Não consegui criar o lembrete: ' + (_rr0.erro || 'erro') + '.');
+          } catch (eLr) { respVoz = 'Não consegui criar o lembrete agora.'; }
         } else if (_rot) {
           try {
             var _rr = executarRotina(_rot);
@@ -3444,6 +3504,7 @@ function doPost(e) {
           : (_voto  !== null) ? 'voto_insight'
           : (_ofr   !== null) ? 'oferta_insight'
           : _lembC             ? 'lembrete_condicional'
+          : _lembR             ? 'lembrete_relativo'
           : _rot               ? ('rotina:' + _rot)
           : _ctl               ? 'controle_nativo'
           : _bib               ? 'biblia'
@@ -3519,7 +3580,7 @@ function doPost(e) {
          * Ajustável sem deploy pela property FALA_LOCAL_ROTAS (lista separada por vírgula).
          * O teto de caracteres continua como rede de segurança: resposta de ação que venha longa
          * (um extrato inteiro, por exemplo) volta para a nuvem. */
-        var _ROTAS_LOCAIS_PADRAO = 'relogio,agenda,emails,jev,financeiro,turno,rotina,controle_nativo,abrir_app,spotify,youtube,google,navegar,compras,ligar,biblia,insight_gravar,voto_insight';
+        var _ROTAS_LOCAIS_PADRAO = 'relogio,agenda,emails,jev,lembrete_relativo,financeiro,turno,rotina,controle_nativo,abrir_app,spotify,youtube,google,navegar,compras,ligar,biblia,insight_gravar,voto_insight';
         var _rotasLocais = String(PropertiesService.getScriptProperties().getProperty('FALA_LOCAL_ROTAS') || _ROTAS_LOCAIS_PADRAO)
           .split(',').map(function (x) { return x.trim(); }).filter(function (x) { return x; });
         var _viaBase = String((typeof _viaVoz !== 'undefined') ? _viaVoz : '').split(':')[0];
@@ -3583,8 +3644,11 @@ function doPost(e) {
         // Em modo nuvem devolve o texto (histórico: a macro usa para exibir). Em auto/local o corpo
         // É a fala — então vazio quando quem fala é a nuvem.
         var _corpo = (_modoCfg === 'nuvem') ? textoLimpo : (_falarLocal ? textoLimpo : '');
+        if (_ridKey) { try { CacheService.getScriptCache().put(_ridKey, String(_corpo), 600); } catch (eRs) {} }
         return ContentService.createTextOutput(_corpo).setMimeType(ContentService.MimeType.TEXT);
       } catch (evError) {
+        // Falhou: libera o rid para a repetição da macro poder tentar de verdade.
+        if (_ridKey) { try { CacheService.getScriptCache().remove(_ridKey); } catch (eRr) {} }
         return ContentService.createTextOutput("Erro: " + evError.message).setMimeType(ContentService.MimeType.TEXT);
       }
     }
@@ -6898,6 +6962,42 @@ function _interpretarLembreteCondicional(msg) {
     return t2.length >= 2 ? { gatilho: alvo(m[2], m[3]), texto: t2 } : null;
   }
   return null;
+}
+
+/* LEMBRETE RELATIVO ("me lembre daqui a 5 minutos de beber água") — determinístico.
+ * Em 25/09 isso foi ao modelo, que gravou o alerta às 11:05 (leu "5 minutos" como minuto=5) em
+ * vez de 11:43 — e DIÁRIO, porque agendarAlertaVoz só sabia criar alerta recorrente. O pedido
+ * das 11:38 nunca tocou e ficaria tocando todo dia às 11:05. Conta de relógio não é tarefa de
+ * modelo: aqui o servidor soma os minutos e cria um alerta de uma vez só (emMinutos).
+ * Devolve {minutos, texto} ou null. Aceita número por extenso ("cinco", "meia hora"). */
+var _NUM_EXTENSO = { um: 1, uma: 1, dois: 2, duas: 2, tres: 3, quatro: 4, cinco: 5, seis: 6, sete: 7, oito: 8,
+  nove: 9, dez: 10, onze: 11, doze: 12, quinze: 15, vinte: 20, trinta: 30, quarenta: 40, cinquenta: 50 };
+function _interpretarLembreteRelativo(msg) {
+  // Cópia sem acento com o MESMO comprimento (caractere a caractere), para casar a regex nela e
+  // recortar o conteúdo do ORIGINAL: o TTS lê 'beber água', não 'beber agua'.
+  var orig = String(msg || '').normalize('NFC').trim();
+  var base = orig.split('').map(function (c) { var d = c.normalize('NFD').replace(/[̀-ͯ]/g, ''); return d.length === 1 ? d : c; }).join('');
+  var s = base.toLowerCase();
+  if (!/\b(lembr|avis|alert|fal[ae])/.test(s)) return null;
+  var NUM = '(\\d{1,3}|' + Object.keys(_NUM_EXTENSO).join('|') + ')';
+  var m = s.match(new RegExp('\\b(?:daqui(?:\\s+a)?|em|dentro de)\\s+(?:' + NUM + '\\s+(minutos?|min|horas?)(?:\\s+e\\s+meia)?|(meia)\\s+hora)\\b'));
+  if (!m) return null;
+  var minutos;
+  if (m[3] === 'meia') minutos = 30;
+  else {
+    var n = /^\d+$/.test(m[1]) ? Number(m[1]) : _NUM_EXTENSO[m[1]];
+    minutos = /^h/.test(m[2]) ? n * 60 + (/e\s+meia/.test(m[0]) ? 30 : 0) : n;
+  }
+  if (!(minutos >= 1 && minutos <= 720)) return null;
+  // O conteúdo é o que sobra sem o pedido e sem o tempo: "me lembre [daqui a 5 minutos] de beber água".
+  var resto = orig.slice(0, m.index) + ' ' + orig.slice(m.index + m[0].length);
+  var texto = resto
+    .replace(/^\s*(?:jarvis[\s,]*)?(?:por favor\s+)?(?:me\s+)?(?:lembr\w+|avis\w+|alert\w+|fal\w+)\s*(?:-?me)?\s*/i, '')
+    .replace(/^\s*(?:de|pra|para|que)\s+/i, '')
+    .replace(/\s+/g, ' ').replace(/[\s.,;:!?]+$/, '').trim();
+  texto = texto.replace(/^(?:de|pra|para|que)\s+/i, '').trim();
+  if (texto.length < 2) return null;
+  return { minutos: minutos, texto: texto };
 }
 
 /** Diag dos lembretes: sem args lista; {gatilho} dispara (simulado por padrão). */

@@ -30,6 +30,27 @@ var AlertasVoz = (function () {
   /** Cria um alerta. o:{hora 0-23, minuto 0-59, dias[0=Dom..6=Sáb] (vazio=todos), texto, dinamico?} */
   function criar(o) {
     o = o || {};
+    /* ALERTA DE UMA VEZ SÓ. Até 25/09 todo alerta era recorrente: "me lembre daqui a 5 minutos de
+     * beber água" virou um alerta DIÁRIO às 11:05 (o modelo ainda errou a conta). emMinutos é
+     * relativo e o servidor faz a conta; unico:true fixa o próximo HH:MM. Os dois gravam `data`,
+     * e o tick só dispara nesse dia e remove o alerta depois de falar. */
+    var _data = '';
+    if (o.emMinutos !== undefined && o.emMinutos !== null && o.emMinutos !== '') {
+      var _em = Number(o.emMinutos);
+      if (!isFinite(_em) || _em < 1 || _em > 1440) return { ok: false, erro: 'emMinutos deve ser de 1 a 1440.' };
+      var _alvo = new Date(Date.now() + Math.round(_em) * 60000);
+      o.hora = Number(Utilities.formatDate(_alvo, TZ, 'H'));
+      o.minuto = Number(Utilities.formatDate(_alvo, TZ, 'm'));
+      o.dias = [];
+      _data = Utilities.formatDate(_alvo, TZ, 'yyyy-MM-dd');
+    } else if (o.unico === true || o.unico === 'true') {
+      var _agoraU = new Date();
+      var _minAgora = Number(Utilities.formatDate(_agoraU, TZ, 'H')) * 60 + Number(Utilities.formatDate(_agoraU, TZ, 'm'));
+      var _minAlvo = Number(o.hora) * 60 + Number(o.minuto || 0);
+      var _dia = (_minAlvo > _minAgora) ? _agoraU : new Date(_agoraU.getTime() + 86400000);   // já passou → amanhã
+      o.dias = [];
+      _data = Utilities.formatDate(_dia, TZ, 'yyyy-MM-dd');
+    }
     var h = Number(o.hora);
     if (!isFinite(h) || h < 0 || h > 23) return { ok: false, erro: 'Informe a hora (0-23).' };
     var m = Number(o.minuto || 0); if (!isFinite(m) || m < 0 || m > 59) m = 0;
@@ -83,6 +104,7 @@ var AlertasVoz = (function () {
     for (var _i = 0; _i < arr.length; _i++) {
       var _a = arr[_i];
       if (_a.ativo === false) continue;
+      if (String(_a.data || '') !== _data) continue;   // um de uma vez só nunca é "o mesmo" que um diário
       if (Number(_a.hora) === h && Number(_a.minuto || 0) === m &&
           (_a.dias || []).slice().sort().join(',') === _diasKey && _normT(_a.texto) === _normT(texto)) {
         return { ok: true, alerta: _a, duplicado: true,
@@ -90,8 +112,10 @@ var AlertasVoz = (function () {
       }
     }
     var item = { id: Utilities.getUuid().slice(0, 8), hora: h, minuto: m, dias: dias, texto: texto, dinamico: _dinamico, ativo: true, ult: '', tag: _tag };
+    if (_data) item.data = _data;
     arr.push(item); _salvar(arr); _garantirTick();
-    return { ok: true, alerta: item, info: 'Alerta de voz às ' + _hhmm(h, m) + (dias.length ? (' (' + dias.map(_nomeDia).join(',') + ')') : ' (todos os dias)') + ' criado.' };
+    return { ok: true, alerta: item, hhmm: _hhmm(h, m),
+             info: 'Alerta de voz às ' + _hhmm(h, m) + (_data ? (' de ' + _data + ' (uma vez só)') : dias.length ? (' (' + dias.map(_nomeDia).join(',') + ')') : ' (todos os dias)') + ' criado.' };
   }
 
   function listar() { return _ler().filter(function (a) { return a.ativo !== false; }); }
@@ -184,8 +208,11 @@ var AlertasVoz = (function () {
       // ferias nao e motivo para deixar de receber as noticias do dia.
       var _pausaAte = String(PropertiesService.getScriptProperties().getProperty('PONTO_PAUSA_ATE') || '');
       var _pontoPausado = !!_pausaAte && (dia <= _pausaAte);
+      var _unicosFeitos = {};
       arr.forEach(function (a) {
         if (a.ativo === false) return;
+        // De uma vez só: fora do dia dele não dispara; dia já passado sem ter falado sai da lista.
+        if (a.data && a.data !== dia) { if (a.data < dia) { _unicosFeitos[a.id] = 1; mudou = true; } return; }
         // Reconhece ponto pela tag OU pelo texto: o conjunto da manha de 20/08 tinha sido criado
         // pelo LLM sem tag nenhuma, e por isso escapava de toda limpeza que so olhava a tag.
         if (_pontoPausado && (a.tag === 'ponto' || /marcar (o )?ponto/i.test(String(a.texto || '')))) return;
@@ -274,10 +301,11 @@ var AlertasVoz = (function () {
         // janela de tolerância. É a diferença entre perder o alerta do dia e atrasá-lo um minuto.
         // Quando falha, LIBERA a guarda do cache junto: sem isso o alerta ficaria bloqueado pelos
         // 10 min do TTL e a retentativa que este bloco promete nunca aconteceria.
-        if (_ok) a.ult = carimbo;
+        if (_ok) { a.ult = carimbo; if (a.data) _unicosFeitos[a.id] = 1; }
         else { try { CacheService.getScriptCache().remove(_ckk); } catch (eRm) {} }
         mudou = true;
       });
+      if (Object.keys(_unicosFeitos).length) arr = arr.filter(function (a) { return !_unicosFeitos[a.id]; });
       if (mudou) _salvar(arr);
       // Auto-limpeza: sem alertas ativos → remove o gatilho de 1 min (criar() recria quando precisar).
       if (!arr.some(function (a) { return a.ativo !== false; })) {

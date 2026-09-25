@@ -194,7 +194,7 @@ var Jarvis = (function () {
         ? '## GMAIL (gestão completa)\nAlém de listarEmailsNaoLidos e criarRascunhoEmail, você gerencia o Gmail: pesquisarEmails({query}) busca em TODOS os e-mails (sintaxe Gmail: from:, subject:, is:unread, has:attachment, newer_than:7d…) e devolve um ID por e-mail; use esse ID em lerEmail, responderEmail, encaminharEmail, marcarEmail, arquivarEmail, excluirEmail, gerenciarRotulosEmail e gerenciarAnexosEmail. enviarEmail({para,assunto,corpo,anexos[]}) envia direto (pode anexar arquivos do Drive pelo nome). verificarSpam lista o spam. FLUXO: para agir sobre um e-mail específico, primeiro pesquisarEmails/listarEmailsNaoLidos para obter o ID, depois a ação. enviarEmail/responderEmail/encaminharEmail/excluirEmail EXIGEM confirmação (são sensíveis).'
         : ''),
       (isOwner
-        ? '## AGENDAMENTO (tarefas proativas)\nVocê pode agir SOZINHO em horários definidos. Quando o usuário pedir algo recorrente ou futuro (ex.: "todo dia útil às 8h resuma meus e-mails", "toda segunda às 9h me lembre de X"), use agendarTarefa({descricao, hora, diasSemana, frequencia}).\n- hora: 0-23 (fuso São Paulo). diasSemana: 0=Dom..6=Sáb (vazio=todos; dias úteis=[1,2,3,4,5]). frequencia: "diario"/"semanal"/"unico".\n- A descricao é APENAS a tarefa a executar no disparo (ex.: "Resuma meus e-mails não lidos mais importantes"). NÃO inclua "me envie no WhatsApp" — o resultado é entregue automaticamente no WhatsApp do dono.\n- Ver/cancelar: listarTarefasAgendadas / cancelarTarefaAgendada.\n- Se o usuário disser "agora"/"hora atual", USE a hora do campo "Data/hora" deste prompt (não pergunte). Só pergunte se a hora for realmente ambígua.\n- AUTONOMIA POR EVENTO: para "fique de olho / me avise quando chegar e-mail de X / monitore e-mails importantes" use monitorarGmail({query, acao}) (filtro Gmail). Desativar: pararMonitorGmail.\n- ALERTA DE ÁUDIO NO CELULAR: quando o dono pedir um lembrete/alerta FALADO em VOZ ALTA no aparelho num horário (ex.: "às 7h30 fala bom dia no android", "todo dia útil às 8h me fala minha agenda no celular", "me lembra de tomar remédio às 12h em voz alta"), use agendarAlertaVoz({hora, minuto, dias, texto, dinamico}). Se o texto for conteúdo a GERAR no disparo (agenda/clima/notícias), passe dinamico=true. Para entrega no WhatsApp (não no celular falando), use agendarTarefa. Ver/cancelar: listarAlertasVoz / cancelarAlertaVoz.\n- TURNO DE TRABALHO: se o dono disser que vai trabalhar no turno da manhã ou da tarde (ex.: "essa semana trabalho à tarde"), use definirTurnoTrabalho({turno:"manha"|"tarde"}) — ele reconfigura SOZINHO os 4 alertas falados de ponto (Seg–Sex). Não crie alertas de ponto manualmente um a um.'
+        ? '## AGENDAMENTO (tarefas proativas)\nVocê pode agir SOZINHO em horários definidos. Quando o usuário pedir algo recorrente ou futuro (ex.: "todo dia útil às 8h resuma meus e-mails", "toda segunda às 9h me lembre de X"), use agendarTarefa({descricao, hora, diasSemana, frequencia}).\n- hora: 0-23 (fuso São Paulo). diasSemana: 0=Dom..6=Sáb (vazio=todos; dias úteis=[1,2,3,4,5]). frequencia: "diario"/"semanal"/"unico".\n- A descricao é APENAS a tarefa a executar no disparo (ex.: "Resuma meus e-mails não lidos mais importantes"). NÃO inclua "me envie no WhatsApp" — o resultado é entregue automaticamente no WhatsApp do dono.\n- Ver/cancelar: listarTarefasAgendadas / cancelarTarefaAgendada.\n- Se o usuário disser "agora"/"hora atual", USE a hora do campo "Data/hora" deste prompt (não pergunte). Só pergunte se a hora for realmente ambígua.\n- AUTONOMIA POR EVENTO: para "fique de olho / me avise quando chegar e-mail de X / monitore e-mails importantes" use monitorarGmail({query, acao}) (filtro Gmail). Desativar: pararMonitorGmail.\n- ALERTA DE ÁUDIO NO CELULAR: quando o dono pedir um lembrete/alerta FALADO em VOZ ALTA no aparelho num horário (ex.: "às 7h30 fala bom dia no android", "todo dia útil às 8h me fala minha agenda no celular", "me lembra de tomar remédio às 12h em voz alta"), use agendarAlertaVoz({hora, minuto, dias, texto, dinamico}). Lembrete PONTUAL: "daqui a N minutos/horas" → agendarAlertaVoz({emMinutos:N, texto}) (o servidor faz a conta); "hoje às 15h" → unico:true. Sem emMinutos/unico o alerta é DIÁRIO. Se o texto for conteúdo a GERAR no disparo (agenda/clima/notícias), passe dinamico=true. Para entrega no WhatsApp (não no celular falando), use agendarTarefa. Ver/cancelar: listarAlertasVoz / cancelarAlertaVoz.\n- TURNO DE TRABALHO: se o dono disser que vai trabalhar no turno da manhã ou da tarde (ex.: "essa semana trabalho à tarde"), use definirTurnoTrabalho({turno:"manha"|"tarde"}) — ele reconfigura SOZINHO os 4 alertas falados de ponto (Seg–Sex). Não crie alertas de ponto manualmente um a um.'
         : ''),
       (isOwner
         ? '## OBJETIVOS (autonomia dirigida por meta)\nQuando o usuário der uma META de alto nível que exige VÁRIAS etapas (ex.: "pesquise X, resuma no meu wiki e me mande no WhatsApp", "prepare um material sobre Y", "organize meu dia"), use definirObjetivo({objetivo}). Você vai PLANEJAR os passos, mostrar o plano e, após o usuário confirmar (sim), o objetivo roda em SEGUNDO PLANO (você avisa no WhatsApp ao concluir — NÃO trava o chat). Ao confirmar, refaça a chamada com confirmado:true (e repasse o objetivoId que veio antes); responda ao usuário que iniciou e que avisará no final. Para tarefas de 1 passo, NÃO use definirObjetivo — faça direto. Ver/cancelar: listarObjetivos / cancelarObjetivo.'
@@ -707,7 +707,7 @@ var Jarvis = (function () {
             hora: { type: 'STRING', description: 'Para alarme: "HH:MM" (24h).' },
             minutos: { type: 'NUMBER', description: 'Para timer: duração em minutos.' },
             nivel: { type: 'NUMBER', description: 'Para brilho/volume: 0 a 100 (volume também aceita "alto"/"medio"/"baixo"/"mudo").' },
-            comando: { type: 'STRING', description: 'Para midia: "pausar" (ou "tocar" — mesmo toggle play/pause), "proxima", "anterior".' },
+            comando: { type: 'STRING', description: 'Para midia: "pausar", "tocar" (retomar), "proxima", "anterior".' },
             modo: { type: 'STRING', description: 'Para tema: "claro"/"escuro". Para notificacao_interativa: "conversa" (simula resposta do usuário na conversa ativa) ou "acao" (executa comando em segundo plano).' },
             estado: { type: 'STRING', description: 'Para naoperturbe/wifi/bluetooth: "on"/"off". Para tela: "desligar".' },
             titulo: { type: 'STRING', description: 'Para notificar/notificacao_interativa: título.' },
@@ -800,14 +800,16 @@ var Jarvis = (function () {
         parameters: {
           type: 'OBJECT',
           properties: {
-            hora: { type: 'NUMBER', description: 'Hora 0-23 (fuso São Paulo).' },
+            hora: { type: 'NUMBER', description: 'Hora 0-23 (fuso São Paulo). Omita quando usar emMinutos.' },
             minuto: { type: 'NUMBER', description: 'Minuto 0-59 (padrão 0).' },
+            emMinutos: { type: 'NUMBER', description: 'Lembrete RELATIVO de uma vez só: "daqui a 5 minutos" = 5, "daqui a meia hora" = 30, "daqui a 2 horas" = 120. O servidor calcula o horário; NÃO some você mesmo. Quando usar, omita hora/minuto/dias.' },
+            unico: { type: 'BOOLEAN', description: 'true = dispara UMA vez só no próximo HH:MM (ex.: "hoje às 15h me lembra de X"). Sem isto o alerta se repete todo dia.' },
             dias: { type: 'ARRAY', items: { type: 'NUMBER' }, description: 'Dias: 0=Dom..6=Sáb. Vazio=todos. Dias úteis=[1,2,3,4,5].' },
             texto: { type: 'STRING', description: 'O que falar. Se for conteúdo a GERAR (ex.: "minha agenda de hoje"), marque dinamico=true.' },
             dinamico: { type: 'BOOLEAN', description: 'true = trata "texto" como pedido e fala a RESPOSTA gerada no disparo (ex.: agenda/clima). false (padrão) = fala o texto literal.' },
             tag: { type: 'STRING', description: 'PAPEL do alerta: "ponto" (lembrete de marcar ponto — entra na pausa de férias) ou "avulso" (padrão). Na dúvida, OMITA: o servidor infere pelo texto. NÃO use "briefing": esse papel é exclusivo do briefing do turno e é gerenciado pelo próprio sistema.' }
           },
-          required: ['hora', 'texto']
+          required: ['texto']
         }
       },
       {
@@ -2706,6 +2708,17 @@ var Jarvis = (function () {
             // último arquivo de áudio (que seria a fala ERRADA) até a v3 ser importada.
             alvo = _mdEvento(url, 'jarvis_falar_texto');
             qs = 'id=' + encodeURIComponent(_idF);
+            /* TEXTO NO PRÓPRIO WEBHOOK (Falar v4). Buscar o texto em /exec custava 14-26 s em 25/09: o
+             * segundo salto do Google (googleusercontent) é lento e às vezes dá 404. Texto curto vai
+             * direto na query (a macro fala {lv=texto_fala} sem rede); longo segue pelo id. Desligado
+             * até a v4 ser importada (a v3 não escuta jarvis_falar_direto) — rota doPost fala_direta. */
+            var _encF = encodeURIComponent(_txtF);
+            if (_encF.length <= 1800 &&
+                String(PropertiesService.getScriptProperties().getProperty('FALA_TEXTO_DIRETO') || 'nao').toLowerCase() === 'sim') {
+              alvo = _mdEvento(url, 'jarvis_falar_direto');
+              qs = 'texto_fala=' + _encF;
+              _spansFala.engine = 'celular-direto';
+            }
           } else if (acao === 'falar') {
             // SERIALIZAÇÃO DA FALA. A macro Jarvis Falar baixa SEMPRE o mesmo arquivo (ID fixo no
             // Drive) para /Download/jarvis-fala.wav e toca. Se uma segunda fala chega enquanto a
@@ -2752,7 +2765,12 @@ var Jarvis = (function () {
               var cmdM = String(args.comando || 'pausar').toLowerCase();
               var evM = /prox|next|avan[çc]|pula/.test(cmdM) ? 'proxima'
                 : /anter|prev|volta/.test(cmdM) ? 'anterior'
-                : 'pausar'; // pausar/tocar/continuar = mesmo toggle Play/Pause
+                : /toc|play|contin|retom|despaus/.test(cmdM) ? 'tocar'
+                : 'pausar';
+              /* PAUSAR E TOCAR SÃO COMANDOS DIFERENTES (25/09). Eram o mesmo "Play/Pause" alternado: se o
+               * Spotify já estava pausado no instante do comando (o reconhecimento de voz tira o foco de
+               * áudio dele), alternar fazia TOCAR — "pausa a música" e ela continuou. Pause e Play explícitos
+               * são idempotentes. A macro Jarvis_Midia_v2 escuta jarvis_midia_tocar. */
               triggerEvent = 'jarvis_midia_' + evM;
             } else if (acao === 'lanterna') {
               triggerEvent = 'jarvis_lanterna';

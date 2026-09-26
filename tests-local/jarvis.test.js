@@ -1728,7 +1728,7 @@ test('lembrete relativo: extrai minutos e o conteúdo, inclusive por extenso', f
   var s = code();
   assert.strictEqual(JSON.stringify(s._interpretarLembreteRelativo('Me lembre daqui 5 minutos de beber água')), JSON.stringify({ minutos: 5, texto: 'beber água' }));
   assert.strictEqual(JSON.stringify(s._interpretarLembreteRelativo('me lembra de tirar o bolo do forno daqui a dez minutos')), JSON.stringify({ minutos: 10, texto: 'tirar o bolo do forno' }));
-  assert.strictEqual(s._interpretarLembreteRelativo('me avisa daqui a meia hora de ligar pro Emerson').minutos, 30);
+  assert.strictEqual(s._interpretarLembreteRelativo('me avisa daqui a meia hora de ligar pro fornecedor').minutos, 30);
   assert.strictEqual(s._interpretarLembreteRelativo('me lembre em 2 horas de buscar a encomenda').minutos, 120);
   assert.strictEqual(s._interpretarLembreteRelativo('me lembre daqui a uma hora e meia de sair').minutos, 90);
   assert.strictEqual(s._interpretarLembreteRelativo('todo dia às 8h me lembre de beber água'), null);

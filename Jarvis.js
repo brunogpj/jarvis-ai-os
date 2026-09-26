@@ -690,6 +690,18 @@ var Jarvis = (function () {
         }
       },
       {
+        // Alerta dinâmico "versículo aleatório" (25/09) respondia "não tenho ferramenta da Bíblia".
+        name: 'lerBiblia',
+        description: 'Busca o TEXTO de um versículo ou capítulo da Bíblia (tradução Almeida). Use para "leia João 3:16", "um versículo aleatório", "me dê um versículo". Passe referencia ("João 3:16", "Salmos 23") ou aleatorio=true. Nunca cite versículo de memória: use esta ferramenta.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            referencia: { type: 'STRING', description: 'Livro capítulo:versículo, ex.: "João 3:16" ou "Salmos 23". Omita para aleatório.' },
+            aleatorio: { type: 'BOOLEAN', description: 'true = um versículo sorteado.' }
+          }
+        }
+      },
+      {
         // O chat não recebe o bloco "[Contexto do Aparelho]" (só a voz recebe) e não tinha como ler o
         // celular: "qual o status do meu celular?" — sugestão da própria tela do chat — respondia
         // "não tenho acesso" (25/09), com a telemetria de 15 min atrás no banco.
@@ -1157,6 +1169,10 @@ var Jarvis = (function () {
         nomes: ['statusCelular']
       },
       {
+        re: /(b[ií]blia|vers[ií]culo|salmos?\b|evangelho|escritura|palavra de deus)/,
+        nomes: ['lerBiblia']
+      },
+      {
         re: /(pagina|site|url|\bweb\b|link|http|monitor)/,
         nomes: ['lerPagina', 'monitorarPagina', 'listarMonitoresPagina', 'pararMonitorPagina']
       },
@@ -1468,6 +1484,7 @@ var Jarvis = (function () {
       case 'promoverRawParaWiki':  return isOwner ? WikiMemoryService.promoverRawParaWiki(args.caminhoRawOuId, args.subpastaWiki) : _denied(name);
       case 'controlarDispositivo': return isOwner ? _controlarDispositivo(args) : _denied(name);
       case 'statusCelular':        return isOwner ? _statusCelular() : _denied(name);
+      case 'lerBiblia':            return (typeof lerBiblia === 'function') ? lerBiblia(args) : { ok: false, erro: 'Bíblia indisponível.' };
       case 'lerPagina':            return isOwner ? _lerPagina(args) : _denied(name);
       case 'monitorarPagina':      return isOwner ? Web.monitorar(args.url, args.descricao) : _denied(name);
       case 'listarMonitoresPagina': return isOwner ? { status: 'success', monitores: Web.listar() } : _denied(name);

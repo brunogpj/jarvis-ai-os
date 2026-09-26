@@ -715,6 +715,30 @@ function _lerVersiculoBiblia(apiRef) {
   } catch (e) { return { ok: false, erro: e.message }; }
 }
 
+/* BÍBLIA PARA O MODELO (ferramenta lerBiblia). Só a cadeia de voz sabia buscar versículo; o
+ * modelo não. Em 25/09 um alerta dinâmico "me dê um versículo bíblico aleatório" falou no
+ * celular "preciso de uma ferramenta que acesse a Bíblia" — o alerta passa pelo Jarvis.ask,
+ * que não tinha como buscar. Mesma fonte da voz (bible-api, Almeida); aleatório pelo
+ * ?random=verse da própria API. args {referencia?, aleatorio?}. */
+function lerBiblia(args) {
+  args = args || {};
+  var ref = String(args.referencia || '').trim();
+  if (!ref || args.aleatorio === true || args.aleatorio === 'true') {
+    try {
+      var r = UrlFetchApp.fetch('https://bible-api.com/?random=verse&translation=almeida', { muteHttpExceptions: true });
+      if (r.getResponseCode() !== 200) return { ok: false, erro: 'HTTP ' + r.getResponseCode() };
+      var j = JSON.parse(r.getContentText() || '{}');
+      if (!j.text) return { ok: false, erro: 'sem versículo na resposta' };
+      return { ok: true, aleatorio: true, ref: j.reference || '', texto: String(j.text).replace(/\s+/g, ' ').trim(), traducao: 'Almeida' };
+    } catch (e) { return { ok: false, erro: e.message }; }
+  }
+  var b = _interpretarBiblia('versículo ' + ref);
+  if (!b) return { ok: false, erro: 'Referência não reconhecida: "' + ref + '". Use o formato "João 3:16".' };
+  var v = _lerVersiculoBiblia(b.code + '+' + b.cap + (b.ver ? ':' + b.ver : ''));
+  if (!v.ok) return v;
+  return { ok: true, ref: v.ref || b.ref, texto: String(v.texto).substring(0, 2500), traducao: 'Almeida' };
+}
+
 // Remove acentos e baixa-caixa (p/ comparações robustas de nome).
 function _semAcento(s) {
   return String(s || '').toLowerCase()

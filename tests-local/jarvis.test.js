@@ -1782,3 +1782,18 @@ test('_urlParaMacro: termo cru com + (a macro codifica de novo), spotify: vira A
   assert.strictEqual(s._urlParaMacro('tel:31999999999'), 'tel:31999999999');
   assert.strictEqual(s._urlParaMacro('https://www.bible.com/bible/212/JHN.3.16'), 'https://www.bible.com/bible/212/JHN.3.16');
 });
+
+// ───────────────────────── lerBiblia (25/09: alerta "versículo aleatório" sem ferramenta) ─────────────────────────
+test('lerBiblia: aleatório usa ?random=verse; referência vai para o livro/cap:vers da voz', function () {
+  var urls = [];
+  var s = code({ fetch: function (url) {
+    urls.push(url);
+    if (/random=verse/.test(url)) return { body: { reference: 'Salmos 23:1', text: 'O Senhor é o meu pastor, nada me faltará.\n' } };
+    return { body: { reference: 'João 3:16', text: 'Porque Deus amou o mundo...' } };
+  } });
+  var a = s.lerBiblia({ aleatorio: true });
+  assert.ok(a.ok); assert.strictEqual(a.ref, 'Salmos 23:1'); assert.strictEqual(a.texto, 'O Senhor é o meu pastor, nada me faltará.');
+  var r = s.lerBiblia({ referencia: 'João 3:16' });
+  assert.ok(r.ok); assert.match(urls[1], /JHN%2B3%3A16|JHN\+3:16/);
+  assert.strictEqual(s.lerBiblia({ referencia: 'blablabla' }).ok, false);
+});

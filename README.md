@@ -53,7 +53,7 @@ Opera no **free tier** do Gemini por engenharia de cascata (free-first, múltipl
 
 ## 🧪 Testes / QA
 
-Catálogo completo em **`TESTES_JARVIS.md`** (o que pedir × tool esperada × resultado) e a ordem de execução em **`ROTEIRO_QA_JARVIS.md`** (Fases 0–11 + §15 dos recursos recentes). Harness automatizado: `rodarQA()` (saúde funcional) e **`rodarEvals()`** (testes de *comportamento* do agente: Gate P2 não burlável, anti-injeção, anti-alucinação, vazamento de chave — via `toolTrace` real). Testes locais offline: `node tests-local/jarvis.test.js`.
+Catálogo completo em **`TESTES_JARVIS.md`** (o que pedir × tool esperada × resultado) e a ordem de execução em **`ROTEIRO_QA_JARVIS.md`** (Fases 0–11 + §15 dos recursos recentes). Harness automatizado: `rodarQA()` (saúde funcional) e **`rodarEvals()`** (testes de *comportamento* do agente: Gate P2 não burlável, anti-injeção, anti-alucinação, vazamento de chave — via `toolTrace` real). Testes locais offline (147, sem cota e sem rede, com as APIs do GAS simuladas): `cd tests-local && node --test`.
 
 ## 🚀 Deploy
 

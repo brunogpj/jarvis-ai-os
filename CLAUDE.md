@@ -20,11 +20,11 @@ Projeto Google Apps Script gerenciado localmente via clasp.
 | Runtime | V8, timezone `America/Sao_Paulo` |
 | Web App | `executeAs: USER_DEPLOYING`, `access: ANYONE_ANONYMOUS` |
 
-## Implantações (`clasp deployments`, 21/09/2026)
+## Implantações (`clasp deployments`, 25/09/2026)
 
 | Deployment ID | Versão | Descrição |
 |---|---|---|
-| `<DEPLOYMENT_ID>` | **@410** | **ATIVA** — "diagBriefingTexto: testa o briefing pelo caminho real". É esta que o celular e os scripts de diagnóstico usam. |
+| `<DEPLOYMENT_ID>` | **@449** | **ATIVA** — "ferramenta lerBiblia". É esta que o celular e os scripts de diagnóstico usam. |
 | `<DEPLOYMENT_ID>` | @25 | Antiga — "TesteJobs" |
 | `<DEPLOYMENT_ID>` | @HEAD | Cabeça (muda a cada push, não é a de produção) |
 
@@ -41,8 +41,12 @@ Frontend e backend em HtmlService; memória em **Cloud Firestore** (REST +
 service account, JWT RS256 assinado no próprio GAS); inteligência via **Gemini**
 num **loop ReAct** próprio com dezenas de ferramentas.
 
-Três interfaces simultâneas: **chat web**, **WhatsApp** (Evolution API) e **voz
-no Android** (Cloud TTS + MacroDroid/Tasker via webhook, sem app nativo).
+Interfaces: **chat web** e **voz no Android** (MacroDroid via webhook, sem app
+nativo). O **WhatsApp** (Evolution API) está **desligado por decisão do dono**
+desde 24/09/2026 — sem chip, risco de ban. O projeto no Railway foi mantido;
+religar = pagar o Railway e gravar `WHATSAPP_ATIVO=sim`. Com ele desligado, as
+ferramentas de WhatsApp somem do modelo e devolvem o motivo; **não reativar nem
+sugerir canal de mensagem**. Avisos proativos saem pelo celular (`_avisarDono`).
 
 Documentação longa já existe no repo — leia antes de mexer em área desconhecida:
 `README.md` (front-door), `DOCUMENTACAO.md` (técnica completa),
@@ -59,9 +63,9 @@ arquivo. **Arquivo novo que precise subir tem que ser adicionado lá**, senão o
 
 | Arquivo | LOC | Papel |
 |---|---:|---|
-| `Code.js` | 7202 | `doGet`/`doPost`, todas as rotas do Web App, UI-bridge (`google.script.run`), dashboard, e ~290 funções de feature/diagnóstico |
-| `Jarvis.js` | 3342 | O agente: system prompt, declaração de ferramentas, `_execTool`, loop ReAct (`ask`), hooks pré/pós |
-| `Index.html` / `Javascript.html` / `Stylesheet.html` | 527 / 2694 / 1188 | Frontend (neumorphism + glassmorphism, tema claro/escuro) |
+| `Code.js` | 8481 | `doGet`/`doPost`, todas as rotas do Web App, UI-bridge (`google.script.run`), dashboard, cadeia determinística da voz, e ~300 funções de feature/diagnóstico |
+| `Jarvis.js` | 3677 | O agente: system prompt, declaração de ferramentas, `_execTool`, loop ReAct (`ask`), hooks pré/pós, `controlarDispositivo` (webhooks do MacroDroid) |
+| `Index.html` / `Javascript.html` / `Stylesheet.html` | 527 / 2721 / 1188 | Frontend (neumorphism + glassmorphism, tema claro/escuro) |
 | `PainelInterativo.html` | 371 | Página de callback para notificações interativas do celular |
 
 ### Infra / plataforma
@@ -103,20 +107,81 @@ arquivo. **Arquivo novo que precise subir tem que ser adicionado lá**, senão o
 ## Entradas do sistema
 
 **`doGet`** — Web App (`Index.html`) + rotas por `action`: `ler_debug`,
-`painel_interativa`, `callback_interativa`, e polling da fila do dispositivo
-(`?dispositivo=fila`, entrega *at-most-once*, esvazia ao ler).
+`painel_interativa`, `callback_interativa`, `fala_texto` (texto de uma fala
+proativa guardado por id no CacheService, 10 min), e polling da fila do
+dispositivo (`?dispositivo=fila`, entrega *at-most-once*, esvazia ao ler).
 
 **`doPost`** — ordem importa: rota `__broker` (HMAC, **antes** do rate limit, é
-tráfego interno) → rate limit global (240/min) → webhook da Evolution
-(`body.event`) → `get_voice_token` / `telemetria` / `viagem` / `notificacao` /
-`voice_command` (todas com `VOICE_API_TOKEN`) → diag (`DIAG_TOKEN`).
+tráfego interno; inclui `NOTIF` da fila de notificações) → rate limit global
+(240/min) → webhook da Evolution (`body.event`) → `get_voice_token` /
+`telemetria` / `viagem` / `notificacao` / `voice_command` / `apps_celular` /
+`janela_notificacoes` / `fala_direta` / `ler_debug` (todas com
+`VOICE_API_TOKEN`) → diag (`DIAG_TOKEN`).
+
+## Voz no Android (estado em 25/09/2026)
+
+**O `/exec` perde respostas.** O POST responde 302 para
+`script.googleusercontent.com`, e esse segundo salto devolve 404 em ~40% dos
+pedidos em horários ruins — **depois** de o comando já ter executado. Nunca
+repetir um `voice_command` às cegas (o resumo de e-mails já saiu 3x). A
+Conversa manda `rid` (`{system_time_ms}`); o servidor guarda a resposta por
+`rid`+hash da mensagem (10 min) e devolve a mesma sem re-executar
+(`voz:repeticao` nos eventos). `rid` não numérico é ignorado
+(`voz:rid_invalido`).
+
+**Tudo é falado pelo TTS do próprio celular.** O áudio da nuvem, tocado pelo
+MediaPlayer, ia para a saída DIRECT do Redmi (fora do reforço de alto-falante)
+e soava baixo em WAV ou OGG. Agora:
+- Respostas (`FALA_RESPOSTAS_LOCAL`, padrão sim): o corpo do `voice_command` é
+  o texto que a macro Conversa fala.
+- Proativas (`FALA_PROATIVA_LOCAL`, padrão sim): `controlarDispositivo('falar')`
+  manda o texto curto direto no webhook `jarvis_falar_direto?texto_fala=`
+  (`FALA_TEXTO_DIRETO=sim`, ~7 s) ou, se longo, `jarvis_falar_texto?id=` e a
+  macro busca em `fala_texto` (14–26 s, com repetição).
+
+**Cadeia determinística antes do modelo** (Code.js, `voice_command`): fato
+(hora/agenda/e-mails) → financeiro → turno → insight → lembrete condicional →
+**lembrete relativo** ("daqui a N minutos" → `AlertasVoz.criar({emMinutos})`,
+alerta de uma vez só) → rotinas → controles nativos (mídia pausar/tocar/
+próxima são comandos distintos) → Bíblia → Spotify/YouTube/Google/rota →
+abrir app → JEV (TypeSafe) → LLM. O evento `voz:<rota>` diz quem atendeu.
+
+**Alertas de voz** (`AlertasVoz.js`): `emMinutos` ou `unico:true` gravam
+`data`; o tick só dispara nesse dia e **remove** o alerta depois de falar.
+Sem isso o alerta é diário.
+
+**Notificações do celular** entram numa fila (`_notifEnfileirar`) e são
+processadas por loopback + tick de 1 min; janela de fala padrão 06:00–22:00.
+
+**Links para a macro** passam por `_urlParaMacro`: a ação "Abrir página" do
+MacroDroid re-codifica a URL, então o termo vai cru com `+` nos espaços, e
+`spotify:search:` vira o App Link https.
+
+### Macros em uso (MacroDroid, Redmi Note 11, Android 13)
+
+Conversa Premium **v6** (voz → `voice_command` com `rid`, 2 repetições),
+Falar **v4** (`jarvis_falar_direto` / `jarvis_falar_texto` / navegar / abrirurl),
+Mídia **v4**, Notificações Premium (com repetição), Notificar, Ponto (só
+Sisponto), Não Perturbe, Volume, Lanterna, Telemetria, Viagem. Os `.macro`
+**não** ficam no repo (têm o token e a URL do webhook): as cópias geradas vão
+para `/sdcard/Download` no celular.
+
+Peculiaridades medidas via ADB:
+- "Simular botão de mídia" manda broadcast `MEDIA_BUTTON`, que o Android 13
+  bloqueia. O modo "sessão de mídia" exige o pacote exato do app. A Mídia v4
+  usa "enviar comandos ao player" (`dispatchMediaKeyEvent`).
+- Query string do webhook preenche a variável local de mesmo nome.
+- Testar pelo ADB: `cmd media_session dispatch play`, `dumpsys media_session`
+  (estado 2 = pausado, 3 = tocando), logcat de `SetVolumeActivity` (macro
+  Falar começou) e `SynthHandler` (TTS falando).
+- scrcpy com áudio disputa o microfone com a macro: usar `--no-audio`.
 
 ## Gatilhos de tempo
 
 | Handler | Cadência | O quê |
 |---|---|---|
 | `executarTarefasAgendadas` | 15 min | Tick da Agenda + monitor de Gmail |
-| `tickAlertasVoz` | 1 min | Alertas de voz (precisão de minuto) |
+| `tickAlertasVoz` | 1 min | Alertas de voz (precisão de minuto) + fila de notificações pendentes |
 | `jobInsightDiario` | diário | Curadoria/insight (condicional: só se ligada) |
 | `jobIndexarWiki`, `jobMemoriaConversas`, `jobAutoDiagnostico`, `pingTelemetria` | — | Indexação, memória, autodiagnóstico, telemetria (15 min) |
 
@@ -170,10 +235,19 @@ no navegador e no VS Code ao mesmo tempo perde trabalho.
 cd tests-local && node --test
 ```
 
-34 testes offline (sem cota, sem rede) sobre a lógica determinística: MODO
+147 testes offline (sem cota, sem rede) sobre a lógica determinística: MODO
 DIRETO, gate sem-cota, hooks, parsing de turno/briefing, validação de prefs,
-ordenação dos cards. `tests-local/gas-shims.js` simula as APIs do GAS.
-Estado em 21/09/2026: **34/34 passando**.
+ordenação dos cards, cadeia da voz, lembrete relativo e alertas de uma vez só,
+`_urlParaMacro`, `lerBiblia`. `tests-local/gas-shims.js` simula as APIs do GAS
+(`formatDate` é fixo: teste que depende de horário injeta o seu).
+Estado em 25/09/2026: **147/147 passando**.
+
+Contra o sistema vivo, pelo terminal: `ler_debug` (POST com `VOICE_API_TOKEN`,
+`n` até 200, `alertas:true`) lê os eventos em `agente_eventos` — `voz:<rota>`,
+`voz:entrega:local · rid`, `alertaVoz:*`, `notif:processada`. É por eles que se
+confirma o que aconteceu no celular. Roteiro manual de testes (voz, ações e web
+app): artifact "Roteiro de Testes Jarvis" (76 testes, todos passando em
+25/09/2026).
 
 No editor, contra o sistema vivo: `rodarQA()`, `rodarEvals()`, `statusJarvis()`,
 `diagGemini()`, `testarFirestore()`, `pingGemini()`, `statusHeartbeat()`,

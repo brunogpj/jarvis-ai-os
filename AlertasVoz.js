@@ -270,7 +270,25 @@ var AlertasVoz = (function () {
           // O fallback antigo era `fala = a.texto`: quando o Jarvis.ask falhava, o aparelho
           // recitava o próprio prompt em voz alta. Melhor admitir a falha do que ler a ordem.
           var gerado = '';
-          try { gerado = String(Jarvis.ask(_owner(), a.texto, [], null, { interativo: false }) || ''); } catch (e) { gerado = ''; }
+          if (String(a.tag || '').indexOf('briefing') === 0 && typeof Briefing !== 'undefined') {
+            /* BRIEFING NÃO PASSA MAIS PELO Jarvis.ask. Pelo ask o modelo escolhia se consultava
+             * agenda e notícias — e em 25/09 e 28/09 não consultou nada e inventou compromissos e
+             * manchetes (o mesmo texto nos dois dias). O Briefing busca tudo no código e só usa o
+             * modelo para redigir notícias. Sem volta para o ask em caso de falha: melhor dizer que
+             * não conseguiu do que falar algo inventado. */
+            try {
+              var _bg = Briefing.gerar(a);
+              gerado = String((_bg && _bg.texto) || '');
+              try {
+                if (typeof Jarvis !== 'undefined' && Jarvis.registrarEvento) Jarvis.registrarEvento({
+                  tool: 'briefing:fontes', ok: true, ms: 0,
+                  resumo: (a.tag || '') + ' · ' + JSON.stringify((_bg && _bg.rastro) || {})
+                });
+              } catch (eRb) {}
+            } catch (eBg) { gerado = ''; }
+          } else {
+            try { gerado = String(Jarvis.ask(_owner(), a.texto, [], null, { interativo: false }) || ''); } catch (e) { gerado = ''; }
+          }
           var limpo = (typeof _prepararTextoFala === 'function') ? _prepararTextoFala(gerado) : gerado;
           fala = (limpo && limpo.length >= 15) ? limpo : 'Bruno, não consegui montar isso agora. Me pergunte daqui a pouco.';
         }

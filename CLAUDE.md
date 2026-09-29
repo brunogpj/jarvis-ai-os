@@ -21,11 +21,11 @@ Projeto Google Apps Script gerenciado localmente via clasp.
 | Web App | `executeAs: USER_DEPLOYING`, `access: ANYONE_ANONYMOUS` |
 | Repositório | https://github.com/brunogpj/jarvis-ai-os — **público** (ver "Repositório público" em Segurança) |
 
-## Implantações (`clasp deployments`, 25/09/2026)
+## Implantações (`clasp deployments`, 28/09/2026)
 
 | Deployment ID | Versão | Descrição |
 |---|---|---|
-| `<DEPLOYMENT_ID>` | **@449** | **ATIVA** — "ferramenta lerBiblia". É esta que o celular e os scripts de diagnóstico usam. |
+| `<DEPLOYMENT_ID>` | **@454** | **ATIVA** — "briefing: notícias locais". É esta que o celular e os scripts de diagnóstico usam. |
 | `<DEPLOYMENT_ID>` | @25 | Antiga — "TesteJobs" |
 | `<DEPLOYMENT_ID>` | @HEAD | Cabeça (muda a cada push, não é a de produção) |
 
@@ -91,6 +91,7 @@ arquivo. **Arquivo novo que precise subir tem que ser adicionado lá**, senão o
 | `SkillsManager.js` | Skills dinâmicas descobertas recursivamente no Drive (`SKILL.md`), com subagentes |
 | `Sandbox.js` | Sandbox para `run_dynamic_script`: APIs envolvidas (`_wrapped*`) + allowlist |
 | `Objetivos.js` | Autonomia por meta: planeja → confirma → executa em 2º plano → sintetiza |
+| `Briefing.js` | Briefings falados com **dados buscados pelo código** (agenda, tarefas, notícias locais e nacionais, tempo, versículo); o modelo só redige notícias — ver "Briefings" |
 | `Evals.js` / `QA.js` | `rodarEvals()` (comportamento, via `toolTrace` real) e `rodarQA()` (saúde funcional) |
 
 ### Integrações
@@ -116,10 +117,12 @@ dispositivo (`?dispositivo=fila`, entrega *at-most-once*, esvazia ao ler).
 tráfego interno; inclui `NOTIF` da fila de notificações) → rate limit global
 (240/min) → webhook da Evolution (`body.event`) → `get_voice_token` /
 `telemetria` / `viagem` / `notificacao` / `voice_command` / `apps_celular` /
-`janela_notificacoes` / `fala_direta` / `ler_debug` (todas com
-`VOICE_API_TOKEN`) → diag (`DIAG_TOKEN`).
+`janela_notificacoes` / `fala_direta` / `config_fala` / `ler_debug` (todas com
+`VOICE_API_TOKEN`) → diag (`DIAG_TOKEN`). `config_fala` troca, por HTTP, só uma
+lista fechada de chaves da entrega da fala (`FALA_PROATIVA_LOCAL`,
+`FALA_RESPOSTAS_LOCAL`, `MODO_FALA_VOZ`, `FALA_VOLUME_DB` 0–16, `FALA_FORMATO`).
 
-## Voz no Android (estado em 25/09/2026)
+## Voz no Android (estado em 28/09/2026)
 
 **O `/exec` perde respostas.** O POST responde 302 para
 `script.googleusercontent.com`, e esse segundo salto devolve 404 em ~40% dos
@@ -130,15 +133,29 @@ Conversa manda `rid` (`{system_time_ms}`); o servidor guarda a resposta por
 (`voz:repeticao` nos eventos). `rid` não numérico é ignorado
 (`voz:rid_invalido`).
 
-**Tudo é falado pelo TTS do próprio celular.** O áudio da nuvem, tocado pelo
-MediaPlayer, ia para a saída DIRECT do Redmi (fora do reforço de alto-falante)
-e soava baixo em WAV ou OGG. Agora:
-- Respostas (`FALA_RESPOSTAS_LOCAL`, padrão sim): o corpo do `voice_command` é
-  o texto que a macro Conversa fala.
-- Proativas (`FALA_PROATIVA_LOCAL`, padrão sim): `controlarDispositivo('falar')`
-  manda o texto curto direto no webhook `jarvis_falar_direto?texto_fala=`
-  (`FALA_TEXTO_DIRETO=sim`, ~7 s) ou, se longo, `jarvis_falar_texto?id=` e a
-  macro busca em `fala_texto` (14–26 s, com repetição).
+**Voz premium da nuvem, um arquivo por fala.** Estado ligado em 28/09:
+`FALA_PROATIVA_LOCAL=nao`, `FALA_RESPOSTAS_LOCAL=nao`, `MODO_FALA_VOZ=auto`
+(confirmações rápidas de ação — "Abrindo o WhatsApp" — ainda saem pelo TTS do
+celular, que não chega atrasado; conteúdo, briefings e avisos vão pela nuvem).
+`controlarDispositivo('falar')` sintetiza (Cloud/Gemini TTS), grava no MESMO
+arquivo do Drive (ID estável) e dispara `jarvis_falar?id=<drive>&arq=<nome>`. A
+macro Falar v6 baixa pelo `{lv=id}` para `Download/Jarvis/{lv=arq}`
+(`jarvis_AAAA-MM-DD_HH-mm-ss[_briefing].ogg`) e toca esse arquivo — o dono
+reabre qualquer fala para ouvir de novo.
+
+**O volume baixo era o canal, não o arquivo** (medido por adb em 28/09). A ação
+"Tocar som" do MacroDroid é `MediaPlayer.setAudioStreamType(canal)`. No canal 3
+(música) o Android usa uma saída **DIRECT** (`AudioOut_485`, type 1), fora do
+mixer onde o Xiaomi aplica o reforço de alto-falante: quase inaudível. O mesmo
+arquivo aberto no Files (AudioTrack) vai pelo **MIXER** e soa alto. A Falar v6
+toca no canal de **alarme** (4) → `USAGE_ALARM`, mixer `AudioOut_D`, volume
+confirmado de ouvido. Efeitos: toca mesmo no silencioso e sai no alto-falante
+mesmo com fone Bluetooth. Para medir: `dumpsys audio` (player do MacroDroid
+`state:started`, `usage=`) e a thread ativa em `dumpsys media.audio_flinger`.
+
+Os ramos de fala pelo TTS do celular (`jarvis_falar_direto?texto_fala=` e
+`jarvis_falar_texto?id=` + `fala_texto`) continuam na macro; voltar a eles =
+`config_fala` com `FALA_*_LOCAL=sim`.
 
 **Cadeia determinística antes do modelo** (Code.js, `voice_command`): fato
 (hora/agenda/e-mails) → financeiro → turno → insight → lembrete condicional →
@@ -151,6 +168,25 @@ abrir app → JEV (TypeSafe) → LLM. O evento `voz:<rota>` diz quem atendeu.
 `data`; o tick só dispara nesse dia e **remove** o alerta depois de falar.
 Sem isso o alerta é diário.
 
+**Briefings** (`Briefing.js`, tags `briefing*` dos alertas). Até 27/09 eram um
+`Jarvis.ask(prompt)` e o modelo decidia se consultava: os de 25/09 e 28/09 à
+noite saíram **sem nenhuma ferramenta**, com o mesmo texto fabricado e
+compromissos que não existiam ("nunca invente" estava no prompt). Agora o
+código busca tudo (agenda do calendário padrão — "amanhã" é o dia seguinte
+inteiro; Google Tasks; `Gemini.pesquisarWeb` para notícias **locais**
+(`BRIEFING_REGIAO`, padrão BH + região metropolitana + MG, lidas primeiro) e
+nacionais e para o tempo; versículo de uma lista curta via `lerBiblia`). Frases
+de agenda e tarefas são montadas no código; o modelo só redige as notícias, sem
+ferramentas e com `_thinking:'low'`. Frases dele sobre "sua agenda / você tem"
+e saudação repetida são cortadas. Sem volta para o ask em caso de falha: fala
+que não conseguiu. Cada briefing deixa o evento `briefing:fontes` (o que foi
+consultado e ms por etapa). Ensaiar sem falar: `ler_debug` com
+`ensaioBriefing:'<tag>'`.
+
+**Trava de agenda inventada no chat e na voz** (`_hookAgendaSemFonte`, pós-hook):
+frase que afirma agenda/tarefas do dono sem ferramenta de agenda com sucesso
+no MESMO turno é cortada, com aviso; evento `hook:agenda_sem_fonte`.
+
 **Notificações do celular** entram numa fila (`_notifEnfileirar`) e são
 processadas por loopback + tick de 1 min; janela de fala padrão 06:00–22:00.
 
@@ -161,7 +197,8 @@ MacroDroid re-codifica a URL, então o termo vai cru com `+` nos espaços, e
 ### Macros em uso (MacroDroid, Redmi Note 11, Android 13)
 
 Conversa Premium **v6** (voz → `voice_command` com `rid`, 2 repetições),
-Falar **v4** (`jarvis_falar_direto` / `jarvis_falar_texto` / navegar / abrirurl),
+Falar **v6** (`jarvis_falar` premium → `Download/Jarvis/{arq}` no canal de alarme,
+`jarvis_falar_direto` / `jarvis_falar_texto` / navegar / abrirurl),
 Mídia **v4**, Notificações Premium (com repetição), Notificar, Ponto (só
 Sisponto), Não Perturbe, Volume, Lanterna, Telemetria, Viagem. Os `.macro`
 **não** ficam no repo (têm o token e a URL do webhook): as cópias geradas vão
@@ -172,6 +209,8 @@ Peculiaridades medidas via ADB:
   bloqueia. O modo "sessão de mídia" exige o pacote exato do app. A Mídia v4
   usa "enviar comandos ao player" (`dispatchMediaKeyEvent`).
 - Query string do webhook preenche a variável local de mesmo nome.
+- Magic text vale no caminho de gravação do HTTP (`saveResponseAllFilesAccessPath`)
+  e no nome do arquivo do "Tocar som" (`allFilesFilename`) — conferido no DEX.
 - Testar pelo ADB: `cmd media_session dispatch play`, `dumpsys media_session`
   (estado 2 = pausado, 3 = tocando), logcat de `SetVolumeActivity` (macro
   Falar começou) e `SynthHandler` (TTS falando).
@@ -210,7 +249,8 @@ o histórico. Então:
 - Testes usam dados genéricos (o commit `eee2398` trocou um contato real por um
   genérico no teste do lembrete relativo).
 - O `README.md` é o que um recrutador lê primeiro. O projeto Jarvis no
-  LinkedIn e o README do perfil do GitHub citam "147 testes automatizados";
+  LinkedIn e o README do perfil do GitHub citam "147 testes automatizados"
+  (o repo tem 159 desde 28/09 — a frase segue verdadeira como piso);
   se a contagem mudar muito, avise o dono para atualizar lá também.
 - Nada sobre o empregador nem sobre sistemas internos de trabalho entra aqui.
 
@@ -259,15 +299,16 @@ público").
 cd tests-local && node --test
 ```
 
-147 testes offline (sem cota, sem rede) sobre a lógica determinística: MODO
+159 testes offline (sem cota, sem rede) sobre a lógica determinística: MODO
 DIRETO, gate sem-cota, hooks, parsing de turno/briefing, validação de prefs,
 ordenação dos cards, cadeia da voz, lembrete relativo e alertas de uma vez só,
-`_urlParaMacro`, `lerBiblia`. `tests-local/gas-shims.js` simula as APIs do GAS
-(`formatDate` é fixo: teste que depende de horário injeta o seu).
-Estado em 25/09/2026: **147/147 passando**.
+`_urlParaMacro`, `lerBiblia`, briefing com dados reais e trava de agenda
+inventada (`tests-local/briefing.test.js`). `tests-local/gas-shims.js` simula as
+APIs do GAS (`formatDate` é fixo: teste que depende de horário injeta o seu).
+Estado em 28/09/2026: **159/159 passando**.
 
 Contra o sistema vivo, pelo terminal: `ler_debug` (POST com `VOICE_API_TOKEN`,
-`n` até 200, `alertas:true`) lê os eventos em `agente_eventos` — `voz:<rota>`,
+`n` até 200, `alertas:true`, `ensaioBriefing:'<tag>'`) lê os eventos em `agente_eventos` — `voz:<rota>`,
 `voz:entrega:local · rid`, `alertaVoz:*`, `notif:processada`. É por eles que se
 confirma o que aconteceu no celular. Roteiro manual de testes (voz, ações e web
 app): artifact "Roteiro de Testes Jarvis" (76 testes, todos passando em

@@ -2913,6 +2913,29 @@ function doPost(e) {
       return json({ ok: true, antes: antesFd, agora: vFd });
     }
 
+    // ENTREGA DA FALA (nuvem × celular) sem editor e sem DIAG_TOKEN — o token de diagnóstico não fica
+    // no PC, e em 28/09 a volta para a voz premium dependia de virar três chaves ao mesmo tempo.
+    // LISTA FECHADA de chaves e valores: nada de gravar property arbitrária por HTTP.
+    if (body && body.action === 'config_fala') {
+      if (!body.token || body.token !== PropertiesService.getScriptProperties().getProperty('VOICE_API_TOKEN')) {
+        return json({ ok: false, erro: 'não autorizado' });
+      }
+      var _PERMITIDAS_CF = {
+        FALA_PROATIVA_LOCAL: /^(sim|nao)$/, FALA_RESPOSTAS_LOCAL: /^(sim|nao)$/,
+        MODO_FALA_VOZ: /^(nuvem|auto|local)$/, FALA_VOLUME_DB: /^(1[0-6]|[0-9])$/,
+        FALA_FORMATO: /^(ogg|wav)$/
+      };
+      var spCf = PropertiesService.getScriptProperties(), mudCf = {}, errCf = [];
+      Object.keys(body.valores || {}).forEach(function (k) {
+        var v = String(body.valores[k]).toLowerCase().trim();
+        if (!_PERMITIDAS_CF[k]) { errCf.push(k + ': chave não permitida'); return; }
+        if (!_PERMITIDAS_CF[k].test(v)) { errCf.push(k + ': valor inválido "' + v + '"'); return; }
+        mudCf[k] = { antes: spCf.getProperty(k), agora: v };
+        spCf.setProperty(k, v);
+      });
+      return json({ ok: !errCf.length, mudou: mudCf, erros: errCf });
+    }
+
     // VIAGEM: a macro "Jarvis Viagem" manda velocidade/ETA e recebe de volta o que falar.
     // Texto puro na resposta, para a macro falar direto pelo TTS do Android (sem round-trip de áudio).
     if (body && body.action === 'viagem') {
@@ -3695,6 +3718,11 @@ function doPost(e) {
         // Notificações: o texto que de fato chegou, para distinguir corte da ORIGEM de corte nosso.
         if (body.alertas) { try { saida.alertas = (typeof AlertasVoz !== 'undefined') ? AlertasVoz.listar() : null; } catch (eA) { saida.alertas = { erro: eA.message }; } }
         if (body.notificacoes) { try { saida.notificacoes = Firestore.listDocs(_NOTIF_COL, Math.min(200, Number(body.notificacoes) || 40)); } catch (eN) { saida.notificacoes = { erro: eN.message }; } }
+        // Ensaio de briefing: gera o texto pelo MESMO caminho do disparo, SEM falar no celular e sem
+        // mexer no alerta. Existe porque o diagBriefingTexto exige o DIAG_TOKEN, que não fica no PC,
+        // e a única forma de conferir o briefing antes era esperar o horário e ouvir. Custa a mesma
+        // pesquisa e redação de um briefing real — use com parcimônia.
+        if (body.ensaioBriefing) { try { saida.ensaioBriefing = diagBriefingTexto({ tag: String(body.ensaioBriefing) }); } catch (eEb) { saida.ensaioBriefing = { erro: eEb.message }; } }
         return ContentService.createTextOutput(JSON.stringify(saida)).setMimeType(ContentService.MimeType.JSON);
       } catch (errDb) {
         return ContentService.createTextOutput("Erro: " + errDb.message).setMimeType(ContentService.MimeType.TEXT);
@@ -6041,15 +6069,21 @@ function diagBriefingTexto(args) {
   }
   if (!a) return { ok: false, erro: 'alerta nao encontrado (tag/id)' };
   if (!a.dinamico) return { ok: false, erro: 'alerta nao e dinamico' };
-  var t0 = Date.now(), texto = '', erro = null;
+  var t0 = Date.now(), texto = '', erro = null, rastro = null;
   try {
-    var owner = PropertiesService.getScriptProperties().getProperty('OWNER_EMAIL') || 'owner';
-    texto = String(Jarvis.ask(owner, a.texto, [], null, { interativo: false }) || '');
+    // Mesmo caminho do disparo real (AlertasVoz): briefing pelo Briefing.gerar, o resto pelo ask.
+    if (String(a.tag || '').indexOf('briefing') === 0 && typeof Briefing !== 'undefined') {
+      var bg = Briefing.gerar(a);
+      texto = String((bg && bg.texto) || ''); rastro = bg && bg.rastro;
+    } else {
+      var owner = PropertiesService.getScriptProperties().getProperty('OWNER_EMAIL') || 'owner';
+      texto = String(Jarvis.ask(owner, a.texto, [], null, { interativo: false }) || '');
+    }
   } catch (e) { erro = e.message; }
   var limpo = '';
   try { limpo = (typeof _prepararTextoFala === 'function') ? _prepararTextoFala(texto) : texto; } catch (eL) { limpo = texto; }
-  return { ok: !erro, id: a.id, tag: a.tag, ms: Date.now() - t0, erro: erro,
-           caracteres: limpo.length, texto: limpo.substring(0, 1200) };
+  return { ok: !erro, id: a.id, tag: a.tag, ms: Date.now() - t0, erro: erro, rastro: rastro,
+           caracteres: limpo.length, texto: limpo.substring(0, 3000) };
 }
 
 /* ===================== GATILHOS (diagnostico e reparo) =====================

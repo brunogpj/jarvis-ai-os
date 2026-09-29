@@ -2764,7 +2764,15 @@ var Jarvis = (function () {
               _pFala.setProperty('FALA_LIVRE_EM', String(Date.now() + Math.min(_dur, 90000)));
             } finally { if (_lockFala) { try { _lockFala.releaseLock(); } catch (eRl) {} } }
             alvo = _mdEvento(url, 'jarvis_falar');
-            qs = ''; // a URL do áudio é FIXA na macro (ID estável) → só precisamos DISPARAR o evento
+            /* UM ARQUIVO POR FALA NO CELULAR (28/09). O arquivo no Drive continua um só (ID estável), mas
+             * a macro Falar v5 salva cada fala com nome próprio em Download/Jarvis e toca esse arquivo:
+             * o Bruno pode abrir e ouvir de novo qualquer fala, não só a última. Vão `id` (a macro monta
+             * a URL por ele — imune ao drift de ID) e `arq` (nome com data, hora e papel da fala).
+             * Macros antigas ignoram a query e seguem com a URL fixa. */
+            var _extF = (fala && fala.spans && fala.spans.formato === 'wav') ? 'wav' : 'ogg';
+            var _arqF = 'jarvis_' + Utilities.formatDate(new Date(), 'America/Sao_Paulo', 'yyyy-MM-dd_HH-mm-ss') +
+                        (a.motor === 'briefing' ? '_briefing' : '') + '.' + _extF;
+            qs = 'id=' + encodeURIComponent(fala.id || '') + '&arq=' + encodeURIComponent(_arqF);
           } else {
             var triggerEvent = 'jarvis_' + acao;
             var finalAcao = acao;
@@ -3241,8 +3249,39 @@ var Jarvis = (function () {
     return s + '\n\n— ✦ _Imagem gerada por IA (Gemini nano-banana)._';
   }
 
+  /* PÓS-hook ANTI-AGENDA INVENTADA. O modelo afirmava compromissos, reuniões e tarefas do dono
+   * sem ter consultado nada no turno — o briefing de 28/09 e o despertador de 21/09 ("reunião do
+   * projeto Alpha") são os casos medidos. Regra: frase que afirma algo da agenda/tarefas DO DONO
+   * só fica se, NESTE turno, alguma ferramenta de agenda/tarefas rodou com sucesso. Senão sai, e
+   * a resposta diz que não consultou. Estreito de propósito: "a reunião do G20" é notícia e fica;
+   * "você tem uma reunião às 10h" sai. Nada é injetado no prompt com a agenda (conferido em
+   * 28/09), então não há fonte legítima fora das ferramentas. */
+  var _TOOLS_AGENDA = ['listarProximosEventos', 'criarEventoCalendar', 'editarEventoCalendar', 'excluirEventoCalendar',
+    'listarTarefas', 'adicionarTarefa', 'concluirTarefa', 'excluirTarefa',
+    'listarTarefasAgendadas', 'agendarTarefa', 'cancelarTarefaAgendada', 'listarAlertasVoz', 'agendarAlertaVoz'];
+  var _RE_AGENDA_DONO = /\b(sua agenda|seus? compromissos?|sua reuni[aã]o|suas reuni[oõ]es|suas tarefas|sua lista de tarefas|tarefas? pendentes?|voc[eê] tem (uma |um |duas |dois |tr[eê]s |\d+ )?(reuni|compromiss|tarefa|evento|consulta|agendamento))/i;
+  function agendaSemFonte(resp, tracesTools) {
+    var s = String(resp || '');
+    if (!_RE_AGENDA_DONO.test(s)) return { texto: s, cortou: 0 };
+    var consultou = (tracesTools || []).some(function (t) { return t && t.ok && _TOOLS_AGENDA.indexOf(t.tool) !== -1; });
+    if (consultou) return { texto: s, cortou: 0 };
+    var frases = s.split(/(?<=[.!?])\s+/), ficam = [], cortou = 0;
+    frases.forEach(function (f) { if (_RE_AGENDA_DONO.test(f)) cortou++; else ficam.push(f); });
+    var aviso = 'Não consultei sua agenda nem suas tarefas agora; se quiser, peça "minha agenda de hoje".';
+    return { texto: (ficam.join(' ').trim() + ' ' + aviso).trim(), cortou: cortou };
+  }
+  function _hookAgendaSemFonte(resp, ctx) {
+    var r = agendaSemFonte(resp, _ultimoTrace);
+    if (r.cortou) {
+      try { _registrarEvento({ tool: 'hook:agenda_sem_fonte', ok: true, ms: 0,
+        resumo: r.cortou + ' frase(s) cortada(s) · ' + String(resp || '').slice(0, 140),
+        userEmail: ctx && ctx.userEmail, interativo: ctx && ctx.interativo, turnId: ctx && ctx.turnId }); } catch (eH) {}
+    }
+    return r.texto;
+  }
+
   var _PRE_HOOKS = [_hookGuardrailSegredo, _hookInjecaoMultimodal];
-  var _POST_HOOKS = [_hookModeracaoSaida, _hookProveniencia];
+  var _POST_HOOKS = [_hookModeracaoSaida, _hookProveniencia, _hookAgendaSemFonte];
 
   // Executa os pré-hooks. Retorna { abortar, resposta } (encerramento antecipado) ou
   // { notas:[...] } (instruções defensivas a anexar antes do loop). Defensivo a exceções.
@@ -3560,7 +3599,7 @@ var Jarvis = (function () {
                        : '⚠️ Atingi o limite de passos sem concluir. Tente reformular o pedido.';
   }
 
-  return { ask: ask, _isOwner: _isOwner, _toolsPermitidas: _toolsPermitidas, registrarEvento: _registrarEvento, lerPrefs: _lerPrefs, prepararVozCelular: _falarNoCelular, controlarDispositivo: _controlarDispositivo, capturarConhecimento: _capturarConhecimento, buscarConhecimento: _buscarConhecimento, gerarPodcastWiki: _gerarPodcastWiki, ultimoTrace: function () { return (_ultimoTrace || []).slice(); } };
+  return { ask: ask, _isOwner: _isOwner, _toolsPermitidas: _toolsPermitidas, _agendaSemFonte: agendaSemFonte, registrarEvento: _registrarEvento, lerPrefs: _lerPrefs, prepararVozCelular: _falarNoCelular, controlarDispositivo: _controlarDispositivo, capturarConhecimento: _capturarConhecimento, buscarConhecimento: _buscarConhecimento, gerarPodcastWiki: _gerarPodcastWiki, ultimoTrace: function () { return (_ultimoTrace || []).slice(); } };
 })();
 
 /**

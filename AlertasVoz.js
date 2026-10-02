@@ -456,8 +456,10 @@ var AlertasVoz = (function () {
 
 /** Handler do gatilho temporal de 1 min (alertas de voz no celular). NÃO renomear. */
 function tickAlertasVoz() {
+  var _t0 = Date.now(), _err = null;   // diário de gatilhos (Heartbeat.medir): tempo gasto da cota diária
   try { if (typeof Heartbeat !== 'undefined') Heartbeat.bater('alertasVoz'); } catch (e) {}
-  try { AlertasVoz.tick(); } catch (e) { Logger.log('[tickAlertasVoz] ' + e.message); }
+  try { AlertasVoz.tick(); } catch (e) { _err = e.message; Logger.log('[tickAlertasVoz] ' + e.message); }
   // Rede de segurança da fila de notificações (Code.js): o que o loopback não processou em 20 s.
-  try { if (typeof _notifProcessarPendentes === 'function') _notifProcessarPendentes(); } catch (e) { Logger.log('[tickAlertasVoz] notif: ' + e.message); }
+  try { if (typeof _notifProcessarPendentes === 'function') _notifProcessarPendentes(); } catch (e) { _err = _err || ('notif: ' + e.message); Logger.log('[tickAlertasVoz] notif: ' + e.message); }
+  try { if (typeof Heartbeat !== 'undefined' && Heartbeat.medir) Heartbeat.medir('tickAlertasVoz', _t0, _err); } catch (e) {}
 }

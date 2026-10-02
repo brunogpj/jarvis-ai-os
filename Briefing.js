@@ -103,10 +103,29 @@ var Briefing = (function () {
   /* O modelo cumprimenta mesmo mandado não cumprimentar: no ensaio de 28/09 saiu "Boa noite,
    * Bruno. Bruno, boa noite." (a saudação do código + a dele). Tira a dele do começo. PURA. */
   function tirarSaudacao(texto) {
-    return String(texto || '')
+    var s = String(texto || '')
       .replace(/^\s*((ol[aá]|oi|e a[ií])\s*,?\s*)?(bruno\s*,?\s*)?(bom dia|boa tarde|boa noite)(\s*,?\s*bruno)?\s*[.!,]?\s*/i, '')
       .replace(/^\s*(ol[aá]|oi),?\s*bruno\s*[.!,]?\s*/i, '')
+      // 01/10: "Boa tarde, Bruno. Olha só, Bruno, tem algumas coisas..." — o vocativo dele logo
+      // depois da saudação do código. Só sai quando o nome vem junto da muleta, no começo.
+      .replace(/^\s*((olha( s[oó])?|ent[aã]o|bom|veja( s[oó])?|escuta( s[oó])?)\s*,?\s*)?bruno\s*[,!.]\s*/i, '')
       .trim();
+    return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+  }
+
+  /* TETO DE CARACTERES DA VOZ. Acima de TTS_GEMINI_MAX_CHARS (1500) a fala troca para o Cloud TTS,
+   * outra voz. Em 01/10 o da manhã saiu com 1526 caracteres (o modelo escreveu 244 palavras com
+   * teto de 200) e veio na voz errada. Corta o corpo na última frase inteira que cabe. PURA. */
+  function caberNoTeto(corpo, limite) {
+    var s = String(corpo || '').trim();
+    if (!(limite > 0) || s.length <= limite) return s;
+    var frases = s.split(/(?<=[.!?])\s+/), out = '';
+    for (var i = 0; i < frases.length; i++) {
+      var prox = out ? out + ' ' + frases[i] : frases[i];
+      if (prox.length > limite) break;
+      out = prox;
+    }
+    return out;
   }
 
   /* VERSÍCULO PARA REFLEXÃO. O sorteio da bible-api pega qualquer versículo da Bíblia, e fora de
@@ -281,6 +300,14 @@ var Briefing = (function () {
       aviso: aviso,
       versiculo: (it.biblia && f.versiculo) ? ('Para encerrar, ' + f.versiculo.ref + ': ' + f.versiculo.texto) : ''
     };
+    // O corpo é a única parte elástica: as outras são fatos e ficam inteiras. Folga de 80 caracteres
+    // para o _prepararTextoFala, que por extenso alonga "37°C" e "R$".
+    var teto = Number(PropertiesService.getScriptProperties().getProperty('TTS_GEMINI_MAX_CHARS') || 1500);
+    if (isFinite(teto) && teto > 0 && corpo) {
+      var fixo = montar({ saudacao: partes.saudacao, agenda: partes.agenda, tarefas: partes.tarefas,
+                          aviso: partes.aviso, versiculo: partes.versiculo }).length;
+      partes.corpo = caberNoTeto(corpo, teto - 80 - fixo - 1);
+    }
     return {
       texto: montar(partes),
       rastro: {
@@ -290,7 +317,8 @@ var Briefing = (function () {
         noticias: it.noticias ? (f.noticias ? (f.noticiasFontes.length + ' fonte(s)') : 'erro: ' + f.noticiasErro) : '-',
         tempo: it.tempo ? (f.tempo ? 'ok' : 'erro') : '-',
         versiculo: it.biblia ? (f.versiculo ? f.versiculo.ref : 'erro') : '-',
-        redacao: erroRedacao ? ('erro: ' + String(erroRedacao).slice(0, 80)) : (corpo ? corpo.split(/\s+/).length + ' palavras' : 'vazia'),
+        redacao: erroRedacao ? ('erro: ' + String(erroRedacao).slice(0, 80)) : (corpo ? corpo.split(/\s+/).length + ' palavras' +
+                 (partes.corpo.length < corpo.length ? ' (cortado p/ ' + partes.corpo.split(/\s+/).length + ')' : '') : 'vazia'),
         msColeta: msColeta, msRedacao: msRedacao
       }
     };
@@ -298,5 +326,6 @@ var Briefing = (function () {
 
   return { gerar: gerar, intencoes: intencoes, fraseAgenda: fraseAgenda, fraseTarefas: fraseTarefas,
            removerFrasesPessoais: removerFrasesPessoais, tirarSaudacao: tirarSaudacao, montar: montar, coletar: coletar,
+           caberNoTeto: caberNoTeto,
            VERSICULOS_REFLEXAO: VERSICULOS_REFLEXAO };
 })();

@@ -226,6 +226,15 @@ Peculiaridades medidas via ADB:
 | `jobIndexarWiki`, `jobMemoriaConversas`, `jobAutoDiagnostico`, `pingTelemetria` | — | Indexação, memória, autodiagnóstico, telemetria (15 min) |
 
 `statusHeartbeat()` mostra o que está atrasado; o Heartbeat re-arma sozinho.
+`Heartbeat.medir` soma por dia execuções, tempo, maior duração e erros de cada
+gatilho na property `DIARIO_GATILHOS` (`ler_debug` com `gatilhos:true`).
+
+**Tudo parou de uma vez, com os gatilhos instalados? Reautorização.** Em 29/09,
+das ~18:10 às ~00:45, o Apps Script esperou um novo consentimento de
+permissões. Os gatilhos pararam, e o `/exec` também (ele roda como
+`USER_DEPLOYING`). As notificações do celular desse intervalo se perderam,
+entre elas a recarga do Swile. Primeiro passo: abrir o editor ou o Web App e
+aceitar o pedido de permissão.
 
 ## Segurança (não afrouxar sem pensar)
 
@@ -250,7 +259,7 @@ o histórico. Então:
   genérico no teste do lembrete relativo).
 - O `README.md` é o que um recrutador lê primeiro. O projeto Jarvis no
   LinkedIn e o README do perfil do GitHub citam "147 testes automatizados"
-  (o repo tem 159 desde 28/09 — a frase segue verdadeira como piso);
+  (o repo tem 167 desde 01/10 — a frase segue verdadeira como piso);
   se a contagem mudar muito, avise o dono para atualizar lá também.
 - Nada sobre o empregador nem sobre sistemas internos de trabalho entra aqui.
 
@@ -299,16 +308,19 @@ público").
 cd tests-local && node --test
 ```
 
-159 testes offline (sem cota, sem rede) sobre a lógica determinística: MODO
+167 testes offline (sem cota, sem rede) sobre a lógica determinística: MODO
 DIRETO, gate sem-cota, hooks, parsing de turno/briefing, validação de prefs,
 ordenação dos cards, cadeia da voz, lembrete relativo e alertas de uma vez só,
 `_urlParaMacro`, `lerBiblia`, briefing com dados reais e trava de agenda
-inventada (`tests-local/briefing.test.js`). `tests-local/gas-shims.js` simula as
+inventada (`tests-local/briefing.test.js`), despertador composto, teto de
+caracteres da voz no briefing e autodiagnóstico sem alarme de app raro
+(`tests-local/dia-0110.test.js`). `tests-local/gas-shims.js` simula as
 APIs do GAS (`formatDate` é fixo: teste que depende de horário injeta o seu).
-Estado em 28/09/2026: **159/159 passando**.
+Estado em 01/10/2026: **167/167 passando**.
 
 Contra o sistema vivo, pelo terminal: `ler_debug` (POST com `VOICE_API_TOKEN`,
-`n` até 200, `alertas:true`, `ensaioBriefing:'<tag>'`) lê os eventos em `agente_eventos` — `voz:<rota>`,
+`n` até 200, `alertas:true`, `notificacoes:N`, `ensaioBriefing:'<tag>'`, `gatilhos:true`,
+`saude:true`, `testarTick:true|'agenda'`, `callbacks:N`) lê os eventos em `agente_eventos` — `voz:<rota>`,
 `voz:entrega:local · rid`, `alertaVoz:*`, `notif:processada`. É por eles que se
 confirma o que aconteceu no celular. Roteiro manual de testes (voz, ações e web
 app): artifact "Roteiro de Testes Jarvis" (76 testes, todos passando em

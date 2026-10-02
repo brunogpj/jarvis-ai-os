@@ -87,6 +87,7 @@ var Agenda = (function () {
 
 /** Handler do gatilho temporal compartilhado: tarefas agendadas + monitor de eventos. NÃO renomear. */
 function executarTarefasAgendadas() {
+  var _t0 = Date.now();   // diário de gatilhos (Heartbeat.medir)
   try { if (typeof Heartbeat !== 'undefined') Heartbeat.bater('agenda'); } catch (e) {}
   try { Agenda.executar(); } catch (e) { Logger.log('[tick] Agenda: ' + e.message); }
   try { if (typeof Monitor !== 'undefined') Monitor.verificar(); } catch (e) { Logger.log('[tick] Monitor: ' + e.message); }
@@ -108,6 +109,7 @@ function executarTarefasAgendadas() {
   // 🩺 Anti-falha-silenciosa: este tick (15 min) vigia os OUTROS jobs (ex.: alertasVoz 1 min) —
   // se algum atrasou, re-arma o gatilho e avisa o dono (1x/6h).
   try { if (typeof Heartbeat !== 'undefined') Heartbeat.verificarEAlertar(); } catch (e) { Logger.log('[tick] Heartbeat: ' + e.message); }
+  try { if (typeof Heartbeat !== 'undefined' && Heartbeat.medir) Heartbeat.medir('executarTarefasAgendadas', _t0, null); } catch (e) {}
 }
 
 /** Diagnóstico: lista tarefas e força um tick. Rode no editor. */

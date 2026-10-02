@@ -36,6 +36,29 @@ var Heartbeat = (function () {
   /** Registra uma batida do job (chamar no INÍCIO de cada handler de tick). */
   function bater(nome) { try { P.setProperty('HB_' + nome, String(Date.now())); } catch (e) {} }
 
+  /* DIÁRIO DE GATILHOS (30/09). Em 29/09 às ~18:10 todos os gatilhos pararam de executar e só
+   * voltaram de madrugada: ponto das 19/20/23h e briefing das 21h perdidos, código sadio (testado
+   * pela rota de diagnóstico) e nenhum rastro — o teto de ~90 min/dia de gatilhos do consumer não
+   * avisa, e o histórico de execuções só existe no editor. Aqui cada handler principal soma, por
+   * dia, quantas vezes rodou, o tempo total e o maior. Com isso dá para ver o orçamento sendo
+   * gasto ANTES de acabar. Gatilho morto por cota não chega aqui: aparece como buraco no ultFim.
+   * Aproximado de propósito (sem lock): dois gatilhos no mesmo instante podem perder uma soma. */
+  function medir(nome, t0, erro) {
+    try {
+      var dia = Utilities.formatDate(new Date(), 'America/Sao_Paulo', 'yyyy-MM-dd');
+      var d = JSON.parse(P.getProperty('DIARIO_GATILHOS') || '{}');
+      if (d.dia !== dia) d = { dia: dia, ontem: d.dia ? { dia: d.dia, h: d.h } : null, h: {} };
+      var x = d.h[nome] || (d.h[nome] = { n: 0, ms: 0, max: 0, erros: 0 });
+      var ms = Date.now() - t0;
+      x.n++; x.ms += ms; if (ms > x.max) x.max = ms;
+      x.fim = Utilities.formatDate(new Date(), 'America/Sao_Paulo', 'HH:mm:ss');
+      if (erro) { x.erros++; x.ultErro = String(erro).slice(0, 160); }
+      P.setProperty('DIARIO_GATILHOS', JSON.stringify(d));
+    } catch (e) {}
+  }
+
+  function diario() { try { return JSON.parse(P.getProperty('DIARIO_GATILHOS') || '{}'); } catch (e) { return {}; } }
+
   function _ultimo(nome) { var v = Number(P.getProperty('HB_' + nome) || 0); return isFinite(v) ? v : 0; }
 
   /** Status de saúde de todos os jobs (read-only) — usado pelo Dashboard. */
@@ -96,7 +119,7 @@ var Heartbeat = (function () {
     try { if (typeof WikiMemoryService !== 'undefined') WikiMemoryService.registrarNoLog('[heartbeat] ' + linhas.join(' | ')); } catch (e) {}
   }
 
-  return { bater: bater, status: status, verificarEAlertar: verificarEAlertar };
+  return { bater: bater, status: status, verificarEAlertar: verificarEAlertar, medir: medir, diario: diario };
 })();
 
 /** Diagnóstico manual no editor: imprime a saúde dos gatilhos. */

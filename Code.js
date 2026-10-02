@@ -3361,7 +3361,7 @@ function doPost(e) {
         var _lembR = (_livre && !_lembC) ? _interpretarLembreteRelativo(msgVoz) : null;
         var _rot   = (_livre && !_lembC && !_lembR) ? _interpretarRotina(msgVoz) : null;
         if (_fato !== null) {
-          try { respVoz = (_fato.via === 'agenda') ? _falarAgenda(_fato.periodo) : (_fato.via === 'emails') ? _falarEmails() : _falarRelogio(_fato); }
+          try { respVoz = (_fato.via === 'agenda') ? _falarAgenda(_fato.periodo) : (_fato.via === 'emails') ? _falarEmails() : (_fato.via === 'despertador') ? _falarDespertador() : _falarRelogio(_fato); }
           catch (eFt) { respVoz = 'Não consegui consultar isso agora.'; }
         } else if (_fin !== null) {
           try {
@@ -3722,6 +3722,48 @@ function doPost(e) {
         // mexer no alerta. Existe porque o diagBriefingTexto exige o DIAG_TOKEN, que não fica no PC,
         // e a única forma de conferir o briefing antes era esperar o horário e ouvir. Custa a mesma
         // pesquisa e redação de um briefing real — use com parcimônia.
+        // Gatilhos de tempo (só leitura — reparar exige o DIAG_TOKEN). Em 29/09 às ~18:10 todos pararam
+        // (tique de alertas, ping de telemetria, jobs) e a única forma de ver isso era o editor.
+        if (body.gatilhos) { try { saida.gatilhos = diagGatilhos({}); } catch (eGt) { saida.gatilhos = { erro: eGt.message }; } }
+        // Último batimento de cada job: a 1ª linha do gatilho grava HB_<nome>. Batimento parado com o
+        // gatilho instalado = o Google nem está executando o código (cota diária, desativação).
+        // SAÚDE DO ARMAZENAMENTO (só leitura + 1 evento de teste). Em 29/09 ~18:10 tudo parou em silêncio
+        // com os gatilhos instalados e o tique batendo: a suspeita é escrita falhando (Script Properties
+        // tem teto de 500 KB no total; Firestore tem cota diária de escrita).
+        if (body.saude) {
+          var sd = {};
+          try {
+            var todas = PropertiesService.getScriptProperties().getProperties(), tot = 0, tam = [];
+            Object.keys(todas).forEach(function (k) { var n = k.length + String(todas[k]).length; tot += n; tam.push([k, n]); });
+            tam.sort(function (a, b) { return b[1] - a[1]; });
+            sd.props = { chaves: tam.length, bytes: tot, maiores: tam.slice(0, 8) };
+          } catch (eSp) { sd.props = { erro: eSp.message }; }
+          try { Jarvis.registrarEvento({ tool: 'diag:ping', ok: true, ms: 0, resumo: 'teste de escrita em agente_eventos' }); sd.evento = 'ok'; } catch (eEv) { sd.evento = 'erro: ' + eEv.message; }
+          try { var _pk = '__DIAG_ESCRITA'; PropertiesService.getScriptProperties().setProperty(_pk, String(Date.now())); PropertiesService.getScriptProperties().deleteProperty(_pk); sd.escritaProps = 'ok'; } catch (eWp) { sd.escritaProps = 'erro: ' + eWp.message; }
+          saida.saude = sd;
+        }
+        // Notificações interativas recentes (só leitura): qual foi criada, quando, e se já consta respondida.
+        if (body.callbacks) {
+          try {
+            saida.callbacks = Firestore.listDocs('callbacks_interativos', 300).map(function (d) {
+              var x = d.dados || {};
+              return { id: d.id, tipo: x.tipo, titulo: x.titulo, criadoEm: x.criadoEm ? new Date(Number(x.criadoEm)).toISOString() : null,
+                       respondido: !!x.respondido, respondidoEm: x.respondidoEm || null };
+            }).sort(function (a, b) { return String(b.criadoEm).localeCompare(String(a.criadoEm)); }).slice(0, Math.min(30, Number(body.callbacks) || 10));
+          } catch (eCb) { saida.callbacks = { erro: eCb.message }; }
+        }
+        // Roda o CORPO do tique e da agenda aqui, capturando o erro que no gatilho só vai para o Logger.
+        // Efeito colateral: o mesmo de um tique normal (fala o que estiver no horário).
+        if (body.testarTick) {
+          var tt = {};
+          try { AlertasVoz.tick(); tt.alertas = 'ok'; } catch (eT1) { tt.alertas = 'ERRO: ' + eT1.message + ' | ' + String(eT1.stack || '').slice(0, 600); }
+          try { var nP = _notifProcessarPendentes(); tt.notif = 'ok (' + nP + ')'; } catch (eT2) { tt.notif = 'ERRO: ' + eT2.message + ' | ' + String(eT2.stack || '').slice(0, 600); }
+          if (body.testarTick === 'agenda') { try { executarTarefasAgendadas(); tt.agenda = 'ok'; } catch (eT3) { tt.agenda = 'ERRO: ' + eT3.message + ' | ' + String(eT3.stack || '').slice(0, 600); } }
+          try { tt.log = String(Logger.getLog() || '').slice(-1500); } catch (eLg) {}
+          saida.testarTick = tt;
+        }
+        if (body.gatilhos && typeof Heartbeat !== 'undefined' && Heartbeat.diario) { try { saida.diarioGatilhos = Heartbeat.diario(); } catch (eDg) {} }
+        if (body.gatilhos && typeof Heartbeat !== 'undefined' && Heartbeat.status) { try { saida.heartbeat = Heartbeat.status(); } catch (eHb) { saida.heartbeat = { erro: eHb.message }; } }
         if (body.ensaioBriefing) { try { saida.ensaioBriefing = diagBriefingTexto({ tag: String(body.ensaioBriefing) }); } catch (eEb) { saida.ensaioBriefing = { erro: eEb.message }; } }
         return ContentService.createTextOutput(JSON.stringify(saida)).setMimeType(ContentService.MimeType.JSON);
       } catch (errDb) {
@@ -5505,6 +5547,13 @@ function _interpretarFatoVoz(msg) {
   var s = String(msg || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
     .replace(/[?!.,;:]/g, ' ').replace(/\s+/g, ' ').trim()
     .replace(/^(ok |oi |ei |e ai )?(jarvis )?/, '').replace(/( jarvis| por favor| agora| ai)+$/, '').trim();
+  // DESPERTADOR. A macro das 6h manda "Você é meu despertador agora. Me dê um bom dia caloroso me
+  // chamando de Bruno, anuncie a hora atual...". Desde 28/09 o "hora atual" caía na regra do relógio
+  // e o despertar virou só "São 6h.". Antes ia ao modelo, que em 24/09 anunciou "um evento
+  // importante" sem consultar a agenda. Despertar é fato composto: saudação, hora, data e a agenda
+  // real do dia, tudo do código. Vem antes do `mexe` porque o pedido pode dizer "lembre"; "cria um
+  // despertador às 6" não casa (é comando do aparelho e segue para o modelo).
+  if (/\b(voce e|seja|sera|vai ser) (o )?meu despertador\b/.test(s)) return { via: 'despertador' };
   // Pedido de MUDANÇA na agenda não é consulta: marcar, cancelar, mover — isso é do modelo.
   var mexe = /\b(marc|agend(ar|e|ou|ei|amos)\b|cri[ae]|adicion|coloc|bot[ae]|inclu|cancel|remov|exclu|desmarc|mud[ae]|alter|lembr)/.test(s);
   // "que horas eu bato o ponto" e "que horas é a reunião" NÃO são o relógio: o pedido tem de
@@ -5540,6 +5589,19 @@ function _interpretarFatoVoz(msg) {
   if ((falaDeAgenda || tenho) && periodo) return { via: 'agenda', periodo: periodo };
   if (falaDeAgenda && /\b(minha agenda|agenda de hoje|meus compromissos)\b/.test(s)) return { via: 'agenda', periodo: 'hoje' };
   return null;
+}
+
+/** Bom dia do despertador: saudação, hora, dia e a agenda REAL de hoje. Sem LLM. */
+function _falarDespertador(agora) {
+  agora = agora || new Date();
+  var p = _partesBRT(agora);
+  var saud = p.h < 12 ? 'Bom dia' : (p.h < 18 ? 'Boa tarde' : 'Boa noite');
+  var deste = (p.dow === 0 || p.dow === 6) ? 'deste ' : 'desta ';   // "deste sábado", "desta quinta"
+  var txt = saud + ', Bruno! São ' + _horaFalada(p.h, p.m) + ' ' + deste + _DIAS_SEMANA_PT[p.dow] + ', ' +
+            (p.dia === 1 ? '1º' : p.dia) + ' de ' + _MESES_PT[p.mes] + '.';
+  var ag = '';
+  try { ag = _falarAgenda('hoje', agora); } catch (e) {}
+  return txt + (ag ? ' ' + ag : '') + ' Tenha um ótimo dia.';
 }
 
 function _falarRelogio(f, agora) {
@@ -6446,6 +6508,8 @@ var _GOLDEN_VOZ = [
   ['que horas sao', 'relogio'],
   ['me diga a data atual e a hora atual', 'relogio'],
   ['que horas eu bato o ponto', 'nao_coberto'],    // ARMADILHA: 'que horas' que NAO e o relogio
+  ['voce e meu despertador agora me de um bom dia e anuncie a hora atual', 'despertador'],   // virava "São 6h." (28/09)
+  ['cria um despertador as 6h', 'nao_coberto'],    // ARMADILHA: comando do aparelho, não o bom dia
   ['o que eu tenho na agenda amanha', 'agenda'],
   ['me fala minha agenda de hoje', 'agenda'],
   ['marca uma reuniao amanha as 10h', 'nao_coberto'],
@@ -6521,10 +6585,18 @@ function _autodiagVerificar() {
   try {
     var an = diagAppsNotificacao({});
     estado.apps = (an.apps || []).map(function (x) { return x.app; });
+    estado.contagem = {};
+    (an.apps || []).forEach(function (x) { estado.contagem[x.app] = x.notificacoes; });
     estado.semTrafego = (an.regrasSemTrafego || []).map(function (x) { return x.regra; });
     estado.pontoArmado = !!(an.ponto && an.ponto.armado);
     if (ant.apps && ant.apps.length) {
-      var sumiram = ant.apps.filter(function (x) { return estado.apps.indexOf(x) === -1; });
+      // "Sumiu" = saiu da janela de retenção (7 dias). Para app raro isso é só silêncio, não defeito:
+      // Swile BR (recarga mensal), Itaú, Zeldar e o "Teste do Jarvis" de um teste manual viraram
+      // "Parei de receber notificações de..." falado em voz alta (27/09, 29/09, 01/10). Só conta app
+      // que chegava com regularidade (>= 5 na janela). Snapshot antigo, sem contagem: não acusa.
+      var sumiram = ant.apps.filter(function (x) {
+        return estado.apps.indexOf(x) === -1 && ant.contagem && Number(ant.contagem[x] || 0) >= 5;
+      });
       if (sumiram.length) achados.push({ chave: 'app_sumiu', severidade: 'alta',
         texto: 'Parei de receber notificações de ' + sumiram.join(', ') + '.' });
     }
@@ -7517,6 +7589,12 @@ function configurarProativo(args) {
 /** TELEMETRIA PERIÓDICA · pinga o webhook jarvis_telemetria do MacroDroid; a macro responde POSTando
  *  o status atual do aparelho na rota action:'telemetria'. Instalado a cada 15 min por configurarPingTelemetria(). */
 function pingTelemetria() {
+  var _t0 = Date.now();
+  try { return _pingTelemetria(); }
+  finally { try { if (typeof Heartbeat !== 'undefined' && Heartbeat.medir) Heartbeat.medir('pingTelemetria', _t0, null); } catch (e) {} }
+}
+// Corpo do ping (separado para o diário de gatilhos medir o handler inteiro).
+function _pingTelemetria() {
   var p = PropertiesService.getScriptProperties();
   var url = p.getProperty('MACRODROID_WEBHOOK_URL');
   if (!url) return { ok: false, erro: 'MACRODROID_WEBHOOK_URL ausente' };

@@ -120,7 +120,7 @@ tráfego interno; inclui `NOTIF` da fila de notificações) → rate limit globa
 `janela_notificacoes` / `fala_direta` / `config_fala` / `ler_debug` (todas com
 `VOICE_API_TOKEN`) → diag (`DIAG_TOKEN`). `config_fala` troca, por HTTP, só uma
 lista fechada de chaves da entrega da fala (`FALA_PROATIVA_LOCAL`,
-`FALA_RESPOSTAS_LOCAL`, `MODO_FALA_VOZ`, `FALA_VOLUME_DB` 0–16, `FALA_FORMATO`).
+`FALA_RESPOSTAS_LOCAL`, `MODO_FALA_VOZ`, `FALA_VOLUME_DB` 0–16, `FALA_FORMATO`, `FALA_ARQUIVO_UNICO`).
 
 ## Voz no Android (estado em 28/09/2026)
 
@@ -133,15 +133,18 @@ Conversa manda `rid` (`{system_time_ms}`); o servidor guarda a resposta por
 (`voz:repeticao` nos eventos). `rid` não numérico é ignorado
 (`voz:rid_invalido`).
 
-**Voz premium da nuvem, um arquivo por fala.** Estado ligado em 28/09:
+**Voz premium da nuvem, num arquivo só no celular.** Estado ligado em 28/09:
 `FALA_PROATIVA_LOCAL=nao`, `FALA_RESPOSTAS_LOCAL=nao`, `MODO_FALA_VOZ=auto`
 (confirmações rápidas de ação — "Abrindo o WhatsApp" — ainda saem pelo TTS do
 celular, que não chega atrasado; conteúdo, briefings e avisos vão pela nuvem).
 `controlarDispositivo('falar')` sintetiza (Cloud/Gemini TTS), grava no MESMO
 arquivo do Drive (ID estável) e dispara `jarvis_falar?id=<drive>&arq=<nome>`. A
-macro Falar v6 baixa pelo `{lv=id}` para `Download/Jarvis/{lv=arq}`
-(`jarvis_AAAA-MM-DD_HH-mm-ss[_briefing].ogg`) e toca esse arquivo — o dono
-reabre qualquer fala para ouvir de novo.
+macro Falar v6 baixa pelo `{lv=id}` para `Download/Jarvis/{lv=arq}` e toca esse
+arquivo. Desde 02/10 o `arq` é sempre `jarvis-fala.wav`: cada fala sobrescreve a
+anterior. Um arquivo por fala, com data e hora no nome, enchia o gerenciador de
+arquivos. O conteúdo pode ser OGG ou WAV; o Android reconhece pelo conteúdo, não
+pela extensão. Para voltar a um arquivo por fala, gravar `FALA_ARQUIVO_UNICO=nao`
+pelo `config_fala`.
 
 **O volume baixo era o canal, não o arquivo** (medido por adb em 28/09). A ação
 "Tocar som" do MacroDroid é `MediaPlayer.setAudioStreamType(canal)`. No canal 3

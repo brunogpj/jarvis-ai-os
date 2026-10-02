@@ -2769,9 +2769,18 @@ var Jarvis = (function () {
              * o Bruno pode abrir e ouvir de novo qualquer fala, não só a última. Vão `id` (a macro monta
              * a URL por ele — imune ao drift de ID) e `arq` (nome com data, hora e papel da fala).
              * Macros antigas ignoram a query e seguem com a URL fixa. */
-            var _extF = (fala && fala.spans && fala.spans.formato === 'wav') ? 'wav' : 'ogg';
-            var _arqF = 'jarvis_' + Utilities.formatDate(new Date(), 'America/Sao_Paulo', 'yyyy-MM-dd_HH-mm-ss') +
-                        (a.motor === 'briefing' ? '_briefing' : '') + '.' + _extF;
+            /* UM ARQUIVO SÓ (02/10). Um arquivo por fala enchia o gerenciador de arquivos do Android: só
+             * no dia 01/10 foram dezenas de .ogg. O Bruno pediu um arquivo que se sobrescreve a cada fala.
+             * O nome é fixo; o conteúdo pode ser OGG ou WAV, e o Android reconhece o tipo pelo conteúdo,
+             * não pela extensão (é o mesmo arquivo do Drive). FALA_ARQUIVO_UNICO=nao volta a um por fala. */
+            var _arqF;
+            if (String(PropertiesService.getScriptProperties().getProperty('FALA_ARQUIVO_UNICO') || 'sim').toLowerCase() !== 'nao') {
+              _arqF = 'jarvis-fala.wav';
+            } else {
+              var _extF = (fala && fala.spans && fala.spans.formato === 'wav') ? 'wav' : 'ogg';
+              _arqF = 'jarvis_' + Utilities.formatDate(new Date(), 'America/Sao_Paulo', 'yyyy-MM-dd_HH-mm-ss') +
+                      (a.motor === 'briefing' ? '_briefing' : '') + '.' + _extF;
+            }
             qs = 'id=' + encodeURIComponent(fala.id || '') + '&arq=' + encodeURIComponent(_arqF);
           } else {
             var triggerEvent = 'jarvis_' + acao;

@@ -78,10 +78,17 @@ var Heartbeat = (function () {
   }
 
   /** Re-arma o gatilho de um job que deveria rodar mas não tem trigger. Idempotente. */
-  function _rearmar(nome) {
+  function _rearmar(nome, forcar) {
     var j = JOBS[nome]; if (!j) return false;
     try {
       var tem = ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === j.handler; });
+      /* FORCAR = o gatilho EXISTE mas parou de executar. Em 07/10 o jobInsightDiario ficou 38 h sem
+       * bater (duas manhas perdidas) com o gatilho instalado, e o Heartbeat so re-armava gatilho
+       * AUSENTE: avisava a cada 6 h e nunca consertava. Apaga e recria. */
+      if (tem && forcar) {
+        ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === j.handler) { try { ScriptApp.deleteTrigger(t); } catch (eD) {} } });
+        tem = false;
+      }
       if (!tem) {
         if (j.diario) {
           var h = Number(P.getProperty('CURADORIA_HORA') || 5);
@@ -101,6 +108,10 @@ var Heartbeat = (function () {
     st.itens.forEach(function (i) {
       if (!i.atrasado) return;
       var rearmou = !i.temTrigger ? _rearmar(i.nome) : false;
+      // Gatilho DIARIO presente mas parado: recria, no maximo 1x por dia (nao entra em laco de recriar).
+      if (!rearmou && JOBS[i.nome] && JOBS[i.nome].diario) {
+        try { var ckF = CacheService.getScriptCache(), kF = 'hb_forcar_' + i.nome; if (!ckF.get(kF)) { ckF.put(kF, '1', 23 * 3600); rearmou = _rearmar(i.nome, true); } } catch (eF) {}
+      }
       // dedup do aviso: no máx 1 a cada 6h por job (não floodar o WhatsApp do dono).
       try { var ck = CacheService.getScriptCache(), chave = 'hb_aviso_' + i.nome; if (ck.get(chave)) return; ck.put(chave, '1', 6 * 3600); } catch (e) {}
       avisados.push({ nome: i.nome, idadeMin: i.idadeMin, rearmou: rearmou });

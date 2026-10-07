@@ -169,3 +169,27 @@ test('Relógio: "qual é o dia de hoje e quantas horas" traz data E hora (04/10:
   assert.strictEqual(s._interpretarFatoVoz('quantas horas eu trabalhei hoje'), null, 'não é o relógio');
   assert.strictEqual(s._interpretarFatoVoz('que horas eu bato o ponto'), null);
 });
+
+test('Heartbeat: gatilho DIÁRIO presente mas parado é recriado, uma vez por dia (07/10: insight 38 h sem bater)', function () {
+  var velho = String(Date.now() - 38 * 3600000);
+  var s = makeSandbox({ props: { CURADORIA_HORA: '5', HB_insight: velho, HB_agenda: String(Date.now()), HB_alertasVoz: String(Date.now()) } });
+  var apagados = 0, criados = [];
+  var trig = { getHandlerFunction: function () { return 'jobInsightDiario'; } };
+  s.ScriptApp = {
+    getProjectTriggers: function () { return apagados ? [] : [trig]; },
+    deleteTrigger: function () { apagados++; },
+    newTrigger: function (h) { var b = { timeBased: function () { return b; }, everyDays: function () { return b; }, atHour: function (x) { criados.push([h, x]); return b; }, everyMinutes: function () { return b; }, create: function () {} }; return b; }
+  };
+  s._avisarDono = function () {};
+  loadGasFile('Heartbeat.js', s);
+  var r = s.Heartbeat.verificarEAlertar();
+  assert.strictEqual(apagados, 1);
+  assert.deepStrictEqual(criados.map(function (c) { return [...c]; }), [['jobInsightDiario', 5]]);
+  assert.strictEqual(r.avisados[0].rearmou, true);
+  // segunda verificação no mesmo dia: não recria de novo
+  apagados = 0; criados.length = 0;
+  s.ScriptApp.getProjectTriggers = function () { return [trig]; };
+  s.CacheService.getScriptCache().put('x', 'y');   // garante que o cache de teste funciona
+  s.Heartbeat.verificarEAlertar();
+  assert.strictEqual(apagados, 0, 'no máximo 1x por dia');
+});

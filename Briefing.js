@@ -193,33 +193,47 @@ var Briefing = (function () {
     var _pr = PropertiesService.getScriptProperties();
     var regiao = String(_pr.getProperty('BRIEFING_REGIAO') || 'Belo Horizonte, a região metropolitana (Contagem, Betim e arredores) e Minas Gerais');
     f.regiao = regiao;
+    /* AS TRÊS PESQUISAS EM PARALELO (locais, nacionais, tempo). Em fila a coleta chegou a 243 s e o
+     * briefing das 21:00 de 06/10 morreu no teto do GAS sem falar (ver Gemini.pesquisarWebVarias).
+     * Sem pesquisarWebVarias (testes, versão antiga) cai na fila, igual a antes. */
+    var consultas = [], papeis = [];
     if (it.noticias && String(_pr.getProperty('BRIEFING_NOTICIAS_LOCAIS') || 'sim').toLowerCase() !== 'nao') {
-      try {
-        var rl = Gemini.pesquisarWeb('Quais são as notícias locais mais importantes e mais atuais de hoje, ' + data + ', em ' + regiao +
-          '? Priorize o que está em pauta na região: trânsito e transporte, segurança, saúde, obras, clima e chuvas, serviços públicos, ' +
-          'decisões da prefeitura e do governo do estado e acontecimentos que afetam quem mora lá. Traga de 3 a 5 fatos concretos, cada um em uma frase, ' +
-          'dizendo a cidade de cada um. Não inclua notícias nacionais nem de dias anteriores.');
-        f.locais = String((rl && rl.texto) || '').trim() || null;
-        f.locaisFontes = (rl && rl.fontes) || [];
-        if (!f.locais) f.locaisErro = 'pesquisa sem resultado';
-      } catch (e) { f.locaisErro = e.message; }
+      papeis.push('locais');
+      consultas.push('Quais são as notícias locais mais importantes e mais atuais de hoje, ' + data + ', em ' + regiao +
+        '? Priorize o que está em pauta na região: trânsito e transporte, segurança, saúde, obras, clima e chuvas, serviços públicos, ' +
+        'decisões da prefeitura e do governo do estado e acontecimentos que afetam quem mora lá. Traga de 3 a 5 fatos concretos, cada um em uma frase, ' +
+        'dizendo a cidade de cada um. Não inclua notícias nacionais nem de dias anteriores.');
     }
     if (it.noticias) {
-      try {
-        var r = Gemini.pesquisarWeb('Quais são as principais notícias do Brasil e do mundo publicadas hoje, ' + data +
-          '? Traga de 4 a 6 fatos concretos e recentes, cada um em uma frase, com o nome das pessoas e lugares envolvidos. Não inclua fatos de dias anteriores.');
-        f.noticias = String((r && r.texto) || '').trim() || null;
-        f.noticiasFontes = (r && r.fontes) || [];
-        if (!f.noticias) f.noticiasErro = 'pesquisa sem resultado';
-      } catch (e) { f.noticiasErro = e.message; }
+      papeis.push('noticias');
+      consultas.push('Quais são as principais notícias do Brasil e do mundo publicadas hoje, ' + data +
+        '? Traga de 4 a 6 fatos concretos e recentes, cada um em uma frase, com o nome das pessoas e lugares envolvidos. Não inclua fatos de dias anteriores.');
     }
     if (it.tempo) {
-      try {
-        var rt = Gemini.pesquisarWeb('Previsão do tempo para ' + it.cidade + ' hoje, ' + data + ': temperatura mínima e máxima e chance de chuva. Responda em uma frase.');
-        f.tempo = String((rt && rt.texto) || '').trim() || null;
-        if (!f.tempo) f.tempoErro = 'pesquisa sem resultado';
-      } catch (e) { f.tempoErro = e.message; }
+      papeis.push('tempo');
+      consultas.push('Previsão do tempo para ' + it.cidade + ' hoje, ' + data + ': temperatura mínima e máxima e chance de chuva. Responda em uma frase.');
     }
+    var respostas = [];
+    if (consultas.length) {
+      try {
+        if (typeof Gemini.pesquisarWebVarias === 'function') respostas = Gemini.pesquisarWebVarias(consultas);
+        else respostas = consultas.map(function (c) { try { return Gemini.pesquisarWeb(c); } catch (e) { return { erro: e.message }; } });
+      } catch (ePv) { respostas = consultas.map(function () { return { erro: ePv.message }; }); }
+    }
+    papeis.forEach(function (papel, i) {
+      var r = respostas[i] || { erro: 'sem resposta' };
+      var txt = String(r.texto || '').trim() || null;
+      if (papel === 'locais') {
+        f.locais = txt; f.locaisFontes = r.fontes || [];
+        if (!txt) f.locaisErro = r.erro || 'pesquisa sem resultado';
+      } else if (papel === 'noticias') {
+        f.noticias = txt; f.noticiasFontes = r.fontes || [];
+        if (!txt) f.noticiasErro = r.erro || 'pesquisa sem resultado';
+      } else {
+        f.tempo = txt;
+        if (!txt) f.tempoErro = r.erro || 'pesquisa sem resultado';
+      }
+    });
     if (it.biblia) {
       try {
         var refV = VERSICULOS_REFLEXAO[Math.floor(Math.random() * VERSICULOS_REFLEXAO.length)];

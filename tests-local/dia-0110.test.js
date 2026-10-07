@@ -95,3 +95,77 @@ test('Autodiag: snapshot antigo (sem contagem) não acusa ninguém', function ()
   var r = s._autodiagVerificar();
   assert.strictEqual(r.achados.filter(function (a) { return a.chave === 'app_sumiu'; }).length, 0);
 });
+
+// ───────────── 06/10: coleta do briefing em paralelo (a de fila chegou a 243 s e matou o das 21:00) ─────────────
+function geminiComFetchAll(o) {
+  var s = makeSandbox({ props: { GEMINI_API_KEY_FALLBACK: 'FREE1', GEMINI_API_KEY_FALLBACK2: 'FREE2' } });
+  s._lotes = []; s._unitarias = 0;
+  function resp(code, texto) {
+    return { getResponseCode: function () { return code; },
+      getContentText: function () { return code === 200 ? JSON.stringify({ candidates: [{ content: { parts: [{ text: texto }] } }] }) : '{"error":{"message":"x"}}'; } };
+  }
+  s.UrlFetchApp = {
+    fetchAll: function (reqs) { s._lotes.push(reqs.length); if (o.fetchAllErro) throw new Error('rede'); return reqs.map(function (r, i) { return o.paralelo ? o.paralelo(i, r) : resp(200, 'ok ' + i); }); },
+    fetch: function () { s._unitarias++; return resp(200, 'da fila'); }
+  };
+  return loadGasFile('Gemini.js', s);
+}
+
+test('pesquisarWebVarias: uma rodada em paralelo, na mesma ordem', function () {
+  var s = geminiComFetchAll({});
+  var r = s.Gemini.pesquisarWebVarias(['a', 'b', 'c']);
+  assert.deepStrictEqual([...s._lotes], [3]);
+  assert.strictEqual(s._unitarias, 0, 'nenhuma busca em fila');
+  assert.deepStrictEqual([r[0].texto, r[1].texto, r[2].texto], ['ok 0', 'ok 1', 'ok 2']);
+});
+
+test('pesquisarWebVarias: o que falhou no paralelo cai na cascata em fila; o resto fica', function () {
+  var s = geminiComFetchAll({ paralelo: function (i) {
+    return i === 1 ? { getResponseCode: function () { return 429; }, getContentText: function () { return '{}'; } }
+                   : { getResponseCode: function () { return 200; }, getContentText: function () { return JSON.stringify({ candidates: [{ content: { parts: [{ text: 'par ' + i }] } }] }); } };
+  } });
+  var r = s.Gemini.pesquisarWebVarias(['a', 'b', 'c']);
+  assert.deepStrictEqual([r[0].texto, r[1].texto, r[2].texto], ['par 0', 'da fila', 'par 2']);
+  assert.strictEqual(s._unitarias, 1);
+});
+
+test('pesquisarWebVarias: fetchAll quebrado → tudo pela cascata; falha total vira {erro}', function () {
+  var s = geminiComFetchAll({ fetchAllErro: true });
+  var r = s.Gemini.pesquisarWebVarias(['a', 'b']);
+  assert.deepStrictEqual([r[0].texto, r[1].texto], ['da fila', 'da fila']);
+  var s2 = makeSandbox({}); s2.UrlFetchApp = { fetchAll: function () { throw new Error('x'); }, fetch: function () { throw new Error('x'); } };
+  loadGasFile('Gemini.js', s2);
+  assert.ok(s2.Gemini.pesquisarWebVarias(['a', 'b'])[0].erro, 'sem chave nenhuma: devolve erro, não lança');
+});
+
+test('Briefing.coletar: locais, nacionais e tempo vão numa chamada só quando há pesquisarWebVarias', function () {
+  var s = briefing();
+  var lotes = [];
+  s.Gemini = { pesquisarWebVarias: function (qs) { lotes.push([...qs]); return qs.map(function (q, i) { return { texto: 'T' + i, fontes: ['f'] }; }); },
+               pesquisarWeb: function () { throw new Error('não devia usar a fila'); } };
+  s.CalendarApp = { getDefaultCalendar: function () { return { getEvents: function () { return []; } }; } };
+  var it = s.Briefing.intencoes('Bom dia. panorama da manha: manchetes do Brasil e do mundo, minha agenda de hoje e a previsao do tempo para Belo Horizonte');
+  var f = s.Briefing.coletar(it, new Date(Date.UTC(2026, 9, 6, 11, 30)));
+  assert.strictEqual(lotes.length, 1);
+  assert.strictEqual(lotes[0].length, 3);
+  assert.match(lotes[0][0], /notícias locais/); assert.match(lotes[0][1], /Brasil e do mundo/); assert.match(lotes[0][2], /Previsão do tempo/);
+  assert.deepStrictEqual([f.locais, f.noticias, f.tempo], ['T0', 'T1', 'T2']);
+});
+
+test('Briefing.coletar: uma pesquisa com {erro} marca só a sua fonte', function () {
+  var s = briefing();
+  s.Gemini = { pesquisarWebVarias: function (qs) { return qs.map(function (q, i) { return i === 1 ? { erro: 'cota' } : { texto: 'ok', fontes: [] }; }); } };
+  s.CalendarApp = { getDefaultCalendar: function () { return { getEvents: function () { return []; } }; } };
+  var it = s.Briefing.intencoes('Bom dia. panorama da manha: manchetes do Brasil e do mundo, minha agenda de hoje e a previsao do tempo para Belo Horizonte');
+  var f = s.Briefing.coletar(it, new Date(Date.UTC(2026, 9, 6, 11, 30)));
+  assert.strictEqual(f.locais, 'ok'); assert.strictEqual(f.noticias, null); assert.strictEqual(f.noticiasErro, 'cota'); assert.strictEqual(f.tempo, 'ok');
+});
+
+test('Relógio: "qual é o dia de hoje e quantas horas" traz data E hora (04/10: só vinha a data)', function () {
+  var s = code({});
+  var f = s._interpretarFatoVoz('qual é o dia de hoje e quantas horas');
+  assert.strictEqual(f.via, 'relogio'); assert.strictEqual(f.hora, true); assert.strictEqual(f.data, true);
+  assert.strictEqual(s._interpretarFatoVoz('quantas horas são').hora, true);
+  assert.strictEqual(s._interpretarFatoVoz('quantas horas eu trabalhei hoje'), null, 'não é o relógio');
+  assert.strictEqual(s._interpretarFatoVoz('que horas eu bato o ponto'), null);
+});

@@ -196,8 +196,12 @@ var Gemini = (function () {
     var modelos = [(_p('GEMINI_SEARCH_MODEL') || 'gemini-2.5-flash'), 'gemini-2.0-flash']
       .filter(function (x, i, a) { return x && a.indexOf(x) === i; });
     var r = _fetchComCascata('busca web', payload, modelos);
-    var data = r.data;
-    var cand = data.candidates && data.candidates[0];
+    return _lerBusca(r.data);
+  }
+
+  /** Texto e fontes de uma resposta com grounding do Google Search. */
+  function _lerBusca(data) {
+    var cand = data && data.candidates && data.candidates[0];
     var texto = (cand && cand.content && cand.content.parts ? cand.content.parts.map(function (p) { return p.text || ''; }).join('') : '').trim();
     var fontes = [];
     try {
@@ -205,6 +209,49 @@ var Gemini = (function () {
       fontes = chunks.map(function (c) { return c.web && (c.web.title ? (c.web.title + ' — ' + c.web.uri) : c.web.uri); }).filter(Boolean).slice(0, 6);
     } catch (e) {}
     return { texto: texto, fontes: fontes };
+  }
+
+  /**
+   * VÁRIAS pesquisas na web AO MESMO TEMPO (UrlFetchApp.fetchAll). Cada busca com grounding leva de
+   * 30 a 120 s; o briefing fazia três em fila e a coleta chegou a 243 s (06/10, noite) — somada à
+   * redação e à síntese estourou os 360 s do GAS: o briefing das 21:00 gerou o texto e morreu sem
+   * falar, e o das 8:30 do mesmo dia nem deixou rastro. Em paralelo o custo é o da mais lenta.
+   * Usa a 1ª chave free fora de cooldown; o que falhar (429, 5xx, rede) cai na cascata completa,
+   * em fila, como sempre. @param {string[]} consultas @return [{texto,fontes} | {erro}] na mesma ordem.
+   */
+  function pesquisarWebVarias(consultas) {
+    consultas = (consultas || []).map(String);
+    var out = consultas.map(function () { return null; });
+    try {
+      var modelo = _p('GEMINI_SEARCH_MODEL') || 'gemini-2.5-flash';
+      var cache = null; try { cache = CacheService.getScriptCache(); } catch (eC) {}
+      var chave = null, vistas = {};
+      _tentativas().forEach(function (t) {
+        if (chave || vistas[t.key]) return; vistas[t.key] = 1;
+        var ck = 'g429s_buscaweb_' + modelo + '_' + String(t.key).slice(-8);
+        var frio = false; try { frio = !!(cache && cache.get(ck)); } catch (eG) {}
+        if (!frio) chave = { key: t.key, ck: ck };
+      });
+      if (chave && consultas.length > 1) {
+        var url = 'https://generativelanguage.googleapis.com/v1beta/models/' + modelo + ':generateContent?key=' + encodeURIComponent(chave.key);
+        var reqs = consultas.map(function (c) {
+          return { url: url, method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+            payload: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: c }] }], tools: [{ google_search: {} }], generationConfig: { temperature: 0.3 } }) };
+        });
+        var resps = UrlFetchApp.fetchAll(reqs);
+        resps.forEach(function (res, i) {
+          try {
+            var code = res.getResponseCode();
+            if (code === 200) { var b = _lerBusca(JSON.parse(res.getContentText() || '{}')); if (b.texto) out[i] = b; }
+            else if (code === 429) { try { if (cache) cache.put(chave.ck, '1', 600); } catch (eW) {} }
+          } catch (eR) {}
+        });
+      }
+    } catch (ePar) {}
+    return out.map(function (o, i) {
+      if (o) return o;
+      try { return pesquisarWeb(consultas[i]); } catch (e) { return { erro: e.message }; }
+    });
   }
 
   /**
@@ -453,7 +500,7 @@ var Gemini = (function () {
     return null;
   }
 
-  return { gerar: gerar, temChave: temChave, gerarImagem: gerarImagem, pesquisarWeb: pesquisarWeb, lerUrl: lerUrl, embeddar: embeddar, gerarTextoFallback: gerarTextoFallback };
+  return { gerar: gerar, temChave: temChave, gerarImagem: gerarImagem, pesquisarWeb: pesquisarWeb, pesquisarWebVarias: pesquisarWebVarias, lerUrl: lerUrl, embeddar: embeddar, gerarTextoFallback: gerarTextoFallback };
 })();
 
 /** Diagnóstico do MODO RESERVA: testa os provedores alternativos (Anthropic/OpenRouter/NVIDIA). Rode no editor. */

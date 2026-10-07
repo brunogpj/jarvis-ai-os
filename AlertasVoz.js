@@ -276,6 +276,10 @@ var AlertasVoz = (function () {
              * manchetes (o mesmo texto nos dois dias). O Briefing busca tudo no código e só usa o
              * modelo para redigir notícias. Sem volta para o ask em caso de falha: melhor dizer que
              * não conseguiu do que falar algo inventado. */
+            /* RASTRO DE INÍCIO. Em 06/10 o briefing das 8:30 não deixou NENHUM evento e o das 21:00 deixou só
+             * as fontes: se o GAS mata a execução no teto de 6 min, nada é registrado depois. Com este
+             * evento, "iniciou e não terminou" aparece nos logs (início sem alertaVoz:briefing* depois). */
+            try { if (typeof Jarvis !== 'undefined' && Jarvis.registrarEvento) Jarvis.registrarEvento({ tool: 'briefing:inicio', ok: true, ms: 0, resumo: String(a.tag || '') }); } catch (eIn) {}
             try {
               var _bg = Briefing.gerar(a);
               gerado = String((_bg && _bg.texto) || '');

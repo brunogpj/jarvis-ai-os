@@ -5559,7 +5559,10 @@ function _interpretarFatoVoz(msg) {
   // "que horas eu bato o ponto" e "que horas é a reunião" NÃO são o relógio: o pedido tem de
   // TERMINAR na pergunta (a limpeza acima já tirou "agora", "jarvis", "por favor").
   var hora = /(^|\b)que horas? (sao|e|eh)$/.test(s) || /\bhoras? (de )?(atual|certa)\b/.test(s) ||
-             /\b(fala|diz|diga|informa|fale)\w* (a |que )?horas?$/.test(s) || /^horas?$/.test(s);
+             /\b(fala|diz|diga|informa|fale)\w* (a |que )?horas?$/.test(s) || /^horas?$/.test(s) ||
+             // 04/10: "qual e o dia de hoje e quantas horas" respondeu so a data. "quantas horas" so conta
+             // no FIM do pedido ("quantas horas eu trabalhei" nao e o relogio).
+             /\b(e )?(quantas|que) horas( sao| e)?$/.test(s);
   var data = /\bque dia (e|eh) hoje$/.test(s) || /\bhoje e que dia$/.test(s) || /\bque data e hoje$/.test(s) ||
              /\b(data|dia) (de hoje|atual)\b/.test(s) || /\b(fala|diz|diga|informa|fale)\w* (a )?data$/.test(s);
   // Pedido composto: "me diga a data e a hora", "fala o dia e a hora", "qual a data de hoje".

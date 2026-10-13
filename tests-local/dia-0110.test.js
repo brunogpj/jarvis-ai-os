@@ -154,7 +154,7 @@ test('Briefing.coletar: locais, nacionais e tempo vão numa chamada só quando h
 
 test('Briefing.coletar: uma pesquisa com {erro} marca só a sua fonte', function () {
   var s = briefing();
-  s.Gemini = { pesquisarWebVarias: function (qs) { return qs.map(function (q, i) { return i === 1 ? { erro: 'cota' } : { texto: 'ok', fontes: [] }; }); } };
+  s.Gemini = { pesquisarWebVarias: function (qs) { return qs.map(function (q, i) { return i === 1 ? { erro: 'cota' } : { texto: 'ok', fontes: ['f'] }; }); } };
   s.CalendarApp = { getDefaultCalendar: function () { return { getEvents: function () { return []; } }; } };
   var it = s.Briefing.intencoes('Bom dia. panorama da manha: manchetes do Brasil e do mundo, minha agenda de hoje e a previsao do tempo para Belo Horizonte');
   var f = s.Briefing.coletar(it, new Date(Date.UTC(2026, 9, 6, 11, 30)));
@@ -192,4 +192,171 @@ test('Heartbeat: gatilho DIÁRIO presente mas parado é recriado, uma vez por di
   s.CacheService.getScriptCache().put('x', 'y');   // garante que o cache de teste funciona
   s.Heartbeat.verificarEAlertar();
   assert.strictEqual(apagados, 0, 'no máximo 1x por dia');
+});
+
+// ───────────── 12/10 (feriado): ele disse que não trabalhava e o Jarvis seguiu lembrando e cobrando o ponto ─────────────
+test('Folga: as frases reais de 12/10 viram folga de hoje; o turno da mesma frase também vale', function () {
+  var s = code({});
+  var f1 = s._interpretarFolgaPonto('Jarvis eu não trabalho no final do feriado e hoje A partir dessa semana o meu horário será no turno da tarde');
+  assert.deepStrictEqual([...f1.dias], ['hoje']);
+  assert.strictEqual(s._interpretarTurnoTrabalho('Jarvis eu não trabalho no final do feriado e hoje A partir dessa semana o meu horário será no turno da tarde'), 'tarde');
+  var f2 = s._interpretarFolgaPonto('hoje é feriado hoje eu não trabalho então não preciso de me lembrar dos horários de marcar o ponto');
+  assert.deepStrictEqual([...f2.dias], ['hoje']);
+  assert.deepStrictEqual([...s._interpretarFolgaPonto('amanhã estou de folga').dias], ['amanha']);
+  assert.deepStrictEqual([...s._interpretarFolgaPonto('hoje e amanhã é feriado').dias], ['hoje', 'amanha']);
+  assert.strictEqual(s._preverRotaDeterministica('hoje é feriado e eu não trabalho'), 'folga_ponto');
+});
+
+test('Folga: pergunta, "vou trabalhar" e frase sem dia NÃO viram folga', function () {
+  var s = code({});
+  ['hoje é feriado?', 'será que hoje é feriado', 'qual feriado é hoje', 'hoje eu vou trabalhar', 'hoje eu trabalho normal',
+   'hoje é feriado mas vou trabalhar', 'mesmo sendo feriado hoje eu trabalho', 'estou de folga', 'que horas eu bato o ponto hoje',
+   'me lembra de bater o ponto hoje', 'marca uma reunião amanhã'].forEach(function (f) {
+    assert.strictEqual(s._interpretarFolgaPonto(f), null, f);
+  });
+});
+
+test('Folga: definirFolgaPonto grava a DATA, descarta as passadas e mantém as futuras', function () {
+  var s = code({ props: { PONTO_FOLGAS: '2020-01-01,2099-12-31' } });
+  s.Utilities.formatDate = function (d, tz, p) { var x = new Date(d.getTime() - 3 * 3600e3); return x.toISOString().slice(0, 10); };
+  var r = s.definirFolgaPonto({ dias: ['hoje'] });
+  assert.ok(r.ok);
+  assert.match(r.resumo, /hoje é folga/);
+  var salvas = s.PropertiesService.getScriptProperties().getProperty('PONTO_FOLGAS').split(',');
+  assert.ok(salvas.indexOf('2020-01-01') === -1, 'data passada saiu');
+  assert.ok(salvas.indexOf('2099-12-31') !== -1, 'data futura ficou');
+  assert.strictEqual(salvas.length, 2);
+  assert.strictEqual(s._pontoEFolga(salvas.filter(function (d) { return d !== '2099-12-31'; })[0]), true);
+});
+
+test('Folga: o tick NÃO fala o ponto num dia de folga, e fala os outros alertas', function () {
+  var falas = [];
+  var s = makeSandbox({});
+  s.Utilities.formatDate = function (d, tz, p) {
+    var x = new Date(d.getTime() - 3 * 3600e3), z = function (n) { return (n < 10 ? '0' : '') + n; }, dow = x.getUTCDay() || 7;
+    return String(p).replace('yyyy', x.getUTCFullYear()).replace('MM', z(x.getUTCMonth() + 1)).replace('dd', z(x.getUTCDate()))
+      .replace(/^H$/, String(x.getUTCHours())).replace(/^m$/, String(x.getUTCMinutes())).replace(/^u$/, String(dow))
+      .replace(/HH:mm:ss$/, z(x.getUTCHours()) + ':' + z(x.getUTCMinutes()) + ':' + z(x.getUTCSeconds()));
+  };
+  s.Jarvis.controlarDispositivo = function (a) { falas.push(a.texto); return { status: 'success' }; };
+  loadGasFile('AlertasVoz.js', s);
+  var agora = new Date(), hoje = s.Utilities.formatDate(agora, '', 'yyyy-MM-dd');
+  var h = Number(s.Utilities.formatDate(agora, '', 'H')), m = Number(s.Utilities.formatDate(agora, '', 'm'));
+  s.PropertiesService.getScriptProperties().setProperty('ALERTAS_VOZ', JSON.stringify([
+    { id: 'p1', hora: h, minuto: m, dias: [], texto: 'Bruno, lembre-se de marcar o ponto.', ativo: true, ult: '', tag: 'ponto' },
+    { id: 'a1', hora: h, minuto: m, dias: [], texto: 'beber água', ativo: true, ult: '', tag: 'avulso' }]));
+  s.PropertiesService.getScriptProperties().setProperty('PONTO_FOLGAS', hoje);
+  s.AlertasVoz.tick();
+  assert.deepStrictEqual([...falas], ['beber água']);
+});
+
+test('Folga: a cobrança "ponto ausente" também cala no dia de folga', function () {
+  var s = code({});
+  s.Utilities.formatDate = function (d, tz, p) { return p === 'yyyy-MM-dd' ? '2026-10-12' : '12'; };
+  s.PropertiesService.getScriptProperties().setProperty('PONTO_FOLGAS', '2026-10-12');
+  assert.strictEqual(s._pontoEFolga('2026-10-12'), true);
+  assert.strictEqual(s._pontoEFolga('2026-10-13'), false);
+});
+
+test('Despertador: avisa feriado nacional; dia comum não leva o aviso', function () {
+  var s = code({});
+  assert.strictEqual(s._feriadoNacional(2026, 9, 12), 'Nossa Senhora Aparecida');
+  assert.strictEqual(s._feriadoNacional(2026, 3, 3), 'Sexta-feira Santa', 'Páscoa 2026 = 5/4');
+  assert.strictEqual(s._feriadoNacional(2026, 9, 13), null);
+  s.CalendarApp = { getDefaultCalendar: function () { return { getEvents: function () { return []; } }; } };
+  assert.match(s._falarDespertador(new Date(Date.UTC(2026, 9, 12, 9, 0))), /Hoje é feriado nacional: Nossa Senhora Aparecida\./);
+  assert.ok(!/feriado/.test(s._falarDespertador(new Date(Date.UTC(2026, 9, 13, 9, 0)))));
+});
+
+test('Briefing.coletar: pesquisa SEM fonte não entra (11/10: "não temos notícias locais" com 0 fontes)', function () {
+  var s = briefing();
+  s.Gemini = { pesquisarWebVarias: function (qs) { return qs.map(function (q, i) {
+    return i === 0 ? { texto: 'Não foi possível encontrar notícias locais para hoje.', fontes: [] } : { texto: 'Fato real.', fontes: ['x — https://a'] }; }); } };
+  s.CalendarApp = { getDefaultCalendar: function () { return { getEvents: function () { return []; } }; } };
+  var it = s.Briefing.intencoes('Bom dia. panorama da manha: manchetes do Brasil e do mundo, minha agenda de hoje e a previsao do tempo para Belo Horizonte');
+  var f = s.Briefing.coletar(it, new Date(Date.UTC(2026, 9, 12, 11, 30)));
+  assert.strictEqual(f.locais, null);
+  assert.match(f.locaisErro, /sem fonte/);
+  assert.strictEqual(f.noticias, 'Fato real.');
+});
+
+test('pesquisarWebVarias: passou do orçamento de tempo → não repete a busca em fila', function () {
+  var s = geminiComFetchAll({ paralelo: function () { return { getResponseCode: function () { return 500; }, getContentText: function () { return '{}'; } }; } });
+  var agora = Date.now, falso = agora();
+  var chamadas = 0;
+  s.UrlFetchApp.fetch = function () { chamadas++; falso += 70000; s.Date = s.Date; return { getResponseCode: function () { return 200; }, getContentText: function () { return JSON.stringify({ candidates: [{ content: { parts: [{ text: 'fila' }] } }] }); } }; };
+  // simula o relógio andando 70 s por busca em fila: a 1ª passa, a 2ª já estoura os 100 s
+  var D = Date; s.Date = function () { return new D(falso); }; s.Date.now = function () { return falso; };
+  var r = s.Gemini.pesquisarWebVarias(['a', 'b', 'c']);
+  assert.strictEqual(r[0].texto, 'fila');
+  assert.ok(r[2].erro, 'a última ficou sem repetir');
+  assert.ok(chamadas < 3);
+});
+
+// ───────────── 13/10: briefing perdido (aviso de bateria por cima; MacroDroid morto por update do WebView) ─────────────
+test('Repetir briefing: frases reais pedem; criar/agendar e frases sem briefing não', function () {
+  var s = code({});
+  ['repete o briefing', 'Jarvis não ouvi o briefing', 'perdi o briefing da manhã', 'fala o briefing de novo', 'o briefing cortou no meio',
+   'repita o resumo do dia', 'não escutei o briefing', 'Pet o briefing', 'rep o briefing'].forEach(function (f) { assert.strictEqual(s._interpretarRepetirBriefing(f), true, f); });
+  ['cria um briefing às 9h', 'agenda o briefing para amanhã', 'repete a última frase', 'me fala o briefing', 'cancela o briefing',
+   'que horas são', 'não ouvi o que você disse'].forEach(function (f) { assert.strictEqual(s._interpretarRepetirBriefing(f), null, f); });
+  assert.strictEqual(s._preverRotaDeterministica('repete o briefing'), 'repetir_briefing');
+});
+
+function sandboxAlertas(falas) {
+  var s = makeSandbox({});
+  s.Utilities.formatDate = function (d, tz, p) {
+    var x = new Date(d.getTime() - 3 * 3600e3), z = function (n) { return (n < 10 ? '0' : '') + n; }, dow = x.getUTCDay() || 7;
+    return String(p).replace('yyyy', x.getUTCFullYear()).replace('MM', z(x.getUTCMonth() + 1)).replace('dd', z(x.getUTCDate()))
+      .replace(/^H$/, String(x.getUTCHours())).replace(/^m$/, String(x.getUTCMinutes())).replace(/^u$/, String(dow))
+      .replace(/HH:mm:ss$/, z(x.getUTCHours()) + ':' + z(x.getUTCMinutes()) + ':' + z(x.getUTCSeconds()));
+  };
+  s.Jarvis.controlarDispositivo = function (a) { falas.push({ texto: a.texto, motor: a.motor }); return { status: 'success' }; };
+  loadGasFile('AlertasVoz.js', s);
+  return s;
+}
+
+test('Repetir briefing: sem briefing guardado devolve erro claro; com ele, cria alerta literal de 1 min na voz do briefing', function () {
+  var falas = [], s = sandboxAlertas(falas);
+  assert.strictEqual(s.AlertasVoz.repetirBriefing().ok, false);
+  var texto = 'Boa tarde, Bruno. Hoje é 13 de outubro, terça-feira, e às 14:00 há uma coisa. Para encerrar, João 14:27: a paz vos deixo.';
+  s.PropertiesService.getScriptProperties().setProperty('ULTIMO_BRIEFING', JSON.stringify({ em: Date.now(), tag: 'briefing', texto: texto }));
+  var r = s.AlertasVoz.repetirBriefing();
+  assert.strictEqual(r.ok, true);
+  var a = s.AlertasVoz.listar()[0];
+  assert.strictEqual(a.texto, texto, 'texto literal, sem virar "dinâmico" por causa de data/hora no texto');
+  assert.ok(!a.dinamico);
+  assert.strictEqual(a.tag, 'briefing_repeticao');
+  // o texto antigo (mais de um dia) não é repetido
+  s.PropertiesService.getScriptProperties().setProperty('ULTIMO_BRIEFING', JSON.stringify({ em: Date.now() - 30 * 3600000, tag: 'briefing', texto: texto }));
+  assert.strictEqual(s.AlertasVoz.repetirBriefing().ok, false);
+});
+
+test('Briefing falado com sucesso fica guardado em ULTIMO_BRIEFING; falha não guarda', function () {
+  var falas = [], s = sandboxAlertas(falas);
+  s.Briefing = { gerar: function () { return { texto: 'Boa noite, Bruno. Notícia importante do dia, com texto suficiente.', rastro: {} }; } };
+  var agora = new Date();
+  var h = Number(s.Utilities.formatDate(agora, '', 'H')), m = Number(s.Utilities.formatDate(agora, '', 'm'));
+  s.PropertiesService.getScriptProperties().setProperty('ALERTAS_VOZ', JSON.stringify([
+    { id: 'b1', hora: h, minuto: m, dias: [], texto: 'instrução', ativo: true, ult: '', tag: 'briefing_noite', dinamico: true }]));
+  s.AlertasVoz.tick();
+  var ub = JSON.parse(s.PropertiesService.getScriptProperties().getProperty('ULTIMO_BRIEFING'));
+  assert.strictEqual(ub.tag, 'briefing_noite');
+  assert.match(ub.texto, /^Boa noite, Bruno\./);
+  assert.strictEqual(falas[0].motor, 'briefing');
+});
+
+test('Repetir briefing: nada guardado → refaz um briefing NOVO a partir do alerta que falou hoje (plano B)', function () {
+  var falas = [], s = sandboxAlertas(falas);
+  var hoje = s.Utilities.formatDate(new Date(), '', 'yyyy-MM-dd');
+  s.PropertiesService.getScriptProperties().setProperty('ALERTAS_VOZ', JSON.stringify([
+    { id: 'm1', hora: 8, minuto: 30, dias: [], texto: 'Bom dia, Bruno. Faca o panorama da manha', ativo: true, ult: '', tag: 'briefing_manha', dinamico: true,
+      ultResultado: { em: hoje + ' 08:30:25', ok: true, erro: null } },
+    { id: 'n1', hora: 21, minuto: 0, dias: [], texto: 'Boa noite, Bruno. Fechamento do dia', ativo: true, ult: '', tag: 'briefing_noite', dinamico: true,
+      ultResultado: { em: '2020-01-01 21:00:00', ok: true, erro: null } }]));
+  var r = s.AlertasVoz.repetirBriefing();
+  assert.strictEqual(r.ok, true); assert.strictEqual(r.novo, true); assert.strictEqual(r.de, 'briefing_manha');
+  var nova = s.AlertasVoz.listar().filter(function (a) { return a.tag === 'briefing_repeticao'; })[0];
+  assert.strictEqual(nova.dinamico, true);
+  assert.match(nova.texto, /panorama da manha/);
 });

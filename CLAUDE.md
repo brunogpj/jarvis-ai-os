@@ -190,6 +190,27 @@ consultado e ms por etapa). Ensaiar sem falar: `ler_debug` com
 frase que afirma agenda/tarefas do dono sem ferramenta de agenda com sucesso
 no MESMO turno é cortada, com aviso; evento `hook:agenda_sem_fonte`.
 
+**Fila de falas** (`controlarDispositivo('falar')`): a fala nova espera a anterior
+acabar, **fora do lock**, em passos de 15 s, até 110 s. A duração vem do áudio (WAV
+do Gemini = bytes/48 ms; OGG ≈ 14 caracteres/s; teto 150 s). Antes dormia no
+máximo 30 s com o lock na mão e passava por cima de briefings longos (13/10).
+Briefing perdido: `ULTIMO_BRIEFING` guarda o texto do último falado, e a voz
+"repete o briefing" (`repetir_briefing`) agenda a repetição em 1 min; sem nada
+guardado, refaz um novo. Se o áudio parar no meio sem fala por cima, procurar
+`Killing ... com.arlosoft.macrodroid` no `adb logcat`: em 13/10 a Play Store
+atualizou o WebView e o Android matou o MacroDroid.
+
+**Folga e feriado** (`folga_ponto`): "hoje é feriado / não trabalho hoje / amanhã
+estou de folga" grava o dia em `PONTO_FOLGAS`; o tick e a cobrança "ponto
+ausente" calam nesse dia. O Jarvis não pula o ponto sozinho em feriado (ele pode
+trabalhar); o despertador só avisa "Hoje é feriado nacional: X". `PONTO_PAUSA_ATE`
+continua valendo para férias.
+
+**Briefing sem fonte não entra**: pesquisa sem páginas lidas é descartada, e as
+três buscas rodam em paralelo (`Gemini.pesquisarWebVarias`). Evento
+`briefing:inicio` marca o começo; início sem `alertaVoz:briefing*` depois = a
+execução morreu no teto de 6 min.
+
 **Notificações do celular** entram numa fila (`_notifEnfileirar`) e são
 processadas por loopback + tick de 1 min; janela de fala padrão 06:00–22:00.
 
@@ -262,7 +283,7 @@ o histórico. Então:
   genérico no teste do lembrete relativo).
 - O `README.md` é o que um recrutador lê primeiro. O projeto Jarvis no
   LinkedIn e o README do perfil do GitHub citam "147 testes automatizados"
-  (o repo tem 174 desde 07/10 — a frase segue verdadeira como piso);
+  (o repo tem 186 desde 13/10 — a frase segue verdadeira como piso);
   se a contagem mudar muito, avise o dono para atualizar lá também.
 - Nada sobre o empregador nem sobre sistemas internos de trabalho entra aqui.
 
@@ -311,7 +332,7 @@ público").
 cd tests-local && node --test
 ```
 
-174 testes offline (sem cota, sem rede) sobre a lógica determinística: MODO
+186 testes offline (sem cota, sem rede) sobre a lógica determinística: MODO
 DIRETO, gate sem-cota, hooks, parsing de turno/briefing, validação de prefs,
 ordenação dos cards, cadeia da voz, lembrete relativo e alertas de uma vez só,
 `_urlParaMacro`, `lerBiblia`, briefing com dados reais e trava de agenda
@@ -319,7 +340,7 @@ inventada (`tests-local/briefing.test.js`), despertador composto, teto de
 caracteres da voz no briefing e autodiagnóstico sem alarme de app raro
 (`tests-local/dia-0110.test.js`). `tests-local/gas-shims.js` simula as
 APIs do GAS (`formatDate` é fixo: teste que depende de horário injeta o seu).
-Estado em 07/10/2026: **174/174 passando**.
+Estado em 13/10/2026: **186/186 passando**.
 
 Contra o sistema vivo, pelo terminal: `ler_debug` (POST com `VOICE_API_TOKEN`,
 `n` até 200, `alertas:true`, `notificacoes:N`, `ensaioBriefing:'<tag>'`, `gatilhos:true`,

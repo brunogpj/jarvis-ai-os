@@ -248,8 +248,12 @@ var Gemini = (function () {
         });
       }
     } catch (ePar) {}
+    // Reenvio em fila só enquanto há tempo: cada busca lenta leva até 2 min e o briefing todo tem de caber nos
+    // 6 min do GAS (já passou de 3,5 min só na coleta em 11/10). Estourou o orçamento → a fonte fica de fora.
+    var t0 = Date.now();
     return out.map(function (o, i) {
       if (o) return o;
+      if (Date.now() - t0 > 100000) return { erro: 'sem tempo para repetir a busca' };
       try { return pesquisarWeb(consultas[i]); } catch (e) { return { erro: e.message }; }
     });
   }

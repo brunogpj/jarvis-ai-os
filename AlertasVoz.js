@@ -65,7 +65,7 @@ var AlertasVoz = (function () {
      * uma saudacao gerada na hora. So se aplica a texto FIXO; dinamico ja resolve isso sozinho.
      * Datas no texto de um alerta dinamico sao instrucao, nao conteudo, e ficam intactas. */
     var _dinamico = !!o.dinamico;
-    if (!_dinamico) {
+    if (!_dinamico && o.literal !== true) {   // literal: texto já pronto e datado de propósito (repetição de briefing)
       var _sT = String(texto).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
       var _temDiaSemana = /(segunda|terca|quarta|quinta|sexta|sabado|domingo)-?(feira)?/.test(_sT);
       var _temMes = /(janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)/.test(_sT);
@@ -208,6 +208,8 @@ var AlertasVoz = (function () {
       // ferias nao e motivo para deixar de receber as noticias do dia.
       var _pausaAte = String(PropertiesService.getScriptProperties().getProperty('PONTO_PAUSA_ATE') || '');
       var _pontoPausado = !!_pausaAte && (dia <= _pausaAte);
+      // Folga de UM dia (voz: "hoje é feriado, não trabalho"): property PONTO_FOLGAS com datas AAAA-MM-DD.
+      var _pontoFolgaHoje = String(PropertiesService.getScriptProperties().getProperty('PONTO_FOLGAS') || '').split(',').indexOf(dia) !== -1;
       var _unicosFeitos = {};
       arr.forEach(function (a) {
         if (a.ativo === false) return;
@@ -215,7 +217,7 @@ var AlertasVoz = (function () {
         if (a.data && a.data !== dia) { if (a.data < dia) { _unicosFeitos[a.id] = 1; mudou = true; } return; }
         // Reconhece ponto pela tag OU pelo texto: o conjunto da manha de 20/08 tinha sido criado
         // pelo LLM sem tag nenhuma, e por isso escapava de toda limpeza que so olhava a tag.
-        if (_pontoPausado && (a.tag === 'ponto' || /marcar (o )?ponto/i.test(String(a.texto || '')))) return;
+        if ((_pontoPausado || _pontoFolgaHoje) && (a.tag === 'ponto' || /marcar (o )?ponto/i.test(String(a.texto || '')))) return;
         var alvo = Number(a.hora) * 60 + Number(a.minuto || 0);
         var atraso = minutosAgora - alvo;
         if (atraso < 0 || atraso > TOLERANCIA_MIN) return;   // ainda não deu a hora, ou passou demais
@@ -319,6 +321,12 @@ var AlertasVoz = (function () {
             resumo: _ok ? fala : ('FALHOU: ' + _erro)
           });
         } catch (eEv) {}
+        // Guarda o último briefing FALADO: se o aparelho perder a fala (aviso por cima, MacroDroid morto), dá para repetir.
+        try {
+          if (_ok && a.dinamico && String(a.tag || '').indexOf('briefing') === 0) {
+            PropertiesService.getScriptProperties().setProperty('ULTIMO_BRIEFING', JSON.stringify({ em: Date.now(), tag: a.tag, texto: String(fala).slice(0, 2500) }));
+          }
+        } catch (eUb) {}
         // SÓ marca o dia como resolvido se falou. Falhou → o próximo tick tenta de novo, dentro da
         // janela de tolerância. É a diferença entre perder o alerta do dia e atrasá-lo um minuto.
         // Quando falha, LIBERA a guarda do cache junto: sem isso o alerta ficaria bloqueado pelos
@@ -338,6 +346,27 @@ var AlertasVoz = (function () {
 
   // Briefing (tag briefing, briefing_manha, briefing_noite...) usa o motor de briefing (voz calorosa, sem
   // pressa); qualquer outro alerta — ponto, lembrete — usa o de respostas (Cloud, segundos). Ver _falarNoCelular.
+  /** Repete o último briefing falado (alerta de uma vez só, 1 min). Texto literal, sem refazer a coleta. */
+  function repetirBriefing() {
+    var ub = null;
+    try { ub = JSON.parse(PropertiesService.getScriptProperties().getProperty('ULTIMO_BRIEFING') || 'null'); } catch (e) {}
+    // PLANO B: nada guardado (ou velho demais) → gera um briefing NOVO. O guarda-último só existe desde 13/10; antes
+    // disso, e depois de 24 h, "repete o briefing" respondia erro. Pega o alerta de briefing que mais recentemente falou
+    // hoje e refaz a coleta com a mesma instrução (um minuto, mesmo caminho dos briefings agendados).
+    if (!ub || !ub.texto || Date.now() - Number(ub.em || 0) > 24 * 3600000) {
+      var hoje = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+      var cand = _ler().filter(function (a) {
+        return a.ativo !== false && a.dinamico && String(a.tag || '').indexOf('briefing') === 0 && a.tag !== 'briefing_repeticao' &&
+               a.ultResultado && a.ultResultado.ok && String(a.ultResultado.em || '').slice(0, 10) === hoje;
+      }).sort(function (x, y) { return String(y.ultResultado.em).localeCompare(String(x.ultResultado.em)); })[0];
+      if (!cand) return { ok: false, erro: 'Não tenho briefing guardado nem um de hoje para refazer.' };
+      var rn = criar({ emMinutos: 1, texto: cand.texto, tag: 'briefing_repeticao', dinamico: true });
+      return rn && rn.ok ? { ok: true, de: cand.tag, novo: true } : { ok: false, erro: (rn && rn.erro) || 'Não consegui agendar o briefing.' };
+    }
+    var r = criar({ emMinutos: 1, texto: ub.texto, tag: 'briefing_repeticao', literal: true, unico: false });
+    return r && r.ok ? { ok: true, de: ub.tag } : { ok: false, erro: (r && r.erro) || 'Não consegui agendar a repetição.' };
+  }
+
   function _motorDaFala(a) { return String((a && a.tag) || '').indexOf('briefing') === 0 ? 'briefing' : null; }
 
   function _hhmm(h, m) { return (h < 10 ? '0' + h : h) + ':' + (m < 10 ? '0' + m : m); }
@@ -453,7 +482,7 @@ var AlertasVoz = (function () {
     try { return PropertiesService.getScriptProperties().getProperty('TURNO_TRABALHO_ATUAL') || null; } catch (e) { return null; }
   }
 
-  return { criar: criar, listar: listar, editar: editar, testar: testar, cancelar: cancelar, tick: tick,
+  return { criar: criar, repetirBriefing: repetirBriefing, listar: listar, editar: editar, testar: testar, cancelar: cancelar, tick: tick,
            reposicionarBriefing: reposicionarBriefing,
            definirTurno: definirTurno, interpretarTurno: interpretarTurno, turnoAtual: turnoAtual };
 })();

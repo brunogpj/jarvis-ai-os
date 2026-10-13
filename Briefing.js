@@ -223,6 +223,11 @@ var Briefing = (function () {
     papeis.forEach(function (papel, i) {
       var r = respostas[i] || { erro: 'sem resposta' };
       var txt = String(r.texto || '').trim() || null;
+      /* SEM FONTE = SEM BUSCA. O grounding devolve as páginas lidas; resposta sem nenhuma é o modelo falando de
+       * cabeça. Foi assim que o briefing de 11/10 abriu com "Não temos notícias locais de Belo Horizonte para
+       * hoje" (a pesquisa respondeu que não achou, com 0 fontes) e o de 05/10 trouxe "notícias nacionais" sem
+       * fonte. Notícia que não veio de página lida não entra: regra do projeto, a IA não fabrica fato. */
+      if (txt && !(r.fontes && r.fontes.length)) { txt = null; r = { erro: 'resposta sem fonte (busca não ancorada)' }; }
       if (papel === 'locais') {
         f.locais = txt; f.locaisFontes = r.fontes || [];
         if (!txt) f.locaisErro = r.erro || 'pesquisa sem resultado';

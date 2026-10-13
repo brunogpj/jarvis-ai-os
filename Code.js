@@ -3352,9 +3352,15 @@ function doPost(e) {
         var _perdi = (_voto === null && _ofr === null && _fato === null) ? _interpretarPerdi(msgVoz) : null;
         // (-1.5) SALDO/EXTRATO DO SWILE — determinístico. Número não passa pelo modelo.
         var _fin = (_voto === null && _ofr === null && _perdi === null) ? _interpretarFinanceiro(msgVoz) : null;
-        var _trn = (_voto === null && _ofr === null && _perdi === null && _fin === null) ? _interpretarTurnoTrabalho(msgVoz) : null;
-        var _insV = (_voto === null && _ofr === null && _perdi === null && _fin === null && _trn === null) ? _interpretarInsight(msgVoz) : null;
-        var _livre = (_fato === null && _voto === null && _ofr === null && _perdi === null && _fin === null && _trn === null && _insV === null);
+        // FOLGA/FERIADO: "hoje é feriado, não trabalho, não precisa me lembrar do ponto". Vem ANTES do turno
+        // porque a mesma frase pode trazer os dois ("não trabalho hoje, e a partir dessa semana é o turno da tarde").
+        // REPETIR O BRIEFING: "repete o briefing", "não ouvi o briefing". O briefing que o aparelho perdeu (aviso por cima,
+        // MacroDroid morto no meio) não se recupera de outro jeito: a fala seguinte sobrescreve o arquivo.
+        var _repB = (_voto === null && _ofr === null && _perdi === null && _fin === null) ? _interpretarRepetirBriefing(msgVoz) : null;
+        var _folga = (_voto === null && _ofr === null && _perdi === null && _fin === null) ? _interpretarFolgaPonto(msgVoz) : null;
+        var _trn = (_voto === null && _ofr === null && _perdi === null && _fin === null && _repB === null) ? _interpretarTurnoTrabalho(msgVoz) : null;
+        var _insV = (_voto === null && _ofr === null && _perdi === null && _fin === null && _trn === null && _folga === null) ? _interpretarInsight(msgVoz) : null;
+        var _livre = (_fato === null && _voto === null && _ofr === null && _perdi === null && _fin === null && _trn === null && _folga === null && _repB === null && _insV === null);
         var _viaJev = false;   // marcado se o roteamento semântico (JEV) atender no lugar do LLM
         var _notifPendentes = null;  // notificações do "o que eu perdi" AGUARDANDO confirmação de entrega
         var _lembC = _livre ? _interpretarLembreteCondicional(msgVoz) : null;
@@ -3380,6 +3386,21 @@ function doPost(e) {
               respVoz = _finFalarSaldo(_fin.carteira);
             }
           } catch (eFin) { respVoz = 'Não consegui consultar o saldo agora.'; }
+        } else if (_repB !== null) {
+          try {
+            var _rrb = AlertasVoz.repetirBriefing();
+            respVoz = _rrb.ok ? (_rrb.novo ? 'Não tenho o último guardado, então refaço um briefing novo em um minuto.' : 'Certo, repito o briefing em um minuto.') : _rrb.erro;
+          } catch (eRb) { respVoz = 'Não consegui repetir o briefing agora.'; }
+        } else if (_folga !== null) {
+          try {
+            var _rf = definirFolgaPonto({ dias: _folga.dias });
+            respVoz = (_rf && _rf.ok) ? _rf.resumo : ('Não consegui registrar a folga: ' + ((_rf && _rf.erro) || 'erro') + '.');
+            // A mesma frase pode mudar o turno ("a partir dessa semana é o turno da tarde"): faz as duas coisas.
+            if (_rf && _rf.ok && _trn !== null) {
+              var _rt2 = definirTurnoTrabalho({ turno: _trn });
+              respVoz += ' ' + ((_rt2 && _rt2.ok) ? _rt2.resumo : 'Não consegui trocar o turno.');
+            }
+          } catch (eFg) { respVoz = 'Não consegui registrar a folga agora.'; }
         } else if (_trn !== null) {
           // Chama a MESMA função da ferramenta (definirTurno), que limpa os alertas antigos por tag
           // e cria os 4 do turno numa operação só — em vez de o modelo criar um a um.
@@ -3547,6 +3568,8 @@ function doPost(e) {
         var _viaVoz =
             (_fato  !== null) ? _fato.via
           : (_fin   !== null) ? 'financeiro'
+          : (_repB  !== null) ? 'repetir_briefing'
+          : (_folga !== null) ? 'folga_ponto'
           : (_trn   !== null) ? 'turno'
           : (_insV  !== null) ? ('insight_' + _insV.acao)
           : (_perdi !== null) ? 'notificacoes'
@@ -5453,6 +5476,62 @@ function _insSalvarComoConceito() {
   } catch (e) { return { ok: false, erro: e.message }; }
 }
 
+/** "repete o briefing" / "não ouvi o briefing" → true. Exige a palavra do briefing E um sinal de repetição/perda. */
+function _interpretarRepetirBriefing(msg) {
+  var s = String(msg || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[?!.,;:]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!/\b(briefing|resumo do dia|resumo da manha|resumo da tarde|resumo da noite|panorama)\b/.test(s)) return null;
+  if (/\b(cri[ae]|agend|configur|mude|muda|cancel|desativ|ative|ativa|coloc|adicion)/.test(s)) return null;
+  // "pet o briefing": o reconhecimento de voz entendeu assim "repete o briefing" (13/10, caiu no modelo e ele inventou resposta).
+  return /\b(repet\w*|repit\w*|pet|rep|de novo|novamente|outra vez|perdi|nao (ouvi|escutei|consegui (ouvir|escutar))|cortou|cortado|interromp\w*|parou|travou)\b/.test(s) ? true : null;
+}
+
+/* FOLGA / FERIADO por voz — determinístico.
+ * Em 12/10 (feriado) ele avisou duas vezes que não trabalhava e o Jarvis seguiu lembrando e cobrando o
+ * ponto o dia todo: às 13:18 só o TURNO da frase foi aplicado ("hoje" foi ignorado) e às 14:02 o
+ * modelo respondeu "não vou te lembrar" SEM chamar ferramenta nenhuma — prometeu e não fez. A pausa
+ * de ponto já existia (configurarPausaPonto), mas nada na voz chegava nela.
+ * Exige o DIA (hoje/amanhã) + sinal de folga. Pergunta ("hoje é feriado?") e "vou trabalhar" não entram.
+ * → {dias:['hoje'|'amanha']} ou null. */
+function _interpretarFolgaPonto(msg) {
+  var bruto = String(msg || '');
+  var s = bruto.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[,;.!]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (/\?\s*$/.test(bruto.trim()) || /\b(sera que|qual|quais|quando|que dia|sera feriado)\b/.test(s)) return null;
+  var hoje = /\bhoje\b/.test(s), amanha = /\bamanha\b/.test(s);
+  if (!hoje && !amanha) return null;
+  // trabalha mesmo assim → não é folga ("hoje vou trabalhar", "trabalho normal", "mesmo sendo feriado")
+  if (/(?<!nao )(?<!nao vou )\b(vou trabalhar|trabalho normal|trabalho mesmo|trabalhando)\b/.test(s) || /\bmesmo (sendo|com|no) feriado\b/.test(s)) return null;
+  var folga = /\bferiado\b|\bfolga\b|\bsem expediente\b|\bde (atestado|ferias)\b|\bnao (vou |irei |estou |to |tenho )?(trabalh|expediente)|\bnao (preciso|precisa|tenho que|devo|e preciso)( de)? (me )?(lembr|bat|marc)|\bnao me lembr/.test(s);
+  if (!folga) return null;
+  var dias = [];
+  if (hoje) dias.push('hoje');
+  if (amanha) dias.push('amanha');
+  return { dias: dias };
+}
+
+/** Grava folgas de ponto por DATA (property PONTO_FOLGAS, "AAAA-MM-DD,..."). Só o dia — diferente da
+ *  pausa (PONTO_PAUSA_ATE), que cala TUDO até uma data e não serve para "só amanhã". Datas passadas saem. */
+function definirFolgaPonto(args) {
+  args = args || {};
+  var TZ = 'America/Sao_Paulo', p = PropertiesService.getScriptProperties();
+  var hoje = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+  var amanha = Utilities.formatDate(new Date(Date.now() + 86400000), TZ, 'yyyy-MM-dd');
+  var datas = (args.dias || []).map(function (d) { return d === 'hoje' ? hoje : (d === 'amanha' ? amanha : String(d)); })
+    .filter(function (d) { return /^\d{4}-\d{2}-\d{2}$/.test(d); });
+  if (!datas.length) return { ok: false, erro: 'nenhum dia válido' };
+  var atual = String(p.getProperty('PONTO_FOLGAS') || '').split(',').filter(function (d) { return d && d >= hoje; });
+  datas.forEach(function (d) { if (atual.indexOf(d) === -1) atual.push(d); });
+  atual.sort();
+  p.setProperty('PONTO_FOLGAS', atual.join(','));
+  var quando = (datas.indexOf(hoje) !== -1 && datas.indexOf(amanha) !== -1) ? 'hoje e amanhã' : (datas.indexOf(hoje) !== -1 ? 'hoje' : 'amanhã');
+  return { ok: true, folgas: atual, resumo: 'Certo, ' + quando + ' é folga: não vou lembrar nem cobrar o ponto.' };
+}
+
+/** Esse dia (AAAA-MM-DD) é folga de ponto? */
+function _pontoEFolga(dia) {
+  try { return String(PropertiesService.getScriptProperties().getProperty('PONTO_FOLGAS') || '').split(',').indexOf(dia) !== -1; }
+  catch (e) { return false; }
+}
+
 /* TURNO DE TRABALHO por voz — determinístico.
  * Sem isto, "minha jornada essa semana é de manhã" ia para o LLM, que ANUNCIAVA os 4 horários e
  * criava só 1 alerta avulso (sem tag), deixando os 4 do turno anterior vivos — os dois turnos
@@ -5594,6 +5673,20 @@ function _interpretarFatoVoz(msg) {
   return null;
 }
 
+/** Feriado NACIONAL do dia (mes0 = 0..11) ou null. Fixos + Sexta-feira Santa (Páscoa - 2, algoritmo de Meeus). */
+function _feriadoNacional(ano, mes0, dia) {
+  var fixos = { '0-1': 'Confraternização Universal', '3-21': 'Tiradentes', '4-1': 'Dia do Trabalho', '8-7': 'Independência do Brasil',
+                '9-12': 'Nossa Senhora Aparecida', '10-2': 'Finados', '10-15': 'Proclamação da República', '10-20': 'Consciência Negra', '11-25': 'Natal' };
+  if (fixos[mes0 + '-' + dia]) return fixos[mes0 + '-' + dia];
+  var a = ano % 19, b = Math.floor(ano / 100), c = ano % 100, d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25),
+      g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30, i = Math.floor(c / 4), k = c % 4,
+      l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451),
+      mesP = Math.floor((h + l - 7 * m + 114) / 31) - 1, diaP = ((h + l - 7 * m + 114) % 31) + 1;
+  var sexta = new Date(Date.UTC(ano, mesP, diaP - 2));
+  if (sexta.getUTCMonth() === mes0 && sexta.getUTCDate() === dia) return 'Sexta-feira Santa';
+  return null;
+}
+
 /** Bom dia do despertador: saudação, hora, dia e a agenda REAL de hoje. Sem LLM. */
 function _falarDespertador(agora) {
   agora = agora || new Date();
@@ -5602,6 +5695,9 @@ function _falarDespertador(agora) {
   var deste = (p.dow === 0 || p.dow === 6) ? 'deste ' : 'desta ';   // "deste sábado", "desta quinta"
   var txt = saud + ', Bruno! São ' + _horaFalada(p.h, p.m) + ' ' + deste + _DIAS_SEMANA_PT[p.dow] + ', ' +
             (p.dia === 1 ? '1º' : p.dia) + ' de ' + _MESES_PT[p.mes] + '.';
+  // Em 12/10 ele só descobriu que o ponto seguia valendo quando o Jarvis cobrou. Dizer cedo que é feriado
+  // lembra de avisar que não trabalha (e deixa claro que o Jarvis sabe).
+  try { var _fer = _feriadoNacional(p.ano, p.mes, p.dia); if (_fer) txt += ' Hoje é feriado nacional: ' + _fer + '.'; } catch (eFe) {}
   var ag = '';
   try { ag = _falarAgenda('hoje', agora); } catch (e) {}
   return txt + (ag ? ' ' + ag : '') + ' Tenha um ótimo dia.';
@@ -6477,6 +6573,8 @@ function _preverRotaDeterministica(msg) {
   var r;
   try { r = _interpretarFatoVoz(m); if (r) return r.via; } catch (e) {}   // vem antes de tudo, como na cadeia
   try { r = _interpretarFinanceiro(m); if (r !== null && r !== undefined) return 'financeiro'; } catch (e) {}
+  try { if (_interpretarRepetirBriefing(m)) return 'repetir_briefing'; } catch (e) {}
+  try { r = _interpretarFolgaPonto(m); if (r) return 'folga_ponto'; } catch (e) {}
   try { r = _interpretarTurnoTrabalho(m); if (r !== null && r !== undefined) return 'turno'; } catch (e) {}
   try { r = _interpretarInsight(m); if (r) return 'insight_' + r.acao; } catch (e) {}
   try { if (_interpretarPerdi(m) !== null) return 'notificacoes'; } catch (e) {}
@@ -6836,6 +6934,7 @@ function verificarPontoBatido(opts) {
   if (_pAte && Utilities.formatDate(agora, 'America/Sao_Paulo', 'yyyy-MM-dd') <= _pAte) {
     return { ok: true, pausado: true, ate: _pAte, motivo: p.getProperty('PONTO_PAUSA_MOTIVO') || 'pausa' };
   }
+  if (_pontoEFolga(hoje)) return { ok: true, folga: true };
   if (!p.getProperty('PONTO_APP_VISTO')) {
     return { ok: true, desarmado: true, motivo: 'nunca chegou notificação do ' + appPonto +
              ' — adicione-o ao filtro da macro para armar a cobrança' };

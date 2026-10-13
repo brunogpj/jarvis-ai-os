@@ -2747,21 +2747,36 @@ var Jarvis = (function () {
             // síntese começar. Elas são medidas: sem isso o total da fala engloba espera e trabalho
             // no mesmo número, e não dá para saber se o gargalo é a API ou a própria fila interna.
             var _spansFala = { lock: 0, espera: 0, sintese: 0, drive: 0, engine: null, bytes: 0 };
-            var _lockFala = null;
-            var _tLock = Date.now();
-            try { _lockFala = LockService.getScriptLock(); _lockFala.waitLock(45000); } catch (eLk) { _lockFala = null; }
-            _spansFala.lock = Date.now() - _tLock;
-            try {
+            /* FILA SEM CORTAR QUEM ESTÁ FALANDO (13/10). Antes: pega o lock, lê FALA_LIVRE_EM e dorme no máximo
+             * 30 s COM O LOCK NA MÃO. Se a fala anterior ainda tinha mais de 30 s para tocar, a nova seguia
+             * mesmo assim: o briefing da manhã (89 s de áudio) levou por cima o aviso de bateria aos 65 s —
+             * o arquivo foi sobrescrito e o player trocado no meio. Agora: espera FORA do lock, em passos de
+             * 15 s, até a fala anterior acabar (teto de 110 s; passou disso, fala mesmo assim). */
+            var _fim = Date.now() + 110000, _tEsp0 = Date.now(), fala = null, _lockFala = null;
+            var _tLock0 = Date.now();
+            while (true) {
+              _lockFala = null;
+              try { _lockFala = LockService.getScriptLock(); _lockFala.waitLock(45000); } catch (eLk) { _lockFala = null; }
               var _pFala = PropertiesService.getScriptProperties();
-              var _livreEm = Number(_pFala.getProperty('FALA_LIVRE_EM') || 0);
-              var _espera = _livreEm - Date.now();
-              if (_espera > 0) { var _tEsp = Date.now(); Utilities.sleep(Math.min(_espera, 30000)); _spansFala.espera = Date.now() - _tEsp; }
-              var fala = _falarNoCelular(args.texto, a.voz, a.motor);
+              var _espera = Number(_pFala.getProperty('FALA_LIVRE_EM') || 0) - Date.now();
+              if (_espera > 0 && Date.now() < _fim) {
+                if (_lockFala) { try { _lockFala.releaseLock(); } catch (eRl0) {} }
+                Utilities.sleep(Math.min(_espera, 15000));
+                continue;
+              }
+              break;
+            }
+            _spansFala.espera = Date.now() - _tEsp0;
+            _spansFala.lock = Math.max(0, (Date.now() - _tLock0) - _spansFala.espera);
+            try {
+              fala = _falarNoCelular(args.texto, a.voz, a.motor);
               if (fala && fala.spans) { _spansFala.sintese = fala.spans.sintese; _spansFala.drive = fala.spans.drive; _spansFala.engine = fala.spans.engine; _spansFala.bytes = fala.spans.bytes; _spansFala.chars = fala.spans.chars; if (fala.spans.motivoCloud) _spansFala.motivoCloud = fala.spans.motivoCloud; }
               if (!fala.ok) { if (_lockFala) _lockFala.releaseLock(); return { status: 'error', erro: 'Falha ao gerar a voz na nuvem: ' + fala.erro }; }
-              // Duração estimada: ~14 caracteres/s em pt-BR, + 4 s de download e partida do player.
-              var _dur = Math.ceil(String(args.texto || '').length / 14) * 1000 + 4000;
-              _pFala.setProperty('FALA_LIVRE_EM', String(Date.now() + Math.min(_dur, 90000)));
+              // Duração do áudio: WAV do Gemini = 24 kHz, 16 bits, mono = 48 kB/s (4,27 MB = 89 s, medido em 13/10);
+              // o resto (OGG da nuvem) ~14 caracteres/s. +4 s de download e partida do player. Teto de 150 s.
+              var _durMs = (fala.spans && fala.spans.formato === 'wav' && fala.spans.bytes)
+                ? Math.round(fala.spans.bytes / 48) : Math.ceil(String(args.texto || '').length / 14) * 1000;
+              _pFala.setProperty('FALA_LIVRE_EM', String(Date.now() + Math.min(_durMs + 4000, 150000)));
             } finally { if (_lockFala) { try { _lockFala.releaseLock(); } catch (eRl) {} } }
             alvo = _mdEvento(url, 'jarvis_falar');
             /* UM ARQUIVO POR FALA NO CELULAR (28/09). O arquivo no Drive continua um só (ID estável), mas

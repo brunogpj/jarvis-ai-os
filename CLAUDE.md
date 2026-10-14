@@ -25,7 +25,7 @@ Projeto Google Apps Script gerenciado localmente via clasp.
 
 | Deployment ID | Versão | Descrição |
 |---|---|---|
-| `<DEPLOYMENT_ID>` | **@480** | **ATIVA** — "Swile -> caderneta: gasto no voucher e saldo da caderneta". É esta que o celular e os scripts de diagnóstico usam. |
+| `<DEPLOYMENT_ID>` | **@482** | **ATIVA** — "recarga: diagnóstico cru" (recarga do Swile por voz com confirmação). É esta que o celular e os scripts de diagnóstico usam. |
 | `<DEPLOYMENT_ID>` | @25 | Antiga — "TesteJobs" |
 | `<DEPLOYMENT_ID>` | @HEAD | Cabeça (muda a cada push, não é a de produção) |
 
@@ -242,11 +242,24 @@ valor até R$ 5.000, data de hoje ±45 dias, no máximo 60 por 24 h; `/desfazer`
 Categoria "Alimentação" (voucher) ou "Transporte" (mobilidade), descrição = estabelecimento. Caderneta fora do ar → o doc
 fica `caderneta:'pendente'` e o tick de 15 min reenvia (3 dias); 4xx → `recusado`; estorno → só avisa (`estorno_manual`).
 O saldo do Swile falado passa a vir da caderneta (`resumo.vouchers` = recarga informada − gastos do mês); o saldo antigo do
-Firestore fica de reserva (`SWILE_FONTE=firestore` volta a ele). A **recarga** continua sendo informada por ele na caderneta
-(voz no futuro): a notificação de recarga só avisa para registrar. Interruptores: `SWILE_PARA_CADERNETA=nao`,
+Firestore fica de reserva (`SWILE_FONTE=firestore` volta a ele). A **recarga** ele informa por voz (ver "Ações por voz na caderneta") ou
+na caderneta: a notificação de recarga só avisa para registrar. Interruptores: `SWILE_PARA_CADERNETA=nao`,
 `SWILE_AVISO_REGISTRO=nao` (notificação "Registrei R$ X em Y"). Teste vivo sem sujar a caderneta: `ler_debug` com
 `swileCadernetaTeste:true` (cria R$ 0,01, repete, desfaz) e `swileCaderneta:{titulo,texto}` (mostra o que enviaria). O extrato
 ("onde gastei") ainda sai do Firestore (só compras com notificação). Código do Worker em `src/swile.js` do app da caderneta.
+
+**Ações por voz na caderneta, com confirmação (desde 14/10) — o molde das fases futuras.** `Financas.conversar` fica no
+INÍCIO da cadeia da voz (`_afn`, rota `caderneta_acao`; calada no log e falada pelo aparelho, nunca pela nuvem/Drive). Três
+tempos, sempre: **propor** (entende a frase, guarda a proposta 3 min e REPETE o que vai gravar, pedindo sim/não), **confirmar**
+(só um "sim" explícito executa; "não" ou o tempo descartam sem tocar em nada), **desfazer** ("desfaz" nos 10 min seguintes).
+Cada tipo é um objeto no registro `ACOES` (`propor/executar/desfazer`); banco, ação, gasto por voz entram ali. A primeira é a
+**recarga do Swile**: "caiu 1.002,50 no voucher e 67,98 na mobilidade" (ou "recarga de novembro, …"). O mês de uso é o citado
+ou, sem citar, o seguinte a partir do dia 20. No Worker (`POST /api/jarvis/recarga-voucher`, `src/swile.js`) usa o MESMO id do
+app (`voucher<AAAAMM><alim|mob>`): uma recarga por carteira e mês, e se já existe NÃO altera (devolve o valor que está lá);
+mês de uso só anterior/atual/seguinte, até R$ 5.000, 6 por dia; o desfazer só remove recarga criada na última hora. Exige o
+rótulo (voucher/mobilidade) junto do número e números em dígitos ("mil" por extenso pede de novo). Fora do JEV de propósito:
+extrair valor de fala livre é seleção de número no código, não julgamento. Teste vivo: `ler_debug` com `recargaTeste:true`
+(cria R$ 0,01 no mês seguinte, repete, desfaz).
 
 **Fila de falas** (`controlarDispositivo('falar')`): a fala nova espera a anterior
 acabar, **fora do lock**, em passos de 15 s, até 110 s. A duração vem do áudio (WAV
@@ -346,7 +359,7 @@ o histórico. Então:
   genérico no teste do lembrete relativo).
 - O `README.md` é o que um recrutador lê primeiro. O projeto Jarvis no
   LinkedIn e o README do perfil do GitHub citam "147 testes automatizados"
-  (o repo tem 251 desde 14/10 — a frase segue verdadeira como piso);
+  (o repo tem 259 desde 14/10 — a frase segue verdadeira como piso);
   se a contagem mudar muito, avise o dono para atualizar lá também.
 - Nada sobre o empregador nem sobre sistemas internos de trabalho entra aqui.
 
@@ -395,7 +408,7 @@ público").
 cd tests-local && node --test
 ```
 
-251 testes offline (sem cota, sem rede) sobre a lógica determinística: MODO
+259 testes offline (sem cota, sem rede) sobre a lógica determinística: MODO
 DIRETO, gate sem-cota, hooks, parsing de turno/briefing, validação de prefs,
 ordenação dos cards, cadeia da voz, lembrete relativo e alertas de uma vez só,
 `_urlParaMacro`, `lerBiblia`, briefing com dados reais e trava de agenda
@@ -404,7 +417,7 @@ caracteres da voz no briefing e autodiagnóstico sem alarme de app raro
 (`tests-local/dia-0110.test.js`). `tests-local/gas-shims.js` simula as
 APIs do GAS (`formatDate` é fixo: teste que depende de horário injeta o seu).
 `tests-local/jev-caderneta.test.js` cobre o roteador semântico novo (JEV simulado, interruptor, máscara de log).
-Estado em 14/10/2026: **251/251 passando**.
+Estado em 14/10/2026: **259/259 passando**.
 
 Contra o sistema vivo, pelo terminal: `ler_debug` (POST com `VOICE_API_TOKEN`,
 `n` até 200, `alertas:true`, `notificacoes:N`, `ensaioBriefing:'<tag>'`, `gatilhos:true`,

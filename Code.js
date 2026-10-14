@@ -3474,8 +3474,12 @@ function doPost(e) {
         // (-4) VOTO no insight ("gostei" / "não gostei"). Dentro de 30 min da entrega, o voto seco
         // basta — o contexto é óbvio. Depois disso exige citar "ideia/insight/sugestão", senão um
         // "gostei" sobre qualquer outra coisa viraria voto sem ele saber.
-        var _voto = null;
-        if (_insFeedbackAberto()) {
+        // (-5) AÇÃO FINANCEIRA POR VOZ COM CONFIRMAÇÃO (recarga do Swile): proposta, "sim"/"não" e "desfaz". Vem antes de tudo,
+        // mas só responde quando a frase é desta conversa (ou há proposta pendente e a frase é sim/não). Marca _voto para calar o resto da cadeia.
+        var _afn = null;
+        try { _afn = (typeof Financas !== 'undefined' && Financas.conversar) ? Financas.conversar(msgVoz) : null; } catch (eAf) { _afn = null; }
+        var _voto = (_afn !== null) ? 'acao_fin' : null;
+        if (_voto === null && _insFeedbackAberto()) {
           var _sV = msgVoz.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
           var _citou = /\b(ideia|insight|sugest|dica)/.test(_sV);
           if (_insDentroDaJanelaFeedback() || _citou) {
@@ -3525,7 +3529,9 @@ function doPost(e) {
         var _lembC = _livre ? _interpretarLembreteCondicional(msgVoz) : null;
         var _lembR = (_livre && !_lembC) ? _interpretarLembreteRelativo(msgVoz) : null;
         var _rot   = (_livre && !_lembC && !_lembR) ? _interpretarRotina(msgVoz) : null;
-        if (_fato !== null) {
+        if (_afn !== null) {
+          respVoz = _afn.resp;
+        } else if (_fato !== null) {
           try { respVoz = (_fato.via === 'agenda') ? _falarAgenda(_fato.periodo) : (_fato.via === 'emails') ? _falarEmails() : (_fato.via === 'despertador') ? _falarDespertador() : _falarRelogio(_fato); }
           catch (eFt) { respVoz = 'Não consegui consultar isso agora.'; }
         } else if (_cad !== null) {
@@ -3727,7 +3733,8 @@ function doPost(e) {
         // de bug de voz até aqui (em 13/08 um "o que eu perdi" não deixou vestígio nenhum).
         // A ordem espelha a cadeia if/else if acima; ao mexer lá, mexer aqui também.
         var _viaVoz =
-            (_fato  !== null) ? _fato.via
+            (_afn   !== null) ? 'caderneta_acao'
+          : (_fato  !== null) ? _fato.via
           : (_cad   !== null) ? 'caderneta'
           : (_fin   !== null) ? 'financeiro'
           : (_repB  !== null) ? 'repetir_briefing'
@@ -3756,12 +3763,12 @@ function doPost(e) {
           : (typeof _viaJev !== 'undefined' && _viaJev) ? 'jev'
           : 'llm';
         // Resposta financeira (regex OU JEV) não vai para o log nem para o histórico da conversa.
-        var _sensivelVoz = (_viaVoz === 'caderneta') || (_viaVoz === 'jev' && /^cad_/.test(_ROTA_ULTIMA));
+        var _sensivelVoz = (_viaVoz === 'caderneta') || (_viaVoz === 'caderneta_acao') || (_viaVoz === 'jev' && /^cad_/.test(_ROTA_ULTIMA));
         try {
           if (typeof Jarvis !== 'undefined' && Jarvis.registrarEvento) Jarvis.registrarEvento({
             tool: 'voz:' + _viaVoz, ok: true, ms: 0, userEmail: emailUser,
             // Caderneta: o log não guarda o NÚMERO falado (valores financeiros ficam só no app e no áudio do momento).
-            resumo: msgVoz.substring(0, 100) + ' → ' + (_sensivelVoz ? '[resposta financeira não registrada]' : String(respVoz).substring(0, 140))
+            resumo: (_viaVoz === 'caderneta_acao' ? '[comando financeiro]' : msgVoz.substring(0, 100)) + ' → ' + (_sensivelVoz ? '[resposta financeira não registrada]' : String(respVoz).substring(0, 140))
           });
         } catch (eEvV) {}
         var textoLimpo = _prepararTextoFala(respVoz);
@@ -3817,7 +3824,7 @@ function doPost(e) {
          * Ajustável sem deploy pela property FALA_LOCAL_ROTAS (lista separada por vírgula).
          * O teto de caracteres continua como rede de segurança: resposta de ação que venha longa
          * (um extrato inteiro, por exemplo) volta para a nuvem. */
-        var _ROTAS_LOCAIS_PADRAO = 'relogio,agenda,emails,jev,lembrete_relativo,financeiro,caderneta,turno,rotina,controle_nativo,abrir_app,spotify,youtube,google,navegar,compras,ligar,biblia,insight_gravar,voto_insight';
+        var _ROTAS_LOCAIS_PADRAO = 'relogio,agenda,emails,jev,lembrete_relativo,financeiro,caderneta,caderneta_acao,turno,rotina,controle_nativo,abrir_app,spotify,youtube,google,navegar,compras,ligar,biblia,insight_gravar,voto_insight';
         var _rotasLocais = String(PropertiesService.getScriptProperties().getProperty('FALA_LOCAL_ROTAS') || _ROTAS_LOCAIS_PADRAO)
           .split(',').map(function (x) { return x.trim(); }).filter(function (x) { return x; });
         var _viaBase = String((typeof _viaVoz !== 'undefined') ? _viaVoz : '').split(':')[0];
@@ -4013,6 +4020,18 @@ function doPost(e) {
             var _r4 = Financas.desfazerGastoSwile(_ch);
             saida.swileCadernetaTeste = { criou: _r1, repetiu: _r2, desfez: _r3, desfezDeNovo: _r4 };
           } catch (eSt) { saida.swileCadernetaTeste = { erro: eSt.message }; }
+        }
+        // Recarga: ciclo REAL de R$ 0,01 no mês pedido (padrão: o seguinte), com a resposta crua do Worker, e desfaz em seguida.
+        if (body.recargaTeste) {
+          try {
+            var _hr = Utilities.formatDate(new Date(), 'America/Sao_Paulo', 'yyyy-MM-dd'), _mr = Number(_hr.slice(5, 7)) + 1, _yr = Number(_hr.slice(0, 4));
+            if (_mr > 12) { _mr = 1; _yr++; }
+            var _ref = (body.recargaTeste && body.recargaTeste.referencia) || (_yr + '-' + (_mr < 10 ? '0' : '') + _mr), _id = 'teste' + Date.now().toString(36);
+            var _a1 = Financas.registrarRecarga(_id, 'voucher', 0.01, _ref);
+            var _a2 = Financas.registrarRecarga(_id, 'voucher', 0.01, _ref);
+            var _a3 = Financas.desfazerRecarga('voucher', _ref);
+            saida.recargaTeste = { referencia: _ref, criou: _a1, repetiu: _a2, desfez: _a3 };
+          } catch (eRt) { saida.recargaTeste = { erro: eRt.message }; }
         }
         if (body.ensaioBriefing) { try { saida.ensaioBriefing = diagBriefingTexto({ tag: String(body.ensaioBriefing) }); } catch (eEb) { saida.ensaioBriefing = { erro: eEb.message }; } }
         return ContentService.createTextOutput(JSON.stringify(saida)).setMimeType(ContentService.MimeType.JSON);

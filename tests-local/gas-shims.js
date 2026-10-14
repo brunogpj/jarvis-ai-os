@@ -24,7 +24,7 @@ function makeSandbox(o) {
     },
     CacheService: {
       getScriptCache: function () {
-        return { get: function (k) { return (k in cache) ? cache[k] : null; }, put: function (k, v) { cache[k] = v; } };
+        return { get: function (k) { return (k in cache) ? cache[k] : null; }, put: function (k, v) { cache[k] = v; }, remove: function (k) { delete cache[k]; } };
       }
     },
     GmailApp: {

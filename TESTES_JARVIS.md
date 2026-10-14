@@ -133,7 +133,14 @@ Sem você pedir, no tick de 15 min, em duas janelas: **manhã 9–11h** e **noit
 | 1.38 | Compra na carteira **mobilidade** | idem, meio "Voucher mobilidade", categoria Transporte | ⏳ | |
 | 1.39 | "Qual o saldo do voucher?" · "Saldo da mobilidade" · "Quanto tenho no Swile?" | saldo = recarga do mês informada na caderneta − gastos no voucher | ✅ | 14/10: R$ 41,91 no voucher e R$ 7,98 na mobilidade |
 | 1.40 | Mês novo sem a recarga informada | "Ainda não há recarga de <mês> registrada na caderneta…" (não inventa saldo) | ⏳ | |
-| 1.41 | Recarga cai no Swile | notificação "Registre a recarga do voucher e da mobilidade na caderneta" | ⏳ | a recarga é informada por você |
+| 1.41 | Recarga cai no Swile | notificação "Registre a recarga do voucher e da mobilidade na caderneta" | ⏳ | agora você pode dizer o valor (1.45) |
+| 1.45 | Diga: "Caiu 1.002,50 no voucher e 67,98 na mobilidade" | repete: "Confirma a recarga de <mês>: R$ 1.002,50 no voucher e R$ 67,98 na mobilidade? Diga sim ou não." — **nada gravado ainda** | ✅ | 14/10 (teste com R$ 0,01) |
+| 1.46 | Responda "sim" | "Registrei a recarga de <mês>… Para desfazer, diga desfaz." e o saldo do voucher já inclui o valor | ✅ | 14/10 |
+| 1.47 | Responda "não" (ou deixe passar 3 min) | "Certo, não registrei nada." | ✅ | 14/10 |
+| 1.48 | Diga "desfaz" até 10 min depois | "Desfeito: tirei a recarga de <mês>…" | ✅ | 14/10 |
+| 1.49 | Recarga do mesmo mês e carteira já registrada | "Já existe recarga de <mês> de R$ X… não mudei" (não soma duas vezes) | ⏳ | coberto por teste automático |
+| 1.50 | "Recarga de dezembro, 1000 no voucher" (mês nomeado) | confirma citando dezembro | ⏳ | só anterior, atual ou seguinte; outro mês é recusado |
+| 1.51 | "Caiu 1000 no Swile" (sem dizer voucher ou mobilidade) | pede o valor junto da carteira, sem propor nada | ⏳ | |
 | 1.42 | Estorno no Swile | só avisa para ajustar na caderneta | ⏳ | |
 | 1.43 | Caderneta fora do ar durante uma compra | fica pendente e é reenviada no tick de 15 min | ⏳ | coberto por teste automático |
 | 1.44 | `ler_debug` com `swileCadernetaTeste:true` | cria R$ 0,01, repete (não duplica), desfaz | ✅ | 14/10: criou, repetiu sem duplicar, desfez, nada ficou no banco |

@@ -398,9 +398,168 @@ var Financas = (function () {
     return t;
   }
 
+  // ── AÇÕES POR VOZ COM CONFIRMAÇÃO (14/10) ─────────────────────────────────────────────────────────────────
+  // Padrão para tudo que ESCREVE na caderneta por voz (a recarga do Swile é a primeira; bancos e ações seguem o mesmo molde):
+  //   1. PROPOR: entende a frase, guarda a proposta (3 min) e REPETE o que vai gravar, pedindo "sim" ou "não".
+  //   2. CONFIRMAR: só um "sim" explícito executa. "Não", ou o tempo passar, descarta sem tocar em nada.
+  //   3. DESFAZER: "desfaz" nos 10 min seguintes tira o que foi gravado.
+  // Cada tipo de ação é um objeto { propor(msg), descrever(p), executar(p), desfazer(u), resumo(...) } no registro ACOES.
+  // Nada aqui passa pelo Gemini, e o valor falado/gravado sai do código.
+  var PEND_S = 180, DESFAZ_MIN = 10;
+
+  function _norm(msg) { return String(msg || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[?!;:]/g, ' ').replace(/\s+/g, ' ').trim(); }
+  function _cacheGet(k) { try { var v = CacheService.getScriptCache().get(k); return v ? JSON.parse(v) : null; } catch (e) { return null; } }
+  function _cachePut(k, o, s) { try { CacheService.getScriptCache().put(k, JSON.stringify(o), s); } catch (e) {} }
+  function _cacheDel(k) { try { CacheService.getScriptCache().remove(k); } catch (e) {} }
+
+  /** "1.002,50" · "1002,50" · "1.000" (milhar) · "70" → número. Troca o texto por decimais simples ("1002.5") p/ o leitor de rótulos. */
+  function _numerosSimples(txt) {
+    return String(txt || '').replace(/\d[\d.,]*/g, function (t) {
+      t = t.replace(/[.,]+$/, '');
+      var n;
+      if (/,\d{1,2}$/.test(t)) n = Number(t.replace(/\./g, '').replace(',', '.'));
+      else if (/^\d{1,3}(\.\d{3})+$/.test(t) || /^\d{1,3}(,\d{3})+$/.test(t)) n = Number(t.replace(/[.,]/g, ''));
+      else n = Number(t.replace(/,/g, ''));
+      return isFinite(n) ? String(n) : t;
+    });
+  }
+
+  var _NOMES_MES = ['janeiro', 'fevereiro', 'marco', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+  function _mesFalado(ref) { return _MESES[Number(ref.slice(5, 7)) - 1] || ref; }
+
+  /** Mês de uso da recarga: o citado na frase ("recarga de novembro") ou, sem citar, o seguinte quando já é dia 20 ou mais. */
+  function _referenciaRecarga(s, hojeISO) {
+    var y = Number(hojeISO.slice(0, 4)), m = Number(hojeISO.slice(5, 7)), d = Number(hojeISO.slice(8, 10));
+    for (var i = 0; i < _NOMES_MES.length; i++) {
+      if (new RegExp('\\b(de|para|pra|do mes de|em)\\s+' + _NOMES_MES[i] + '\\b').test(s) || new RegExp('^' + _NOMES_MES[i] + '\\b').test(s)) {
+        var mm = i + 1, yy = y;
+        if (mm < m - 6) yy = y + 1; else if (mm > m + 6) yy = y - 1;   // "janeiro" dito em dezembro = ano que vem
+        return yy + '-' + (mm < 10 ? '0' : '') + mm;
+      }
+    }
+    if (d >= 20) { m++; if (m > 12) { m = 1; y++; } }
+    return y + '-' + (m < 10 ? '0' : '') + m;
+  }
+
+  /**
+   * "caiu 1.002,50 no voucher e 67,98 na mobilidade" → {itens:[{carteira, valor}], referencia} | {erro} | null.
+   * Conservadora: exige verbo de recarga + carteira do Swile + valor. Pergunta ("quanto caiu?") não entra.
+   */
+  function interpretarRecarga(msg) {
+    var s = _norm(msg).replace(/[?]/g, '');
+    if (!s) return null;
+    if (/\b(quanto|qual|quais|quando|sera que)\b/.test(s)) return null;
+    if (/\b(gastei|paguei|comprei|gasto|compra)\b/.test(s)) return null;
+    var verbo = /\b(recarga|recarreg\w*|cre?ditou|creditaram|caiu|cairam|entrou|entraram|depositou|depositaram|liberou|liberaram|chegou|chegaram)\b/.test(s);
+    var carteira = /\b(voucher|vouchers|alimentacao|refeicao|mobilidade|combustivel|swile|suav|suail|beneficio|beneficios)\b/.test(s);
+    if (!verbo || !carteira) return null;
+    if (typeof _finLerSaldoDeTexto !== 'function') return null;
+    var lido = _finLerSaldoDeTexto(_numerosSimples(msg));
+    if (!lido) return { erro: 'Não entendi o valor da recarga. Diga, por exemplo: caiu mil no voucher e setenta na mobilidade, em números.' };
+    if (!lido.porRotulo) return { erro: 'Diga o valor junto com a carteira, por exemplo: caiu 1000 no voucher e 70 na mobilidade.' };
+    var itens = [];
+    if (lido.voucher !== null && lido.voucher > 0) itens.push({ carteira: 'voucher', valor: Math.round(lido.voucher * 100) / 100 });
+    if (lido.mobilidade !== null && lido.mobilidade > 0) itens.push({ carteira: 'mobilidade', valor: Math.round(lido.mobilidade * 100) / 100 });
+    if (!itens.length) return { erro: 'Não entendi o valor da recarga.' };
+    if (itens.some(function (i) { return i.valor > 5000; })) return { erro: 'Esse valor passa de cinco mil reais, o limite do Jarvis. Registre direto na caderneta.' };
+    return { itens: itens, referencia: _referenciaRecarga(s, Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd')) };
+  }
+
+  /** Recarga do voucher/mobilidade no Worker. → {ok, dados} | {ok:false, erro, codigo} (cru, para diagnóstico também). */
+  function registrarRecarga(chave, carteira, valor, referencia) {
+    return _post('/api/jarvis/recarga-voucher', { chave: chave, carteira: carteira, valor: valor, referencia: referencia });
+  }
+  function desfazerRecarga(carteira, referencia) {
+    return _post('/api/jarvis/recarga-voucher/desfazer', { carteira: carteira, referencia: referencia });
+  }
+
+  function _frasearItens(itens) {
+    return itens.map(function (i) { return _brl(i.valor) + (i.carteira === 'mobilidade' ? ' na mobilidade' : ' no voucher'); }).join(' e ');
+  }
+
+  var ACOES = {
+    recarga: {
+      propor: function (msg) {
+        var r = interpretarRecarga(msg);
+        if (!r) return null;
+        if (r.erro) return { resp: r.erro };
+        var total = r.itens.reduce(function (t, i) { return t + i.valor; }, 0);
+        var p = { tipo: 'recarga', itens: r.itens, referencia: r.referencia, id: Utilities.getUuid().replace(/-/g, '').slice(0, 12) };
+        return { pend: p, resp: (total >= 3000 ? 'Esse valor é alto. ' : '') + 'Confirma a recarga de ' + _mesFalado(r.referencia) + ': ' + _frasearItens(r.itens) + '? Diga sim ou não.' };
+      },
+      executar: function (p) {
+        var criados = [], jaExistia = [], falhou = [];
+        p.itens.forEach(function (i) {
+          var r = registrarRecarga(p.id, i.carteira, i.valor, p.referencia);
+          if (!r.ok) { falhou.push(i); return; }
+          if (r.dados.criado === false) jaExistia.push({ carteira: i.carteira, valor: i.valor, existente: r.dados.existente }); else criados.push(i);
+        });
+        var partes = [];
+        if (criados.length) partes.push('Registrei a recarga de ' + _mesFalado(p.referencia) + ': ' + _frasearItens(criados) + '. Para desfazer, diga desfaz.');
+        jaExistia.forEach(function (j) {
+          partes.push('Já existe recarga de ' + _mesFalado(p.referencia) + (j.existente != null ? ' de ' + _brl(j.existente) : '') + ' ' + (j.carteira === 'mobilidade' ? 'na mobilidade' : 'no voucher') + ', então não mudei. Se estiver errada, corrija na caderneta.');
+        });
+        if (falhou.length) partes.push('Não consegui registrar ' + _frasearItens(falhou) + ' agora. Não gravei nada disso; tente de novo daqui a pouco.');
+        return { resp: partes.join(' '), desfazer: criados.length ? { tipo: 'recarga', itens: criados, referencia: p.referencia, em: Date.now() } : null };
+      },
+      desfazer: function (u) {
+        var feitos = 0;
+        u.itens.forEach(function (i) { var r = desfazerRecarga(i.carteira, u.referencia); if (r.ok && Number(r.dados.removido) > 0) feitos++; });
+        return feitos ? 'Desfeito: tirei a recarga de ' + _mesFalado(u.referencia) + ' que acabei de registrar.' : 'Não consegui desfazer. Ajuste na caderneta.';
+      }
+    }
+  };
+
+  var _SIM = /^(sim|isso|isso mesmo|confirmo|confirma|confirmado|pode|pode registrar|pode confirmar|pode gravar|esta certo|ta certo|certo|correto|exato|positivo|com certeza|claro)\b/;
+  var _NAO = /^(nao|negativo|cancela|cancelar|cancelado|deixa|deixa pra la|esquece|errado|nao precisa|para|pare)\b/;
+  var _FILLER = /^(ok|okay|beleza|entao|bom|ta bom|ta|e ai|eai|pois|bem|enfim|ah|hum|uhum)[,.\s]+/;
+
+  /**
+   * Ponto de entrada da voz. → {resp} se a frase era desta conversa (proposta, "sim", "não", "desfaz"), senão null.
+   * Com proposta pendente, só "sim"/"não" são tratados; qualquer outra frase segue o fluxo normal (e a proposta expira).
+   */
+  function conversar(msg) {
+    try {
+      if (!configurado()) return null;
+      var s = _norm(msg), tentativas = 0;
+      while (tentativas++ < 3 && _FILLER.test(s)) s = s.replace(_FILLER, '');
+      if (!s) return null;
+      var pend = _cacheGet('fin_pendente');
+      if (pend) {
+        if (_SIM.test(s)) {
+          _cacheDel('fin_pendente');
+          var acao = ACOES[pend.tipo];
+          if (!acao) return null;
+          var out = acao.executar(pend);
+          if (out.desfazer) _cachePut('fin_ultima_acao', out.desfazer, DESFAZ_MIN * 60);
+          return { resp: out.resp };
+        }
+        if (_NAO.test(s)) { _cacheDel('fin_pendente'); return { resp: 'Certo, não registrei nada.' }; }
+      }
+      var ult = _cacheGet('fin_ultima_acao');
+      if (/^(desfaz|desfazer|desfaca|volta atras|cancela a recarga|apaga a recarga|tira a recarga|desfaz a recarga)\b/.test(s)) {
+        if (ult && ACOES[ult.tipo]) { _cacheDel('fin_ultima_acao'); return { resp: ACOES[ult.tipo].desfazer(ult) }; }
+        if (/recarga/.test(s)) return { resp: 'Não há nenhuma recarga recente para desfazer. Passou dos ' + DESFAZ_MIN + ' minutos, ajuste na caderneta.' };
+        return null;
+      }
+      var tipos = Object.keys(ACOES);
+      for (var i = 0; i < tipos.length; i++) {
+        var pr = ACOES[tipos[i]].propor(msg);
+        if (!pr) continue;
+        if (pr.pend) _cachePut('fin_pendente', pr.pend, PEND_S); else _cacheDel('fin_pendente');
+        return { resp: pr.resp };
+      }
+      return null;
+    } catch (e) {
+      Logger.log('[Financas.conversar] ' + e.message);
+      return null;
+    }
+  }
+
   return { configurado: configurado, resumo: resumo, falar: falar, interpretar: interpretar, responder: responder, AJUDA: AJUDA,
            avisos: avisos, verificarAvisos: verificarAvisos,
-           registrarGastoSwile: registrarGastoSwile, desfazerGastoSwile: desfazerGastoSwile, falarSaldoSwile: falarSaldoSwile };
+           registrarGastoSwile: registrarGastoSwile, desfazerGastoSwile: desfazerGastoSwile, falarSaldoSwile: falarSaldoSwile,
+           interpretarRecarga: interpretarRecarga, conversar: conversar, registrarRecarga: registrarRecarga, desfazerRecarga: desfazerRecarga };
 })();
 
 /** Diagnóstico no editor: mostra se está conectado e o que ele responderia, sem falar no celular. */

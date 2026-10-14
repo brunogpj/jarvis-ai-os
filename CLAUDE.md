@@ -25,7 +25,7 @@ Projeto Google Apps Script gerenciado localmente via clasp.
 
 | Deployment ID | Versão | Descrição |
 |---|---|---|
-| `<DEPLOYMENT_ID>` | **@503** | **ATIVA** — "JEV: controles do celular no roteador e triagem do monitor de Gmail" |
+| `<DEPLOYMENT_ID>` | **@507** | **ATIVA** — "JEV: monitor de páginas, voto do insight, portão de agendamento com contexto" |
 | `<DEPLOYMENT_ID>` | @25 | Antiga — "TesteJobs" |
 | `<DEPLOYMENT_ID>` | @HEAD | Cabeça (muda a cada push, não é a de produção) |
 
@@ -398,7 +398,17 @@ Medido em 33 frases: 20 de 23 positivas agiram (as 3 abaixo de 0,85 seguem para 
 7. **Triagem do monitor de Gmail** (`Monitor.triar`, `MONITOR_GMAIL_JEV`, corte `MONITOR_GMAIL_JEV_CORTE` 0,15): os e-mails novos passam por UMA requisição ao JEV ("merece avisar o dono, dado o objetivo do monitor?"). Newsletter,
 promoção e vaga genérica (JEV ≤ 0,15) não gastam o Gemini nem geram notificação; na dúvida avisa; sem chave/rede nada é descartado; o corte de tempo avança mesmo quando tudo é ruído. Medido: 4 ruídos descartados de 10
 e-mails, todos os relevantes mantidos (boleto, colega, alerta de segurança, escola, Pix). Evento `monitor:triagem`; `ler_debug` com `triagemGmail:[{de,assunto,trecho}]` mostra sem avisar.
-Diagnósticos: `ler_debug` com `ferramentasJev`, `injecaoJev:[textos]`, `acaoJev:[respostas]`, `categoriaJev:[lugares]`, `triagemGmail` (nada é executado).
+8. **Triagem do monitor de páginas** (`Web.julgarMudanca`, `WEB_MONITOR_JEV`, corte `WEB_MONITOR_JEV_CORTE` 0,15): o monitor passou a guardar o TEXTO da página (`texto`, 6000 caracteres) além do hash. Quando o hash muda,
+compara as linhas que entraram e saíram e o JEV julga se a mudança importa para o que o dono descreveu ao monitorar ("preço do monitor Dell"). Data, contador, anúncio, banner de cookies e itens recomendados trocados (≤ 0,15) não notificam
+(evento `web:triagem`); mudança real notifica COM o resumo das linhas novas ("Mudou: Preço: R$ 999,90"). Monitor antigo, sem texto guardado, avisa como antes na primeira mudança e passa a guardar o texto; sem chave/rede, avisa.
+Medido: 7/7 (preço, estoque e inscrição aberta avisam; visitas, hora, ofertas e cookies calam; "ofertas do dia" ficou em 0,11, perto do corte).
+9. **Voto do insight por JEV** (`TypeSafe.votoFeedback`, limiar 0,80, mesmo `CONFIRMA_JEV`): dentro da janela de feedback e com frase curta, "foi bem legal essa dica" vira 👍 e "já sabia disso" vira 👎 quando a regex não pegou. Medido: 17/18
+(só "para de falar desse assunto" ficou sem voto; nenhuma frase de controle votou). A regex "bom dia" não vota mais 👍.
+10. **Portão de agendamento com contexto**: o portão antigo (`_intencaoAgendamento`) também recebe as últimas 3 mensagens. Achado ao acompanhar os eventos reais: "e amanhã também" abria `agendarAlertaVoz`; com a conversa, não abre mais
+(sem conversa continua ambíguo, e a ferramenta só é oferecida, o modelo decide).
+Diagnósticos: `ler_debug` com `ferramentasJev` (agora mostra `criaAgenda`), `injecaoJev:[textos]`, `acaoJev:[respostas]`, `categoriaJev:[lugares]`, `triagemGmail`, `triagemPagina:[{antigo,novo,descricao}]`, `votoJev:[frases]` (nada é executado).
+**Acompanhar o JEV na produção:** `ler_debug` com `n:200` e filtrar os eventos `gate:jev:ferramentas`, `gate:jev:agenda`, `confirma:jev`, `hook:acao_sem_fonte`, `hook:injecao_conteudo`, `monitor:triagem`, `web:triagem`, `rota:jev:*`
+(os `hook:acao_sem_fonte` de 14/10 22:02 são do ensaio `acaoJev`, não de uso real).
 
 **Fila de falas** (`controlarDispositivo('falar')`): a fala nova espera a anterior
 acabar, **fora do lock**, em passos de 15 s, até 110 s. A duração vem do áudio (WAV

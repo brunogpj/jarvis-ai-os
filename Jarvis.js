@@ -1038,15 +1038,26 @@ var Jarvis = (function () {
    *  Calibrado em 23/09 — fala: 8/8 (agora 0,02–0,15 · agendar 0,93–0,97); futuro: 10/10
    *  (consulta/cancelamento 0,02–0,07 · programar 0,97–0,98), incluindo "quais meus compromissos
    *  amanhã" (0,03): tem "amanhã", mas é consulta. Devolve null se o JEV estiver indisponível. */
-  function _intencaoAgendamento(mensagem) {
+  /** Estado enviado ao JEV: o pedido e, se houver, as últimas 3 mensagens (continuação: "e amanhã também?" só faz sentido com a conversa). */
+  function _estadoComConversa(mensagem, historico) {
+    var estado = { pedido: String(mensagem || '').slice(0, 1200) };
+    try {
+      var ult = (historico || []).filter(function (m) { return m && (m.text || m.texto); }).slice(-3);
+      var ctx = ult.map(function (m) { return ((m.role === 'assistant' || m.role === 'model') ? 'assistente: ' : 'dono: ') + String(m.text || m.texto).replace(/\s+/g, ' ').slice(0, 240); }).join(' | ');
+      if (ctx) estado.conversa_anterior = ctx;
+    } catch (e) {}
+    return estado;
+  }
+
+  function _intencaoAgendamento(mensagem, historico) {
     if (typeof TypeSafe === 'undefined' || !TypeSafe.temChave()) return null;
     var r;
     try {
-      r = TypeSafe.perguntar({ pedido: String(mensagem || '').slice(0, 1200) }, {
+      r = TypeSafe.perguntar(_estadoComConversa(mensagem, historico), {
         fala: {
           type: 'noul',
           instructions: 'O dono falou isto para o assistente pessoal dele. Ele está pedindo para AGENDAR uma fala que deve ' +
-                        'acontecer num horário FUTURO — uma única vez ou se repetindo (todo dia, dias úteis, amanhã, às X horas)?',
+                        'acontecer num horário FUTURO — uma única vez ou se repetindo (todo dia, dias úteis, amanhã, às X horas)? Se houver `conversa_anterior` e o pedido for continuação dela ("e amanhã também?"), julgue pelo assunto da conversa.',
           criteria: {
             true: 'Sim — quer que o assistente fale algo num horário que ainda NÃO chegou. Ex.: todo dia útil às 8h me ' +
                   'fala minha agenda; amanhã às 7 me lembra do remédio em voz alta; me desperta às 6 com as notícias; ' +
@@ -1059,7 +1070,7 @@ var Jarvis = (function () {
         futuro: {
           type: 'noul',
           instructions: 'O dono falou isto para o assistente pessoal dele. Ele está pedindo para PROGRAMAR alguma coisa para ' +
-                        'acontecer DEPOIS — uma fala, um lembrete, uma tarefa recorrente ou uma mensagem para ser enviada num horário futuro?',
+                        'acontecer DEPOIS — uma fala, um lembrete, uma tarefa recorrente ou uma mensagem para ser enviada num horário futuro? Se houver `conversa_anterior` e o pedido for continuação dela ("e amanhã também?"), julgue pelo assunto da conversa.',
           criteria: {
             true: 'Sim — quer que algo aconteça num momento que ainda não chegou. Ex.: todo dia útil às 8h resuma meus ' +
                   'e-mails; manda oi pro Douglas amanhã às 9h; me lembra de tomar o remédio às 12h; toda segunda me fala as tarefas.',
@@ -1402,7 +1413,7 @@ var Jarvis = (function () {
     var _CRIA_AGENDA = ['agendarAlertaVoz', 'agendarTarefa', 'agendarMensagemWhatsApp'];
     var _algumaCriacao = _CRIA_AGENDA.some(function (n) { return permitidas[n]; });
     if (_algumaCriacao || _sinalAgenda) {
-      var _int = _intencaoAgendamento(mensagem);   // {fala, futuro} | null (indisponível → regex, como antes)
+      var _int = _intencaoAgendamento(mensagem, opts && opts.historico);   // {fala, futuro} | null (indisponível → regex, como antes)
       if (_int) {
         var _antes = _CRIA_AGENDA.filter(function (n) { return permitidas[n]; }).join(',') || '-';
         if (_int.futuro === false) {

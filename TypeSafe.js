@@ -142,7 +142,28 @@ var TypeSafe = (function () {
     return { ok: true, resposta: resposta, bruta: a.choice, conf: conf, ms: r.ms };
   }
 
-  return { perguntar: perguntar, noul: noul, respostaSimNao: respostaSimNao, temChave: temChave, URL: TYPESAFE_URL };
+  /** Voto sobre o insight que o Jarvis acabou de falar: 'up' | 'down' | null (null = não era um voto, ou JEV fora do ar).
+   *  A regex do voto só tem as palavras da lista ("gostei", "ruim"); "foi bem legal essa dica", "já sabia disso", "não ajudou em
+   *  nada" passavam. O voto mexe em pesos limitados (0,25–3×) e se recupera, então o limiar é 0,80 e não 0,85. CONFIRMA_JEV=nao desliga. */
+  function votoFeedback(fala) {
+    if (!temChave() || String(_p('CONFIRMA_JEV') || 'sim').toLowerCase() === 'nao') return null;
+    var r = perguntar({ resposta_do_dono: String(fala || '').slice(0, 300) }, {
+      voto: {
+        type: 'choice',
+        instructions: 'O assistente pessoal acabou de falar uma ideia ou dica ao dono, que respondeu em voz. A resposta é uma AVALIAÇÃO dessa ideia? Se não for claramente uma avaliação, escolha "nenhum".',
+        criteria: {
+          up:     { what: 'Gostou, achou útil, interessante ou quer mais assim.', examples: ['foi bem legal essa dica', 'gostei, manda mais disso', 'boa ideia'] },
+          down:   { what: 'Não gostou, achou inútil, óbvio, repetido ou irrelevante.', examples: ['não ajudou em nada', 'já sabia disso', 'isso não me interessa'] },
+          nenhum: { what: 'Não é uma avaliação: outro pedido, pergunta, comando ou conversa.', examples: ['que horas são', 'toca uma música', 'bom dia', 'quanto eu tenho livre'] }
+        }
+      }
+    }, {});
+    var a = r.ok && r.answers && r.answers.voto;
+    if (!a || (a.choice !== 'up' && a.choice !== 'down') || !(a.confidence >= 0.80)) return null;
+    return a.choice;
+  }
+
+  return { perguntar: perguntar, noul: noul, respostaSimNao: respostaSimNao, votoFeedback: votoFeedback, temChave: temChave, URL: TYPESAFE_URL };
 })();
 
 /** Configura a chave da API. A chave fica SÓ nas Script Properties, nunca no código.

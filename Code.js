@@ -3157,7 +3157,7 @@ function doPost(e) {
       var _PERMITIDAS_CF = {
         FALA_PROATIVA_LOCAL: /^(sim|nao)$/, FALA_RESPOSTAS_LOCAL: /^(sim|nao)$/,
         MODO_FALA_VOZ: /^(nuvem|auto|local)$/, FALA_VOLUME_DB: /^(1[0-6]|[0-9])$/,
-        FALA_FORMATO: /^(ogg|wav)$/, FALA_ARQUIVO_UNICO: /^(sim|nao)$/, ROTA_JEV_NOVAS: /^(sim|nao)$/, FERRAMENTAS_JEV: /^(nao|adiciona|sim)$/, INJECAO_JEV: /^(sim|nao)$/, ACAO_JEV: /^(sim|nao)$/, CATEGORIA_JEV: /^(sim|nao)$/, FERRAMENTAS_JEV_ADD: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE: /^0?\.\d{1,2}$/, CONFIRMA_JEV: /^(sim|nao)$/, MONITOR_GMAIL_JEV: /^(sim|nao)$/, MONITOR_GMAIL_JEV_CORTE: /^0?\.\d{1,2}$/, FIN_AVISOS_ATIVO: /^(sim|nao)$/, FIN_NOME_DONO: /^[a-zà-ÿ ]{3,80}$/, FIN_CPF_DONO: /^\d{3}\.\d{3}$/,
+        FALA_FORMATO: /^(ogg|wav)$/, FALA_ARQUIVO_UNICO: /^(sim|nao)$/, ROTA_JEV_NOVAS: /^(sim|nao)$/, FERRAMENTAS_JEV: /^(nao|adiciona|sim)$/, INJECAO_JEV: /^(sim|nao)$/, ACAO_JEV: /^(sim|nao)$/, CATEGORIA_JEV: /^(sim|nao)$/, FERRAMENTAS_JEV_ADD: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE: /^0?\.\d{1,2}$/, CONFIRMA_JEV: /^(sim|nao)$/, MONITOR_GMAIL_JEV: /^(sim|nao)$/, WEB_MONITOR_JEV: /^(sim|nao)$/, WEB_MONITOR_JEV_CORTE: /^0?\.\d{1,2}$/, MONITOR_GMAIL_JEV_CORTE: /^0?\.\d{1,2}$/, FIN_AVISOS_ATIVO: /^(sim|nao)$/, FIN_NOME_DONO: /^[a-zà-ÿ ]{3,80}$/, FIN_CPF_DONO: /^\d{3}\.\d{3}$/,
         // consultor (fase 4): margem na conta (R$), taxa ao mês (decimal), reserva-alvo (meses) e pausa do rebalanceamento (data)
         CONSULTOR_MARGEM: /^\d{1,6}$/, CONSULTOR_TAXA_MES: /^0?\.\d{1,4}$/, CONSULTOR_RESERVA_ALVO: /^\d{1,2}$/, CONSULTOR_PAUSA_ATE: /^\d{4}-\d{2}-\d{2}$/, CONSULTOR_AVISO_ATIVO: /^(sim|nao)$/, CONSULTOR_AVISO_MIN: /^\d{1,6}$/
       };
@@ -3563,8 +3563,10 @@ function doPost(e) {
           var _sV = msgVoz.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
           var _citou = /\b(ideia|insight|sugest|dica)/.test(_sV);
           if (_insDentroDaJanelaFeedback() || _citou) {
-            if (/\b(gostei|boa|bom|otim|util|excelente|massa|top|curti|serviu)\b/.test(_sV) && !/\bnao\s+(gostei|serviu|curti)\b/.test(_sV)) _voto = 'up';
+            if (/\b(gostei|boa|bom|otim|util|excelente|massa|top|curti|serviu)\b/.test(_sV) && !/\bnao\s+(gostei|serviu|curti)\b/.test(_sV) && !/\b(bom|boa)\s+(dia|tarde|noite)\b/.test(_sV)) _voto = 'up';   // "bom dia" dentro da janela votava 👍
             else if (/\b(nao gostei|nao serviu|nao curti|ruim|inutil|pessim|fraco|obvio|irrelevante|besteira)\b/.test(_sV)) _voto = 'down';
+            // "foi bem legal essa dica", "não ajudou em nada", "já sabia disso": a regex só tem as palavras da lista; o JEV julga o sentido. Frase curta, só dentro da janela.
+            else if (_sV.split(' ').length <= 14) { try { _voto = TypeSafe.votoFeedback(msgVoz); } catch (eVj) { _voto = null; } }
           }
         }
         var _ofr = null;
@@ -4087,7 +4089,7 @@ function doPost(e) {
             try {
               var so = Jarvis._toolsPermitidas(fr, { modo: 'nao', historico: hist }), com = Jarvis._toolsPermitidas(fr, { modo: 'sim', historico: hist }), g = Jarvis.ultimoGate();
               var n = function (o) { return o ? Object.keys(o).length : 'todas'; };
-              return { frase: fr, regex: n(so), comJev: n(com), ganhou: g ? g.ganhou : null, perdeu: g ? g.perdeu : null, ms: g ? g.ms : null,
+              return { frase: fr, regex: n(so), comJev: n(com), criaAgenda: com ? ['agendarAlertaVoz','agendarTarefa','agendarMensagemWhatsApp'].filter(function (k) { return com[k]; }) : 'todas', ganhou: g ? g.ganhou : null, perdeu: g ? g.perdeu : null, ms: g ? g.ms : null,
                        prob: g ? Object.keys(g.jev).filter(function (k) { return g.jev[k] >= 0.2; }).map(function (k) { return k + ' ' + g.jev[k].toFixed(2); }) : null };
             } catch (eFj) { return { frase: fr, erro: eFj.message }; }
           });
@@ -4111,6 +4113,16 @@ function doPost(e) {
             var _trg = Monitor.triar(body.triagemGmail.slice(0, 5), _cfgM);
             saida.triagemGmail = { objetivo: _cfgM.acao || null, avisaria: _trg.relevantes.map(function (n) { return n.assunto; }), descartaria: _trg.descartados, ms: _trg.ms };
           } catch (eTg) { saida.triagemGmail = { erro: eTg.message }; }
+        }
+        // Monitor de páginas: dado o texto antigo e o novo de uma página (e o que o dono acompanha), o que o JEV faria — avisar ou calar. Máx. 10 itens {antigo, novo, descricao}.
+        if (body.triagemPagina && Array.isArray(body.triagemPagina)) {
+          saida.triagemPagina = body.triagemPagina.slice(0, 10).map(function (x) {
+            try { var j = Web.julgarMudanca(String(x.antigo || ''), String(x.novo || ''), String(x.descricao || '')); return { descricao: String(x.descricao || '').slice(0, 60), relevante: j.relevante, p: j.p, resumo: j.resumo }; } catch (eTp) { return { erro: eTp.message }; }
+          });
+        }
+        // Voto do insight por JEV: o que ele entenderia de cada frase (up/down/null), sem registrar nada. Máx. 30.
+        if (body.votoJev && Array.isArray(body.votoJev)) {
+          saida.votoJev = body.votoJev.slice(0, 30).map(function (f) { try { return { frase: String(f), voto: TypeSafe.votoFeedback(String(f)) }; } catch (eVj2) { return { frase: String(f), erro: eVj2.message }; } });
         }
         // Categoria de gasto: lista de palavras primeiro, JEV só para o que ela não conhece. Máx. 30 lugares.
         if (body.categoriaJev && Array.isArray(body.categoriaJev)) {

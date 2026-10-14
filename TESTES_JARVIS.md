@@ -273,6 +273,10 @@ Sem você pedir, no tick de 15 min, em duas janelas: **manhã 9–11h** e **noit
 | 1.142 | Frases que NÃO são controle: "toca Legião Urbana", "abre o spotify", "a lanterna está ligada?" | não aciona controle (segue o fluxo de sempre) | ✅ | 14/10: 0 falso positivo em 10 controles |
 | 1.143 | Monitor de Gmail: e-mail de promoção/newsletter | descartado pelo JEV: sem Gemini, sem notificação (evento `monitor:triagem`) | ⚠️ | `triagemGmail` ao vivo descartou 4 de 10 de exemplo; falta um e-mail real chegar pelo monitor |
 | 1.144 | Monitor de Gmail: boleto, colega, alerta de segurança, escola, Pix | continuam sendo avisados | ⚠️ | medido em exemplos (todos mantidos); falta um real |
+| 1.145 | Monitor de páginas: mudança só de visitas/hora/anúncio | não notifica (evento `web:triagem`) e atualiza o texto guardado | ⚠️ | `triagemPagina` ao vivo 7/7; falta uma página real mudar |
+| 1.146 | Monitor de páginas: preço/estoque/inscrição mudou | notifica com "Mudou: …" e as linhas novas | ⚠️ | idem; monitores antigos avisam sem resumo na 1ª mudança e passam a guardar o texto |
+| 1.147 | Voto do insight com "foi bem legal essa dica" / "já sabia disso" | 👍 / 👎 e a resposta de sempre ("Anotado, vou trazer mais…") | ⚠️ | `votoJev` ao vivo 17/18; falta votar de verdade logo depois de um insight |
+| 1.148 | "e amanhã também" logo depois de perguntar a agenda | só consulta; não oferece ferramenta de criar alerta | ✅ | 14/10 (`criaAgenda: []` com conversa) |
 | 1.139 | Interruptores: `FERRAMENTAS_JEV`, `CONFIRMA_JEV`, `INJECAO_JEV`, `ACAO_JEV`, `CATEGORIA_JEV` = nao | volta ao comportamento anterior | ✅ | testes automáticos |
 
 ### 1g. 🔔 Notificações do celular 🗣️

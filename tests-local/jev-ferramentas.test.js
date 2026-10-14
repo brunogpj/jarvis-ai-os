@@ -209,3 +209,17 @@ test('Pré-filtro: a conversa anterior vai ao JEV (continuidade: "e amanhã?" n�
   s.Jarvis._toolsPermitidas('e quinta também', {});
   assert.ok(!('conversa_anterior' in doFiltro().state), 'sem histórico, nada de contexto inventado');
 });
+
+test('Portão de agendamento: também recebe a conversa anterior ("e amanhã também" não vira alerta de voz por falta de contexto)', function () {
+  var vistos = [];
+  var s = makeSandbox({ props: { TYPESAFE_API_KEY: 'k' }, fetch: function (url, params) {
+    var corpo = JSON.parse(params.payload); vistos.push(corpo);
+    var ans = {}; Object.keys(corpo.questions).forEach(function (k) { ans[k] = { type: 'noul', noul: 0.02 }; });
+    return { code: 200, body: { answers: ans } };
+  } });
+  loadGasFile('TypeSafe.js', s); loadGasFile('Jarvis.js', s);
+  s.Jarvis._toolsPermitidas('e amanhã também', { historico: [{ role: 'user', text: 'o que eu tenho hoje na agenda' }, { role: 'assistant', text: 'Hoje você tem dentista às 15h.' }] });
+  var gate = vistos.filter(function (v) { return v.questions.fala; }).pop();
+  assert.match(gate.state.conversa_anterior, /o que eu tenho hoje na agenda/);
+  assert.match(gate.questions.fala.instructions, /continuação dela/);
+});

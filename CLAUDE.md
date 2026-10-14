@@ -409,6 +409,7 @@ Medido: 7/7 (preço, estoque e inscrição aberta avisam; visitas, hora, ofertas
 Diagnósticos: `ler_debug` com `ferramentasJev` (agora mostra `criaAgenda`), `injecaoJev:[textos]`, `acaoJev:[respostas]`, `categoriaJev:[lugares]`, `triagemGmail`, `triagemPagina:[{antigo,novo,descricao}]`, `votoJev:[frases]` (nada é executado).
 **Acompanhar o JEV na produção:** `ler_debug` com `n:200` e filtrar os eventos `gate:jev:ferramentas`, `gate:jev:agenda`, `confirma:jev`, `hook:acao_sem_fonte`, `hook:injecao_conteudo`, `monitor:triagem`, `web:triagem`, `rota:jev:*`
 (os `hook:acao_sem_fonte` de 14/10 22:02 são do ensaio `acaoJev`, não de uso real).
+Revisão diária automática: tarefa agendada `revisao-diaria-jev` (todo dia ~08:40, só leitura, roda enquanto o app Claude estiver aberto; se estiver fechado, roda na próxima abertura). Ela executa `node diagnostico_jev.js 24` (lê os eventos, sem segredo no arquivo: o token vem do `diagnostico.js`, que está no .gitignore) e relata acertos, falsos positivos e latência.
 
 **Fila de falas** (`controlarDispositivo('falar')`): a fala nova espera a anterior
 acabar, **fora do lock**, em passos de 15 s, até 110 s. A duração vem do áudio (WAV

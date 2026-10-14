@@ -712,7 +712,10 @@ var Financas = (function () {
   }
 
   /** O remetente é o próprio dono? Compara com FIN_NOME_DONO (Script Property; o nome não vai para o repositório): 2+ palavras em comum. */
-  function ehDoDono(nome) {
+  function ehDoDono(nome, cpf) {
+    // CPF mascarado do Itaú ("XXX.057.876-XX"): os 6 dígitos do meio, comparados com FIN_CPF_DONO (Script Property), identificam o Pix para ele mesmo
+    var cpfDono = String(_p('FIN_CPF_DONO') || '');
+    if (cpf && cpfDono && String(cpf) === cpfDono) return true;
     var dono = _norm(_p('FIN_NOME_DONO') || '').split(' ').filter(function (t) { return t.length > 2; });
     if (dono.length < 2) return false;
     var n = ' ' + _norm(nome) + ' ';
@@ -742,6 +745,24 @@ var Financas = (function () {
     var base = 'No Itaú: gasto de ' + _brl(g.valor) + (desc ? ' em ' + desc : '');
     return g.meio ? base + ', ' + rotulo + '. Registro na caderneta, categoria ' + p.categoria + '? Diga sim ou não.'
                   : base + '. Foi no crédito, no débito ou no pix?';
+  }
+
+  /**
+   * "Recebemos o pagamento no valor de R$ X" (Itaú confirma o pagamento de uma fatura): acha a fatura ABERTA de mesmo valor no mês e propõe marcá-la como paga
+   * (`fin_pend_banco`, 15 min; o "sim" usa a mesma ação de "paguei a fatura"). Sem fatura de mesmo valor, ou com mais de uma, só avisa e diz o comando de voz.
+   */
+  function proporPagamentoFatura(g) {
+    var r = resumo();
+    var abertas = (r.ok && r.dados && r.dados.obrigacoes) ? r.dados.obrigacoes.filter(function (o) {
+      return o.tipo === 'fatura' && !o.pago && !o.outroPaga && o.chave && Math.abs(Number(o.valor) - g.valor) < 0.01;
+    }) : [];
+    if (abertas.length !== 1) {
+      return 'No Itaú: pagamento de ' + _brl(g.valor) + ' confirmado, mas ' + (abertas.length ? 'achei mais de uma fatura com esse valor' : 'não achei uma fatura aberta com esse valor') +
+             ' na caderneta. Se quiser marcar, diga: paguei a fatura, e o nome.';
+    }
+    var o = abertas[0];
+    _cachePut('fin_pend_banco', { tipo: 'pagar', mes: r.dados.mes, chave: o.chave, nome: o.nome, valor: o.valor, id: g.chave }, 900);
+    return 'No Itaú: recebemos o pagamento de ' + _brl(o.valor) + '. Marco ' + o.nome + ' como paga? Isso sai do seu livre. Diga sim ou não.';
   }
 
   /** Notificação de Pix recebido → guarda a proposta (15 min) e devolve a frase que o Code.js notifica E fala. */
@@ -1333,7 +1354,7 @@ var Financas = (function () {
           if (mb && mb.meio) { pb.meio = mb.meio; pb.rotulo = mb.rotulo; pb.aguarda = null; _cachePut('fin_pend_banco', pb, 900); return { resp: _fraseGasto(pb) }; }
         } else if (_SIM.test(s)) {
           _cacheDel('fin_pend_banco');
-          var outB = ACOES.gasto.executar(pb);
+          var outB = (ACOES[pb.tipo] || ACOES.gasto).executar(pb);
           if (outB.desfazer) guardarDesfazer(outB.desfazer);
           return { resp: outB.resp };
         }
@@ -1374,7 +1395,7 @@ var Financas = (function () {
            registrarGastoSwile: registrarGastoSwile, desfazerGastoSwile: desfazerGastoSwile, falarSaldoSwile: falarSaldoSwile,
            interpretarRecarga: interpretarRecarga, conversar: conversar, registrarRecarga: registrarRecarga, desfazerRecarga: desfazerRecarga,
            interpretarGasto: interpretarGasto, categoriaDe: categoriaDe, registrarGasto: registrarGasto, desfazerGasto: desfazerGasto, guardarDesfazer: guardarDesfazer,
-           _postBruto: _post, ehDoDono: ehDoDono, proporEntrada: proporEntrada, proporBancoGenerico: proporBancoGenerico, registrarReceita: registrarReceita, desfazerReceita: desfazerReceita };
+           _postBruto: _post, ehDoDono: ehDoDono, proporEntrada: proporEntrada, proporBancoGenerico: proporBancoGenerico, proporPagamentoFatura: proporPagamentoFatura, registrarReceita: registrarReceita, desfazerReceita: desfazerReceita };
 })();
 
 /** Diagnóstico no editor: mostra se está conectado e o que ele responderia, sem falar no celular. */

@@ -242,11 +242,18 @@ Sem você pedir, no tick de 15 min, em duas janelas: **manhã 9–11h** e **noit
 | 1.112 | "Fecha outubro" (mês em curso) · "fecha agosto" (antes do início) | recusa com o motivo, nada gravado | ✅ | 14/10 celular + prova do Worker (`fecharMesProva`) |
 | 1.113 | "Reabre setembro" → "não" | repete que o livre volta a ser calculado e cancela sem tocar em nada | ✅ | 14/10 celular |
 | 1.114 | "Fecha o mês" depois que o mês terminou, com contas abertas | "Atenção: ainda há N contas sem marcar como paga…" + os números + "Fecho <mês>? Diga sim ou não." → sim fecha; desfaz reabre | ⏳ | testado por teste automático e por paridade do retrato; o primeiro real será outubro, depois de 1º/11 |
-| 1.115 | Itaú: notificação de compra ("Compra … R$ 50,00 em X") | notificação **e** fala: "No Itaú: gasto de R$ 50,00 em X, no crédito. Registro na caderneta, categoria Y?" — nada gravado antes do sim | ⏳ | precisa do app Itaú no FILTRO da macro de notificações; hoje nenhuma chega |
+| 1.115 | Itaú: notificação de COMPRA NO CARTÃO (formato real ainda não visto) ("Compra … R$ 50,00 em X") | notificação **e** fala: "No Itaú: gasto de R$ 50,00 em X, no crédito. Registro na caderneta, categoria Y?" — nada gravado antes do sim | ⏳ | precisa do app Itaú no FILTRO da macro de notificações; hoje nenhuma chega |
 | 1.116 | Itaú sem dizer crédito/débito/pix | pergunta a forma de pagar; a resposta completa a proposta | ⏳ | teste automático |
 | 1.117 | Itaú: fatura, boleto, oferta, limite | seguem as regras de sempre (lembrete), sem pergunta de gasto | ⏳ | teste automático |
 | 1.118 | Itaú: valor que não dá para interpretar | guarda o texto bruto e avisa; `ler_debug` `financeiroAmostra:true` mostra | ⏳ | para escrever o parser exato depois |
 | 1.119 | JEV: paráfrases de índices e resumo do mês | `rotaJev` em 34 frases: 32 certas; as 2 "erradas" são "quanto sobrou esse mês depois das contas" (foi para o livre, razoável) e "fecha setembro" (agora ignorado pelo resumo) | ✅ | 14/10 |
+| 1.120 | Itaú: "Pix recebido" do SEU próprio CPF | avisa e fala que é transferência entre as suas contas; não pergunta receita | ✅ | 14/10: notificação simulada no formato real; sem gravar nada |
+| 1.121 | Itaú: "Feito. Pix enviado" para o seu próprio CPF | "Pix de R$ X seu para você mesmo… não registrei como gasto" | ✅ | 14/10 (simulado, formato real) |
+| 1.122 | Itaú: "Pagamento recebido!" com uma fatura aberta de mesmo valor | "No Itaú: recebemos o pagamento de R$ X. Marco Fatura Y como paga? Isso sai do seu livre." → sim marca; desfaz volta | ⏳ | teste automático; ao vivo as faturas já estavam pagas |
+| 1.123 | Itaú: "Pagamento recebido!" sem fatura aberta de mesmo valor | só avisa e diz o comando de voz; nada esperando o sim | ✅ | 14/10 (simulado) |
+| 1.124 | Itaú: "Fechamento da fatura" · "fatura fechou" · "novo boleto" | seguem as regras de sempre (nada de pergunta de gasto) | ✅ | 14/10 (simulado: não gerou pergunta) |
+| 1.125 | Itaú: Pix recebido/enviado de OUTRA pessoa | pergunta a receita extra / o gasto (origem it), só o sim grava | ⏳ | teste automático; falta uma notificação real do Itaú |
+| 1.126 | Itaú: primeira notificação REAL chega pela macro | aparece em `financeiroAmostra` e o parser reconhece | ⏳ | o filtro da macro foi atualizado; aguardando um evento do Itaú |
 
 ### 1g. 🔔 Notificações do celular 🗣️
 

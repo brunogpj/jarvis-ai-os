@@ -3108,7 +3108,7 @@ function doPost(e) {
       var _PERMITIDAS_CF = {
         FALA_PROATIVA_LOCAL: /^(sim|nao)$/, FALA_RESPOSTAS_LOCAL: /^(sim|nao)$/,
         MODO_FALA_VOZ: /^(nuvem|auto|local)$/, FALA_VOLUME_DB: /^(1[0-6]|[0-9])$/,
-        FALA_FORMATO: /^(ogg|wav)$/, FALA_ARQUIVO_UNICO: /^(sim|nao)$/, ROTA_JEV_NOVAS: /^(sim|nao)$/, FIN_AVISOS_ATIVO: /^(sim|nao)$/, FIN_NOME_DONO: /^[a-zà-ÿ ]{3,80}$/,
+        FALA_FORMATO: /^(ogg|wav)$/, FALA_ARQUIVO_UNICO: /^(sim|nao)$/, ROTA_JEV_NOVAS: /^(sim|nao)$/, FIN_AVISOS_ATIVO: /^(sim|nao)$/, FIN_NOME_DONO: /^[a-zà-ÿ ]{3,80}$/, FIN_CPF_DONO: /^\d{3}\.\d{3}$/,
         // consultor (fase 4): margem na conta (R$), taxa ao mês (decimal), reserva-alvo (meses) e pausa do rebalanceamento (data)
         CONSULTOR_MARGEM: /^\d{1,6}$/, CONSULTOR_TAXA_MES: /^0?\.\d{1,4}$/, CONSULTOR_RESERVA_ALVO: /^\d{1,2}$/, CONSULTOR_PAUSA_ATE: /^\d{4}-\d{2}-\d{2}$/, CONSULTOR_AVISO_ATIVO: /^(sim|nao)$/, CONSULTOR_AVISO_MIN: /^\d{1,6}$/
       };
@@ -5631,10 +5631,23 @@ function _bancoParse(app, titulo, texto) {
       return { origem: 'mp', valor: _finNum(m[1]), estabelecimento: m[2].trim(), meio: credito ? 'Cartão de crédito' : 'Pix / débito', auto: credito };
     }
   }
-  // ITAÚ — ainda SEM formato conhecido: nenhuma notificação do Itaú chegou ao Jarvis até hoje (o app precisa estar no filtro da macro), então não há texto real
-  // para escrever um parser exato. Em vez de chutar um formato, lê o que dá para ler com segurança — UM único valor em R$ e palavras de compra/pagamento ou de
-  // recebimento — e NUNCA registra sozinho: vira uma pergunta falada ("Registro como gasto?") e o texto bruto fica guardado para o parser exato ser escrito depois.
+  // ITAÚ. Os textos abaixo são REAIS, lidos na caixa de notificações do app do Itaú (14/10/2026; título + corpo):
+  //   "Pix recebido | Você recebeu R$ 115,00 de BRUNO, CPF XXX.057.876-XX."
+  //   "Feito. Pix enviado | Você enviou R$ 45,00 para BRUNO, CPF XXX.057.876-XX."
+  //   "Pagamento recebido! | Recebemos o pagamento no valor de R$ 257,96! Seu limite já está liberado e pode ser consultado no App."   (pagamento da FATURA do cartão)
+  //   "Fechamento da fatura | O total da fatura do seu Itau Click Multiplo MC Plat fechou no valor de R$ 0,00. Novas compras entrarão na fatura do próximo mês."
+  //   "A fatura do cartão final 3320 fechou | O total é de R$ 257,96 e vence em 13/10/2026."   ·   "Você tem um novo boleto | Confira o boleto de R$ 257,96 emitido para …"
+  // O CPF vem mascarado (XXX.nnn.nnn-XX): comparado com FIN_CPF_DONO (só os 6 dígitos do meio, em Script Property) identifica o Pix para ELE MESMO (entre as contas dele).
+  // Compra no cartão ainda não apareceu em texto real: segue o caminho genérico, que NUNCA registra sozinho (pergunta; só o "sim" grava). Se o texto do push for um pouco
+  // diferente do da caixa de notificações, cai no genérico ou no "formato desconhecido" (texto bruto guardado) em vez de errar.
   if (/ita[uú]/.test(a) && !/investiment/.test(a)) {
+    var cpfM = junto.match(/CPF\s+X{3}\.(\d{3}\.\d{3})-X{2}/i), cpfIt = cpfM ? cpfM[1] : '';
+    m = junto.match(/Recebemos o pagamento no valor de R\$\s*([\d.,]*\d)/i);
+    if (m) return { pagamentoFatura: true, generico: true, exato: true, origem: 'it', valor: _finNum(m[1]), auto: false };
+    m = junto.match(/Voc[eê] recebeu R\$\s*([\d.,]*\d) de (.+?),\s*CPF/i);
+    if (m && /pix recebido/i.test(junto)) return { entrada: true, generico: true, exato: true, origem: 'it', valor: _finNum(m[1]), remetente: m[2].trim(), cpf: cpfIt, instituicao: '', auto: false };
+    m = junto.match(/Voc[eê] enviou R\$\s*([\d.,]*\d) para (.+?),\s*CPF/i);
+    if (m && /pix enviado/i.test(junto)) return { generico: true, exato: true, origem: 'it', valor: _finNum(m[1]), estabelecimento: m[2].trim(), meio: 'Pix / débito', cpf: cpfIt, auto: false };
     if (/fatura|boleto|vencimento|vence|limite|oferta|promo[cç]|seguro|empr[eé]stimo|cr[eé]dito pr[eé]/i.test(junto)) return null;   // avisos, não transação: seguem as regras de sempre
     var vals = junto.match(/R\$\s*([\d.,]*\d)/g) || [];
     if (vals.length === 1) {
@@ -5643,8 +5656,8 @@ function _bancoParse(app, titulo, texto) {
       var gasto = /\b(compra|pagamento|pagou|voc[eê] fez um pix|pix enviado|d[eé]bito|debitad[oa]|saque|transfer[eê]ncia enviada)\b/i.test(junto);
       var estab = (junto.match(/(?:\bem:?|\bno|\bna|\bpara)\s+([A-ZÀ-Ý0-9][^.,;]{2,50})/) || [])[1];
       var meioIt = /cr[eé]dito/i.test(junto) ? 'Cartão de crédito' : (/d[eé]bito/i.test(junto) || /pix/i.test(junto) ? 'Pix / débito' : null);
-      if (vi > 0 && recebido) return { entrada: true, generico: true, origem: 'it', valor: vi, remetente: (junto.match(/\bde\s+(?!R\$)([A-ZÀ-Ý][^,.;]{2,50})/) || [])[1] || 'alguém', instituicao: '', auto: false };
-      if (vi > 0 && gasto && !/saque/i.test(junto)) return { generico: true, origem: 'it', valor: vi, estabelecimento: (estab || '').trim(), meio: meioIt, auto: false };
+      if (vi > 0 && recebido) return { entrada: true, generico: true, origem: 'it', valor: vi, remetente: (junto.match(/\bde\s+(?!R\$)([A-ZÀ-Ý][^,.;]{2,50})/) || [])[1] || 'alguém', cpf: cpfIt, instituicao: '', auto: false };
+      if (vi > 0 && gasto && !/saque/i.test(junto)) return { generico: true, origem: 'it', valor: vi, estabelecimento: (estab || '').trim(), meio: meioIt, cpf: cpfIt, auto: false };
     }
     if (vals.length >= 1) return { desconhecido: true, origem: 'it', auto: false };   // do Itaú, tem valor, mas não dá para interpretar com segurança
     return null;                                                                      // sem valor em R$: não é transação, segue as regras de sempre
@@ -5686,6 +5699,23 @@ function _bancoParaCaderneta(d, opts) {
       _finAvisarCaderneta('Itaú', 'Chegou uma notificação do Itaú com valor que eu ainda não sei interpretar: ' + String(docU.bruto).slice(0, 140) + '. Guardei o texto para aprender o formato.', 'desconhecido');
       return { regra: 'gasto_banco', acao: 'banco_desconhecido', status: 'formato_desconhecido' };
     }
+    if (p.pagamentoFatura) {
+      // "Recebemos o pagamento no valor de R$ X": o Itaú confirmou o pagamento de uma fatura. Pergunta se marca a fatura de mesmo valor como paga (isso mexe no livre).
+      var docF = { app: d.app || '', pacote: d.pacote || '', titulo: d.titulo || '', texto: d.texto || '', bruto: ((d.titulo || '') + ' | ' + (d.texto || '')).trim(),
+                   em: em, dia: dia, tipo: 'pagamento_fatura', valor: p.valor, origem: p.origem, parseado: true, versaoParser: 1, caderneta: 'aguarda_confirmacao' };
+      var fraseF = Financas.proporPagamentoFatura({ valor: p.valor, chave: idFin });
+      if (!opts.simular) Firestore.setDoc(_FIN_COL, idFin, docF);
+      _finAvisarCaderneta('Itaú', fraseF, 'validacao');
+      return { regra: 'gasto_banco', acao: 'pagamento_fatura', status: 'aguarda_confirmacao' };
+    }
+    if (p.generico && !p.entrada && Financas.ehDoDono(p.estabelecimento, p.cpf)) {
+      // Pix enviado para ele mesmo (CPF mascarado igual ao dele): transferência entre as contas, não é gasto.
+      var docT = { app: d.app || '', pacote: d.pacote || '', titulo: d.titulo || '', texto: d.texto || '', bruto: ((d.titulo || '') + ' | ' + (d.texto || '')).trim(),
+                   em: em, dia: dia, tipo: 'transferencia_propria', valor: p.valor, origem: p.origem, parseado: true, versaoParser: 1, caderneta: 'transferencia_propria' };
+      if (!opts.simular) Firestore.setDoc(_FIN_COL, idFin, docT);
+      _finAvisarCaderneta('Pix enviado', 'Pix de ' + _fmtBRL(p.valor) + ' seu para você mesmo. É transferência entre as suas contas, não registrei como gasto.', 'entrada');
+      return { regra: 'gasto_banco', acao: 'transferencia_propria', status: 'transferencia_propria' };
+    }
     if (p.generico && !p.entrada) {
       // Itaú, gasto: NUNCA automático. Pergunta ("Registro como gasto?"), com a forma de pagar se o texto não disse, e só o "sim" grava (origem it, com dedup).
       var docG = { app: d.app || '', pacote: d.pacote || '', titulo: d.titulo || '', texto: d.texto || '', bruto: ((d.titulo || '') + ' | ' + (d.texto || '')).trim(),
@@ -5699,7 +5729,7 @@ function _bancoParaCaderneta(d, opts) {
     if (p.entrada) {
       var docE = { app: d.app || '', pacote: d.pacote || '', titulo: d.titulo || '', texto: d.texto || '', bruto: ((d.titulo || '') + ' | ' + (d.texto || '')).trim(),
                    em: em, dia: dia, tipo: 'entrada_banco', valor: p.valor, remetente: p.remetente, origem: p.origem, parseado: true, versaoParser: 1 };
-      if (Financas.ehDoDono(p.remetente)) {
+      if (Financas.ehDoDono(p.remetente, p.cpf)) {
         docE.caderneta = 'transferencia_propria';
         _finAvisarCaderneta('Pix recebido', 'Pix de ' + _fmtBRL(p.valor) + ' de você mesmo' + (p.instituicao ? ' (' + p.instituicao + ')' : '') + '. É transferência entre as suas contas, não registrei como receita.', 'entrada');
       } else {

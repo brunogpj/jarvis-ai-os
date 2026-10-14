@@ -25,7 +25,7 @@ Projeto Google Apps Script gerenciado localmente via clasp.
 
 | Deployment ID | Versão | Descrição |
 |---|---|---|
-| `<DEPLOYMENT_ID>` | **@497** | **ATIVA** — "fechar mês por voz, Itaú assistido, JEV cad_mes sem ordem de fechar" |
+| `<DEPLOYMENT_ID>` | **@499** | **ATIVA** — "Itaú: parser exato (Pix, pagamento de fatura), Pix para si mesmo pelo CPF" |
 | `<DEPLOYMENT_ID>` | @25 | Antiga — "TesteJobs" |
 | `<DEPLOYMENT_ID>` | @HEAD | Cabeça (muda a cada push, não é a de produção) |
 
@@ -122,7 +122,7 @@ tráfego interno; inclui `NOTIF` da fila de notificações) → rate limit globa
 `janela_notificacoes` / `fala_direta` / `config_fala` / `config_financas` / `config_gemini` / `ler_debug` (todas com
 `VOICE_API_TOKEN`) → diag (`DIAG_TOKEN`). `config_fala` troca, por HTTP, só uma
 lista fechada de chaves da entrega da fala (`FALA_PROATIVA_LOCAL`,
-`FALA_RESPOSTAS_LOCAL`, `MODO_FALA_VOZ`, `FALA_VOLUME_DB` 0–16, `FALA_FORMATO`, `FALA_ARQUIVO_UNICO`, `ROTA_JEV_NOVAS` sim|nao, `FIN_AVISOS_ATIVO` sim|nao, `FIN_NOME_DONO`).
+`FALA_RESPOSTAS_LOCAL`, `MODO_FALA_VOZ`, `FALA_VOLUME_DB` 0–16, `FALA_FORMATO`, `FALA_ARQUIVO_UNICO`, `ROTA_JEV_NOVAS` sim|nao, `FIN_AVISOS_ATIVO` sim|nao, `FIN_NOME_DONO`, `FIN_CPF_DONO`).
 
 ## Voz no Android (estado em 28/09/2026)
 
@@ -366,12 +366,14 @@ do seguinte. Regras do Worker: só mês que já terminou, desde o início da cad
 recusa fechar o mês em curso / futuro / ação inválida sem mexer em nada. **Não houve fechamento real por voz ainda**: setembro já estava fechado e refazê-lo trocaria o retrato histórico;
 o primeiro real será outubro, a partir de 1º de novembro.
 
-**Itaú: espelho assistido, sem chute (14/10).** Nenhuma notificação do Itaú chegou ao Jarvis até hoje (os apps `com.itau` e `com.itau.investimentos` estão instalados e com notificação ligada,
-mas falta o app no FILTRO da macro de notificações), então não há texto real para escrever um parser exato. O Jarvis lê o que dá com segurança — UM valor em R$ e palavras de compra/pagamento
-ou de recebimento — e **nunca registra sozinho**: fala e notifica "No Itaú: gasto de R$ 50,00 em X, no crédito. Registro na caderneta, categoria Y? Diga sim ou não." (se o texto não diz
-crédito/débito/pix, pergunta); o "sim" grava com origem `it` (id `it_`, com dedup contra o que ele digitou). Pix recebido vira a pergunta da receita extra. Valor que não dá para interpretar
-(dois valores, saque…) guarda o texto bruto (`tipo:banco_desconhecido`) e avisa; fatura, boleto, oferta, limite e sem valor seguem as regras de sempre; o app de investimentos fica de fora.
-Com os textos reais guardados (`ler_debug` com `financeiroAmostra:true`), escreve-se o parser exato e o que for seguro passa a registrar sozinho, como Mercado Pago e Bradesco.
+**Itaú (14/10).** O app do Itaú entrou no filtro da macro, mas as primeiras notificações reais ainda não tinham chegado quando isto foi escrito; o parser exato foi escrito
+em cima dos textos REAIS da caixa de notificações do app (título + corpo): "Pix recebido | Você recebeu R$ X de NOME, CPF XXX.nnn.nnn-XX." · "Feito. Pix enviado | Você enviou R$ X para NOME, CPF …" ·
+"Pagamento recebido! | Recebemos o pagamento no valor de R$ X!…" (pagamento da FATURA do cartão). Fechamento de fatura, "fatura fechou" e boleto seguem as regras de sempre. O CPF vem mascarado:
+os 6 dígitos do meio, comparados com `FIN_CPF_DONO` (Script Property), identificam o Pix para ELE MESMO (transferência entre contas: só avisa, não vira receita nem gasto).
+Nada do Itaú registra sozinho: Pix recebido de outra pessoa pergunta a receita extra; Pix enviado a outra pessoa pergunta o gasto (origem `it`, id `it_`, com dedup); **pagamento recebido** acha a fatura ABERTA
+de mesmo valor e pergunta "Marco Fatura X como paga?" (o sim usa a mesma ação de "paguei a fatura"; sem fatura de mesmo valor só avisa). Compra no cartão do Itaú ainda não apareceu em texto real:
+segue o caminho genérico (um valor + palavra de compra, pergunta a forma de pagar). Valor que não dá para interpretar guarda o texto bruto (`tipo:banco_desconhecido`) e avisa. O app Itaú Investimentos
+fica de fora (ações vêm depois). Se o texto do PUSH diferir do da caixa de notificações, cai no genérico/desconhecido em vez de errar; `ler_debug` com `financeiroAmostra:true` mostra os textos guardados.
 
 **Fila de falas** (`controlarDispositivo('falar')`): a fala nova espera a anterior
 acabar, **fora do lock**, em passos de 15 s, até 110 s. A duração vem do áudio (WAV
@@ -471,7 +473,7 @@ o histórico. Então:
   genérico no teste do lembrete relativo).
 - O `README.md` é o que um recrutador lê primeiro. O projeto Jarvis no
   LinkedIn e o README do perfil do GitHub citam "147 testes automatizados"
-  (o repo tem 338 desde 14/10 — a frase segue verdadeira como piso);
+  (o repo tem 341 desde 14/10 — a frase segue verdadeira como piso);
   se a contagem mudar muito, avise o dono para atualizar lá também.
 - Nada sobre o empregador nem sobre sistemas internos de trabalho entra aqui.
 
@@ -520,7 +522,7 @@ público").
 cd tests-local && node --test
 ```
 
-338 testes offline (sem cota, sem rede) sobre a lógica determinística: MODO
+341 testes offline (sem cota, sem rede) sobre a lógica determinística: MODO
 DIRETO, gate sem-cota, hooks, parsing de turno/briefing, validação de prefs,
 ordenação dos cards, cadeia da voz, lembrete relativo e alertas de uma vez só,
 `_urlParaMacro`, `lerBiblia`, briefing com dados reais e trava de agenda
@@ -529,7 +531,7 @@ caracteres da voz no briefing e autodiagnóstico sem alarme de app raro
 (`tests-local/dia-0110.test.js`). `tests-local/gas-shims.js` simula as
 APIs do GAS (`formatDate` é fixo: teste que depende de horário injeta o seu).
 `tests-local/jev-caderneta.test.js` cobre o roteador semântico novo (JEV simulado, interruptor, máscara de log).
-Estado em 14/10/2026: **338/338 passando** (mais 34 do Worker da caderneta, `npm test` na pasta `app`).
+Estado em 14/10/2026: **341/341 passando** (mais 34 do Worker da caderneta, `npm test` na pasta `app`).
 
 Contra o sistema vivo, pelo terminal: `ler_debug` (POST com `VOICE_API_TOKEN`,
 `n` até 200, `alertas:true`, `notificacoes:N`, `ensaioBriefing:'<tag>'`, `gatilhos:true`,

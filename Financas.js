@@ -554,7 +554,42 @@ var Financas = (function () {
   function categoriaDe(texto) {
     var s = _norm(texto);
     for (var i = 0; i < _CATEGORIAS_PALAVRAS.length; i++) if (_CATEGORIAS_PALAVRAS[i][1].test(s)) return _CATEGORIAS_PALAVRAS[i][0];
-    return 'Outros';
+    return _categoriaJev(texto) || 'Outros';
+  }
+
+  /** Lugar que a lista de palavras não conhece ("Droga Raia" sim, "Panificadora Estrela" não): o JEV escolhe entre as categorias do
+   *  app, com "outros" como saída. Só entra DEPOIS da lista (que é de graça e exata), só para nomes curtos e com certeza ≥ 0,80.
+   *  É sugestão: o gasto ainda passa pelo "sim" de quem fala, ou entra por regra do banco com a categoria visível na notificação.
+   *  Chave ascii na pergunta (sem acento); o mapa devolve o nome que o app usa. CATEGORIA_JEV=nao desliga. */
+  var _CAT_JEV = { trabalho: 'Trabalho', compras: 'Compras', mercado: 'Mercado', alimentacao: 'Alimentação', transporte: 'Transporte',
+                   saude: 'Saúde', lazer: 'Lazer', educacao: 'Educação', casa: 'Casa' };
+  function _categoriaJev(texto) {
+    try {
+      var t = String(texto || '').replace(/\s+/g, ' ').trim();
+      if (t.length < 3 || t.length > 60 || typeof TypeSafe === 'undefined' || !TypeSafe.temChave()) return null;
+      if (String(PropertiesService.getScriptProperties().getProperty('CATEGORIA_JEV') || 'sim').toLowerCase() === 'nao') return null;
+      var r = TypeSafe.perguntar({ lugar_ou_descricao: t }, {
+        cat: {
+          type: 'choice',
+          instructions: 'Um brasileiro registrou um gasto neste lugar ou com esta descrição. Em qual categoria do orçamento ele cai? Se o nome não deixa claro, escolha "outros": é melhor não classificar do que classificar errado.',
+          criteria: {
+            trabalho:    { what: 'Ferramentas, serviços e assinaturas ligados ao trabalho ou a projetos profissionais.', examples: ['Google Cloud', 'hospedagem de site', 'domínio'] },
+            compras:     { what: 'Compras de produtos em lojas e marketplaces: roupas, eletrônicos, presentes.', examples: ['Shopee', 'Magazine Luiza', 'Renner'] },
+            mercado:     { what: 'Supermercado e compras de comida para casa.', examples: ['Epa', 'Atacadão', 'sacolão'] },
+            alimentacao: { what: 'Comida pronta fora de casa: restaurante, padaria, lanche, delivery.', examples: ['Panificadora Estrela', 'Burger King', 'iFood'] },
+            transporte:  { what: 'Deslocamento e carro: app de corrida, combustível, estacionamento, pedágio, oficina.', examples: ['Uber', 'Posto Ipiranga', 'Auto Center Silva'] },
+            saude:       { what: 'Farmácia, consultas, exames, plano de saúde, dentista.', examples: ['Droga Raia', 'Clínica São José', 'Laboratório Hermes Pardini'] },
+            lazer:       { what: 'Diversão e entretenimento: cinema, streaming, jogos, viagens, shows.', examples: ['Netflix', 'Cinemark', 'Steam'] },
+            educacao:    { what: 'Cursos, escola, faculdade, livros.', examples: ['Alura', 'Livraria Leitura', 'mensalidade da escola'] },
+            casa:        { what: 'Casa e manutenção: construção, móveis, conserto, limpeza, contas da casa.', examples: ['Leroy Merlin', 'eletricista', 'Telhanorte'] },
+            outros:      { what: 'Não dá para saber pelo nome, ou não é nenhuma das categorias acima.', examples: ['Pagamento 8821', 'João Silva', 'Transferência'] }
+          }
+        }
+      }, { cacheSeg: 21600 });
+      var a = r && r.ok && r.answers && r.answers.cat;
+      if (!a || !_CAT_JEV[a.choice] || !(a.confidence >= 0.80)) return null;
+      return _CAT_JEV[a.choice];
+    } catch (e) { return null; }
   }
 
   /** Gasto geral no Worker (cartão, débito, Pix, dinheiro, boleto). g = {origem:'mp'|'bd'|'vz', chave, data, valor, meio, categoria, descricao}. */
@@ -1294,6 +1329,23 @@ var Financas = (function () {
   var _NAO = /^(nao|negativo|cancela|cancelar|cancelado|deixa|deixa pra la|esquece|errado|nao precisa|para|pare)\b/;
   var _FILLER = /^(ok|okay|beleza|entao|bom|ta bom|ta|e ai|eai|pois|bem|enfim|ah|hum|uhum)[,.\s]+/;
 
+  /** Há proposta aberta e a regex de sim/não não pegou ("pode mandar bala", "fechado", "melhor não", "deixa pra lá"):
+   *  o JEV julga a frase com a pergunta como contexto. → 'sim' | 'nao' | null (null = "outra coisa" ou JEV fora do ar:
+   *  a frase segue o fluxo normal e a proposta expira, exatamente como antes). Só frases curtas; "desfaz" nunca passa
+   *  por aqui (é outro comando). CONFIRMA_JEV=nao desliga. */
+  function _julgarSimNao(msg, pergunta) {
+    try {
+      if (typeof TypeSafe === 'undefined' || !TypeSafe.temChave() || !TypeSafe.respostaSimNao) return null;
+      if (String(PropertiesService.getScriptProperties().getProperty('CONFIRMA_JEV') || 'sim').toLowerCase() === 'nao') return null;
+      var n = _norm(msg);
+      if (!n || n.split(' ').length > 12 || /^(desfaz|desfazer|desfaca|volta atras)\b/.test(n)) return null;
+      var j = TypeSafe.respostaSimNao(msg, pergunta);
+      if (!j || !j.ok) return null;
+      try { if (typeof Jarvis !== 'undefined' && Jarvis.registrarEvento) Jarvis.registrarEvento({ tool: 'confirma:jev', ok: true, ms: j.ms || 0, resumo: j.resposta + ' (' + (j.bruta || '?') + ' ' + Number(j.conf || 0).toFixed(2) + ')' }); } catch (eE) {}
+      return (j.resposta === 'sim' || j.resposta === 'nao') ? j.resposta : null;
+    } catch (e) { return null; }
+  }
+
   /**
    * Ponto de entrada da voz. → {resp} se a frase era desta conversa (proposta, "sim", "não", "desfaz"), senão null.
    * Com proposta pendente, só "sim"/"não" são tratados; qualquer outra frase segue o fluxo normal (e a proposta expira).
@@ -1322,7 +1374,9 @@ var Financas = (function () {
         return { resp: (pend.valor >= 500 ? 'Esse valor é alto. ' : '') + _fraseGasto(pend) };
       }
       if (pend) {
-        if (_SIM.test(s)) {
+        var simP = _SIM.test(s), naoP = _NAO.test(s);
+        if (!simP && !naoP) { var jP = _julgarSimNao(msg, 'Proposta: ' + _descAcao(pend) + '. Posso executar? Diga sim ou não.'); simP = jP === 'sim'; naoP = jP === 'nao'; }
+        if (simP) {
           _cacheDel('fin_pendente');
           var acao = ACOES[pend.tipo];
           if (!acao) return null;
@@ -1330,29 +1384,33 @@ var Financas = (function () {
           if (out.desfazer) guardarDesfazer(out.desfazer);
           return { resp: out.resp };
         }
-        if (_NAO.test(s)) { _cacheDel('fin_pendente'); return { resp: 'Certo, não registrei nada.' }; }
+        if (naoP) { _cacheDel('fin_pendente'); return { resp: 'Certo, não registrei nada.' }; }
       }
       // Pix recebido esperando o sim (a notificação do banco perguntou "registro como receita extra?"). Só vale sem outra proposta aberta.
       var pe = pend ? null : _cacheGet('fin_pend_entrada');
       if (pe) {
         var catR = _categoriaReceita(s);
-        if (_SIM.test(s) || (catR && !_NAO.test(s) && s.split(' ').length <= 4)) {
+        var simE = _SIM.test(s) || (catR && !_NAO.test(s) && s.split(' ').length <= 4), naoE = _NAO.test(s);
+        if (!simE && !naoE) { var jE = _julgarSimNao(msg, 'Entrou um Pix de ' + (pe.valor != null ? _brl(pe.valor) : 'um valor') + '. Registro como receita extra? Diga sim ou não.'); simE = jE === 'sim'; naoE = jE === 'nao'; }
+        if (simE) {
           _cacheDel('fin_pend_entrada');
           if (catR) pe.categoria = catR;
           var outR = ACOES.receita.executar(pe);
           if (outR.desfazer) guardarDesfazer(outR.desfazer);
           return { resp: outR.resp };
         }
-        if (_NAO.test(s)) { _cacheDel('fin_pend_entrada'); return { resp: 'Certo, não registrei a receita.' }; }
+        if (naoE) { _cacheDel('fin_pend_entrada'); return { resp: 'Certo, não registrei a receita.' }; }
       }
       // Gasto de banco sem parser exato (Itaú) esperando a forma de pagar ou o sim. Só vale sem outra proposta aberta.
       var pb = pend ? null : _cacheGet('fin_pend_banco');
       if (pb) {
-        if (_NAO.test(s)) { _cacheDel('fin_pend_banco'); return { resp: 'Certo, não registrei esse gasto do Itaú.' }; }
+        var naoB = _NAO.test(s), simB = _SIM.test(s);
+        if (!naoB && pb.aguarda !== 'meio' && !simB) { var jB = _julgarSimNao(msg, 'Compra de ' + (pb.valor != null ? _brl(pb.valor) : 'um valor') + (pb.estabelecimento ? ' em ' + pb.estabelecimento : '') + '. Registro como gasto? Diga sim ou não.'); simB = jB === 'sim'; naoB = jB === 'nao'; }
+        if (naoB) { _cacheDel('fin_pend_banco'); return { resp: 'Certo, não registrei esse gasto do Itaú.' }; }
         if (pb.aguarda === 'meio') {
           var mb = _meioDe(s);
           if (mb && mb.meio) { pb.meio = mb.meio; pb.rotulo = mb.rotulo; pb.aguarda = null; _cachePut('fin_pend_banco', pb, 900); return { resp: _fraseGasto(pb) }; }
-        } else if (_SIM.test(s)) {
+        } else if (simB) {
           _cacheDel('fin_pend_banco');
           var outB = (ACOES[pb.tipo] || ACOES.gasto).executar(pb);
           if (outB.desfazer) guardarDesfazer(outB.desfazer);

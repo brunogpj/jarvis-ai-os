@@ -25,7 +25,7 @@ Projeto Google Apps Script gerenciado localmente via clasp.
 
 | Deployment ID | Versão | Descrição |
 |---|---|---|
-| `<DEPLOYMENT_ID>` | **@499** | **ATIVA** — "Itaú: parser exato (Pix, pagamento de fatura), Pix para si mesmo pelo CPF" |
+| `<DEPLOYMENT_ID>` | **@502** | **ATIVA** — "JEV: injeção, ação inventada, categoria de gasto" |
 | `<DEPLOYMENT_ID>` | @25 | Antiga — "TesteJobs" |
 | `<DEPLOYMENT_ID>` | @HEAD | Cabeça (muda a cada push, não é a de produção) |
 
@@ -375,6 +375,24 @@ de mesmo valor e pergunta "Marco Fatura X como paga?" (o sim usa a mesma ação 
 segue o caminho genérico (um valor + palavra de compra, pergunta a forma de pagar). Valor que não dá para interpretar guarda o texto bruto (`tipo:banco_desconhecido`) e avisa. O app Itaú Investimentos
 fica de fora (ações vêm depois). Se o texto do PUSH diferir do da caixa de notificações, cai no genérico/desconhecido em vez de errar; `ler_debug` com `financeiroAmostra:true` mostra os textos guardados.
 
+**JEV além da caderneta (14/10).** O JEV (TypeSafe) deixou de ser só o roteador de intenções e ganhou cinco papéis, todos com interruptor em Script Property
+(trocável por `config_fala`, lista fechada) e todos em fail-open: sem chave ou sem rede, vale exatamente o comportamento anterior.
+1. **Pré-filtro de ferramentas** (`FERRAMENTAS_JEV` = `nao`|`adiciona`|`sim`, ligado em `sim`): o filtro por intenção de `_toolsPermitidas` era só regex. Agora uma requisição ao JEV
+pergunta, por domínio (agenda, e-mail, Drive, tarefas, contatos, formulários, imagem, dispositivo, celular, Bíblia, web, lembrete por lugar, Swile, notificações, objetivos, segundo
+cérebro), "o pedido precisa destas ferramentas?". `adiciona` abre o que a regex perdeu (≥ 0,60); `sim` também FECHA o que ela abriu à toa (≤ 0,08). O núcleo nunca sai; autorizações
+e skills/scripts ficam só na regex (segurança); agendamento segue com o portão próprio. A pergunta recebe as últimas 3 mensagens, senão "e amanhã?" seria cortado. Medido ao vivo:
+~300–550 ms, fechou 11 de 11 grupos que não eram necessários (14→10 ferramentas) e achou as paráfrases sem palavra-chave. Evento `gate:jev:ferramentas` (+abriu/−fechou);
+`ler_debug` com `ferramentasJev:[frase | {frase, anterior:[...]}]` mede sem chamar o Gemini.
+2. **Sim/não por intenção** (`TypeSafe.respostaSimNao`, `CONFIRMA_JEV`): com proposta aberta (gasto, Pix recebido, compra do Itaú, oferta de insight) e a regex sem pegar
+("manda ver", "fechado", "melhor deixar quieto"), o JEV julga com a pergunta como contexto. "Sim" exige confiança 0,85 (grava dinheiro); "não" 0,70; dúvida ou "outra coisa" segue o
+fluxo normal. Frases de mais de 12 palavras e "desfaz" não vão ao JEV. Evento `confirma:jev`.
+3. **Categoria de gasto** (`CATEGORIA_JEV`): lugar que a lista de palavras não conhece vai ao JEV, que escolhe entre as categorias do app com "outros" de saída (≥ 0,80).
+4. **Anti-injeção em 2ª camada** (`INJECAO_JEV`): onde a regex `_RE_INJECAO` dá negativo, o JEV julga se o texto dá ordens a uma IA. (a) Canal não confiável (anexo/terceiro): vira a
+nota defensiva de sempre. (b) Resultado de `lerPagina`/`lerEmail`: ganha o campo `aviso_seguranca`; o texto não é alterado. Medido: 12/12. Nunca bloqueia; evento `hook:injecao_conteudo`.
+5. **Anti-ação-inventada** (`ACAO_JEV`): pós-hook que generaliza o da agenda. Resposta curta com verbo de ação feita ("enviei", "agendei", "registrei") em turno SEM ferramenta bem-sucedida:
+o JEV confirma se ela afirma ter executado algo (≥ 0,85) e então recebe o aviso "essa ação NÃO foi executada". Medido: 10/10. Evento `hook:acao_sem_fonte`.
+Diagnósticos: `ler_debug` com `ferramentasJev`, `injecaoJev:[textos]`, `acaoJev:[respostas]`, `categoriaJev:[lugares]` (nada é executado).
+
 **Fila de falas** (`controlarDispositivo('falar')`): a fala nova espera a anterior
 acabar, **fora do lock**, em passos de 15 s, até 110 s. A duração vem do áudio (WAV
 do Gemini = bytes/48 ms; OGG ≈ 14 caracteres/s; teto 150 s). Antes dormia no
@@ -473,7 +491,7 @@ o histórico. Então:
   genérico no teste do lembrete relativo).
 - O `README.md` é o que um recrutador lê primeiro. O projeto Jarvis no
   LinkedIn e o README do perfil do GitHub citam "147 testes automatizados"
-  (o repo tem 341 desde 14/10 — a frase segue verdadeira como piso);
+  (o repo tem 366 desde 14/10 — a frase segue verdadeira como piso);
   se a contagem mudar muito, avise o dono para atualizar lá também.
 - Nada sobre o empregador nem sobre sistemas internos de trabalho entra aqui.
 
@@ -522,7 +540,7 @@ público").
 cd tests-local && node --test
 ```
 
-341 testes offline (sem cota, sem rede) sobre a lógica determinística: MODO
+366 testes offline (sem cota, sem rede) sobre a lógica determinística: MODO
 DIRETO, gate sem-cota, hooks, parsing de turno/briefing, validação de prefs,
 ordenação dos cards, cadeia da voz, lembrete relativo e alertas de uma vez só,
 `_urlParaMacro`, `lerBiblia`, briefing com dados reais e trava de agenda
@@ -531,7 +549,7 @@ caracteres da voz no briefing e autodiagnóstico sem alarme de app raro
 (`tests-local/dia-0110.test.js`). `tests-local/gas-shims.js` simula as
 APIs do GAS (`formatDate` é fixo: teste que depende de horário injeta o seu).
 `tests-local/jev-caderneta.test.js` cobre o roteador semântico novo (JEV simulado, interruptor, máscara de log).
-Estado em 14/10/2026: **341/341 passando** (mais 34 do Worker da caderneta, `npm test` na pasta `app`).
+Estado em 14/10/2026: **366/366 passando** (mais 34 do Worker da caderneta, `npm test` na pasta `app`).
 
 Contra o sistema vivo, pelo terminal: `ler_debug` (POST com `VOICE_API_TOKEN`,
 `n` até 200, `alertas:true`, `notificacoes:N`, `ensaioBriefing:'<tag>'`, `gatilhos:true`,

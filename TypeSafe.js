@@ -106,7 +106,43 @@ var TypeSafe = (function () {
     return { ok: true, prob: prob, model: r.model, usage: r.usage, ms: r.ms, cache: !!r.cache };
   }
 
-  return { perguntar: perguntar, noul: noul, temChave: temChave, URL: TYPESAFE_URL };
+  /** "Ele disse SIM, NÃO ou outra coisa à pergunta que acabei de fazer?" — 14/10/2026.
+   *  As regex de sim/não (`^sim|pode|certo…`) só pegam o começo da frase: "pode mandar bala", "fechado",
+   *  "manda ver", "deixa pra lá", "melhor não", "peraí, o valor é outro" caíam fora e a proposta expirava ou a
+   *  frase ia para o modelo. Aqui o JEV julga com a PERGUNTA como contexto.
+   *  Devolve { ok, resposta: 'sim'|'nao'|'outra', conf, ms }. `outra` = não respondeu (mudou de assunto, corrigiu
+   *  o valor, fez outra pergunta) — quem chama NÃO deve tratar como sim nem como não.
+   *  Limiares: SIM é ação (grava dinheiro, envia), exige conf ≥ 0,85; NÃO é seguro (não faz nada), basta 0,70.
+   *  Abaixo disso → 'outra'. Propriedades CONFIRMA_JEV_SIM / CONFIRMA_JEV_NAO ajustam. */
+  function respostaSimNao(fala, pergunta, opts) {
+    opts = opts || {};
+    var limS = Number(_p('CONFIRMA_JEV_SIM') || 0.85), limN = Number(_p('CONFIRMA_JEV_NAO') || 0.70);
+    if (!isFinite(limS) || limS <= 0 || limS >= 1) limS = 0.85;
+    if (!isFinite(limN) || limN <= 0 || limN >= 1) limN = 0.70;
+    var r = perguntar({ pergunta_do_assistente: String(pergunta || '').slice(0, 400), resposta_do_dono: String(fala || '').slice(0, 300) }, {
+      resp: {
+        type: 'choice',
+        instructions: 'O assistente pessoal fez uma pergunta de confirmação ao dono, que respondeu em voz. Como a resposta deve ser entendida? ' +
+                      'Na dúvida escolha "outra": é melhor não agir do que agir errado.',
+        criteria: {
+          sim:   { what: 'Aceita / autoriza claramente o que foi proposto.', examples: ['sim', 'pode mandar bala', 'fechado', 'manda ver', 'isso mesmo, pode gravar', 'tá certo'] },
+          nao:   { what: 'Recusa / cancela / desiste do que foi proposto.', examples: ['não', 'melhor não', 'deixa pra lá', 'esquece isso', 'não precisa', 'cancela'] },
+          outra: { what: 'Não é uma resposta à pergunta: mudou de assunto, fez outro pedido ou outra pergunta, corrigiu um dado ("o valor é outro", "na verdade foi 50"), ou está em dúvida.',
+                   examples: ['que horas são', 'peraí, o valor é outro', 'na verdade foi no débito', 'quanto eu tenho livre', 'hum, não sei'] }
+        }
+      }
+    }, { cacheSeg: opts.cacheSeg || 0 });
+    if (!r.ok) return { ok: false, erro: r.erro, ms: r.ms };
+    var a = r.answers && r.answers.resp;
+    if (!a || !a.choice) return { ok: false, erro: 'resposta sem choice', ms: r.ms };
+    var conf = (typeof a.confidence === 'number') ? a.confidence : 0;
+    var resposta = 'outra';
+    if (a.choice === 'sim' && conf >= limS) resposta = 'sim';
+    else if (a.choice === 'nao' && conf >= limN) resposta = 'nao';
+    return { ok: true, resposta: resposta, bruta: a.choice, conf: conf, ms: r.ms };
+  }
+
+  return { perguntar: perguntar, noul: noul, respostaSimNao: respostaSimNao, temChave: temChave, URL: TYPESAFE_URL };
 })();
 
 /** Configura a chave da API. A chave fica SÓ nas Script Properties, nunca no código.

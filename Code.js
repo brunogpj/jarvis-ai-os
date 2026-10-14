@@ -3108,7 +3108,7 @@ function doPost(e) {
       var _PERMITIDAS_CF = {
         FALA_PROATIVA_LOCAL: /^(sim|nao)$/, FALA_RESPOSTAS_LOCAL: /^(sim|nao)$/,
         MODO_FALA_VOZ: /^(nuvem|auto|local)$/, FALA_VOLUME_DB: /^(1[0-6]|[0-9])$/,
-        FALA_FORMATO: /^(ogg|wav)$/, FALA_ARQUIVO_UNICO: /^(sim|nao)$/, ROTA_JEV_NOVAS: /^(sim|nao)$/, FIN_AVISOS_ATIVO: /^(sim|nao)$/, FIN_NOME_DONO: /^[a-zà-ÿ ]{3,80}$/, FIN_CPF_DONO: /^\d{3}\.\d{3}$/,
+        FALA_FORMATO: /^(ogg|wav)$/, FALA_ARQUIVO_UNICO: /^(sim|nao)$/, ROTA_JEV_NOVAS: /^(sim|nao)$/, FERRAMENTAS_JEV: /^(nao|adiciona|sim)$/, INJECAO_JEV: /^(sim|nao)$/, ACAO_JEV: /^(sim|nao)$/, CATEGORIA_JEV: /^(sim|nao)$/, FERRAMENTAS_JEV_ADD: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE: /^0?\.\d{1,2}$/, CONFIRMA_JEV: /^(sim|nao)$/, FIN_AVISOS_ATIVO: /^(sim|nao)$/, FIN_NOME_DONO: /^[a-zà-ÿ ]{3,80}$/, FIN_CPF_DONO: /^\d{3}\.\d{3}$/,
         // consultor (fase 4): margem na conta (R$), taxa ao mês (decimal), reserva-alvo (meses) e pausa do rebalanceamento (data)
         CONSULTOR_MARGEM: /^\d{1,6}$/, CONSULTOR_TAXA_MES: /^0?\.\d{1,4}$/, CONSULTOR_RESERVA_ALVO: /^\d{1,2}$/, CONSULTOR_PAUSA_ATE: /^\d{4}-\d{2}-\d{2}$/, CONSULTOR_AVISO_ATIVO: /^(sim|nao)$/, CONSULTOR_AVISO_MIN: /^\d{1,6}$/
       };
@@ -3528,6 +3528,10 @@ function doPost(e) {
           for (var _fiOfr = 0; _fiOfr < 3 && _FILLER_OFR_RE.test(_sOf); _fiOfr++) { _sOf = _sOf.replace(_FILLER_OFR_RE, ''); }
           if (/^(sim|claro|quero|manda|pode|pode mandar|bora|vai|conta|fala)\b/.test(_sOf)) _ofr = true;
           else if (/^(nao|agora nao|depois|deixa|passa|nem)\b/.test(_sOf)) _ofr = false;
+          else if (_sOf.split(' ').length <= 12 && typeof TypeSafe !== 'undefined' && TypeSafe.respostaSimNao && String(PropertiesService.getScriptProperties().getProperty('CONFIRMA_JEV') || 'sim').toLowerCase() !== 'nao') {
+            // "pode mandar bala", "bora ouvir", "agora não dá": a regex só pega o começo da frase; o JEV julga com a oferta como contexto.
+            try { var _jOf = TypeSafe.respostaSimNao(msgVoz, 'Quer ouvir o insight que eu tenho para você? Diga sim ou não.'); if (_jOf.ok && _jOf.resposta === 'sim') _ofr = true; else if (_jOf.ok && _jOf.resposta === 'nao') _ofr = false; } catch (eOfJ) {}
+          }
         }
         // (-1) LEMBRETE CONDICIONAL ("quando eu chegar em casa, me lembre de X") — determinístico:
         // cria a fila de verdade, sem depender do LLM (que responderia "ok, vou lembrar" e não
@@ -4023,6 +4027,37 @@ function doPost(e) {
               return { frase: fr, regex: _preverRotaDeterministica(fr), jev: j };
             } catch (eRj) { return { frase: fr, erro: eRj.message }; }
           });
+        }
+        // Mede o PRÉ-FILTRO de ferramentas: por frase, quantas ferramentas a regex abre, quais domínios o JEV acrescentaria
+        // ou fecharia e quantas sobrariam, SEM chamar o Gemini nem executar nada. Máx. 30 frases por chamada.
+        if (body.ferramentasJev && Array.isArray(body.ferramentasJev)) {
+          saida.ferramentasJev = body.ferramentasJev.slice(0, 30).map(function (f) {
+            // item = frase, ou { frase, anterior: ['dono: ...', 'assistente: ...'] } para medir continuidade ("e amanhã?")
+            var fr = String(f && f.frase != null ? f.frase : f);
+            var hist = (f && f.anterior || []).map(function (x) { var m = String(x); return { role: /^assistente/i.test(m) ? 'assistant' : 'user', text: m.replace(/^(assistente|dono):\s*/i, '') }; });
+            try {
+              var so = Jarvis._toolsPermitidas(fr, { modo: 'nao', historico: hist }), com = Jarvis._toolsPermitidas(fr, { modo: 'sim', historico: hist }), g = Jarvis.ultimoGate();
+              var n = function (o) { return o ? Object.keys(o).length : 'todas'; };
+              return { frase: fr, regex: n(so), comJev: n(com), ganhou: g ? g.ganhou : null, perdeu: g ? g.perdeu : null, ms: g ? g.ms : null,
+                       prob: g ? Object.keys(g.jev).filter(function (k) { return g.jev[k] >= 0.2; }).map(function (k) { return k + ' ' + g.jev[k].toFixed(2); }) : null };
+            } catch (eFj) { return { frase: fr, erro: eFj.message }; }
+          });
+        }
+        // Mede a 2ª camada anti-injeção: por texto de terceiro, o que a regex diz e a probabilidade do JEV (nada é executado). Máx. 30.
+        if (body.injecaoJev && Array.isArray(body.injecaoJev)) {
+          saida.injecaoJev = body.injecaoJev.slice(0, 30).map(function (tx) {
+            try { var j = Jarvis.julgarInjecao(String(tx)); return { texto: String(tx).slice(0, 90), regex: j.regex, jev: j.jev }; } catch (eIj) { return { texto: String(tx).slice(0, 60), erro: eIj.message }; }
+          });
+        }
+        // Mede o pós-hook de "ação inventada": o que ele faria com cada resposta SEM ferramenta no turno (nada é executado). Máx. 30.
+        if (body.acaoJev && Array.isArray(body.acaoJev)) {
+          saida.acaoJev = body.acaoJev.slice(0, 30).map(function (rs) {
+            try { var o = Jarvis._hookAcaoSemFonte(String(rs), {}); return { resposta: String(rs).slice(0, 80), marcou: o !== String(rs) }; } catch (eAj) { return { resposta: String(rs).slice(0, 60), erro: eAj.message }; }
+          });
+        }
+        // Categoria de gasto: lista de palavras primeiro, JEV só para o que ela não conhece. Máx. 30 lugares.
+        if (body.categoriaJev && Array.isArray(body.categoriaJev)) {
+          saida.categoriaJev = body.categoriaJev.slice(0, 30).map(function (l) { try { return { lugar: String(l), categoria: Financas.categoriaDe(String(l)) }; } catch (eCj) { return { lugar: String(l), erro: eCj.message }; } });
         }
         // Ensaio ao vivo do Gemini (texto, chamada de função com thoughtSignature, busca, voz, embedding) e o gasto dele.
         if (body.geminiTeste) { try { saida.geminiTeste = _geminiTesteVivo(); } catch (eGt) { saida.geminiTeste = { erro: eGt.message }; } }

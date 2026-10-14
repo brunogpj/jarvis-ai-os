@@ -3079,7 +3079,9 @@ function doPost(e) {
       var _PERMITIDAS_CF = {
         FALA_PROATIVA_LOCAL: /^(sim|nao)$/, FALA_RESPOSTAS_LOCAL: /^(sim|nao)$/,
         MODO_FALA_VOZ: /^(nuvem|auto|local)$/, FALA_VOLUME_DB: /^(1[0-6]|[0-9])$/,
-        FALA_FORMATO: /^(ogg|wav)$/, FALA_ARQUIVO_UNICO: /^(sim|nao)$/, ROTA_JEV_NOVAS: /^(sim|nao)$/, FIN_AVISOS_ATIVO: /^(sim|nao)$/, FIN_NOME_DONO: /^[a-zà-ÿ ]{3,80}$/
+        FALA_FORMATO: /^(ogg|wav)$/, FALA_ARQUIVO_UNICO: /^(sim|nao)$/, ROTA_JEV_NOVAS: /^(sim|nao)$/, FIN_AVISOS_ATIVO: /^(sim|nao)$/, FIN_NOME_DONO: /^[a-zà-ÿ ]{3,80}$/,
+        // consultor (fase 4): margem na conta (R$), taxa ao mês (decimal), reserva-alvo (meses) e pausa do rebalanceamento (data)
+        CONSULTOR_MARGEM: /^\d{1,6}$/, CONSULTOR_TAXA_MES: /^0?\.\d{1,4}$/, CONSULTOR_RESERVA_ALVO: /^\d{1,2}$/, CONSULTOR_PAUSA_ATE: /^\d{4}-\d{2}-\d{2}$/
       };
       var spCf = PropertiesService.getScriptProperties(), mudCf = {}, errCf = [];
       Object.keys(body.valores || {}).forEach(function (k) {
@@ -3845,7 +3847,8 @@ function doPost(e) {
          * Bruno ouve bem ("ok", hora, data). Quando a macro Conversa está esperando a resposta, ela fala o
          * texto — mais alto e sem os 8-15 s de síntese + Drive. FALA_RESPOSTAS_LOCAL=nao volta ao antigo. */
         var _respLocal = String(PropertiesService.getScriptProperties().getProperty('FALA_RESPOSTAS_LOCAL') || 'sim').toLowerCase() !== 'nao';
-        var _falarLocal = (_modoCfg === 'local') || (_respLocal && _modoCfg !== 'nao') || (_modoCfg === 'auto' && _rotaEhLocal && _curto);
+        var _falarLocal = (_modoCfg === 'local') || (_respLocal && _modoCfg !== 'nao') || (_modoCfg === 'auto' && _rotaEhLocal && (_curto || _viaBase === 'caderneta' || _viaBase === 'caderneta_acao'));
+        // (resposta financeira fica SEMPRE no aparelho, mesmo longa: a nuvem gravaria o valor num arquivo de áudio no Drive e levaria 15–25 s)
         var _falarNuvem = (_modoCfg !== 'local' && _modoCfg !== 'nao' && !_falarLocal);
 
         // _falarNuvem/_falarLocal dizem a INTENÇÃO; _entregou diz o que de fato saiu. A distinção
@@ -4049,6 +4052,21 @@ function doPost(e) {
             saida.bancoSimular = { interpretado: _bp, categoria: _bp ? Financas.categoriaDe(_bp.estabelecimento) : null,
               executou: (_bs.executar === true && _bp) ? _bancoParaCaderneta({ app: _bs.app, pacote: '', titulo: _bs.titulo, texto: _bs.texto, em: Number(_bs.em) || Date.now() }) : null };
           } catch (eBs) { saida.bancoSimular = { erro: eBs.message }; }
+        }
+        // Marcar conta como paga: ciclo REAL no mês seguinte (nada pendente no atual, e mês futuro não mexe no livre de hoje): marca uma
+        // obrigação ainda aberta, repete (idempotente), desmarca e mostra a resposta crua do Worker.
+        if (body.pagamentoTeste) {
+          try {
+            var _hp = Utilities.formatDate(new Date(), 'America/Sao_Paulo', 'yyyy-MM-dd'), _mp = Number(_hp.slice(5, 7)) + 1, _yp = Number(_hp.slice(0, 4));
+            if (_mp > 12) { _mp = 1; _yp++; }
+            var _mesP = _yp + '-' + (_mp < 10 ? '0' : '') + _mp, _rp = Financas.resumo(_mesP);
+            var _it = _rp.ok ? (_rp.dados.obrigacoes || []).filter(function (o) { return !o.pago && o.chave; })[0] : null;
+            if (!_it) { saida.pagamentoTeste = { mes: _mesP, achou: false }; }
+            else {
+              var _pp = function (pago) { return Financas._postBruto('/api/jarvis/pagamento', { mes: _mesP, chave: _it.chave, pago: pago }); };
+              saida.pagamentoTeste = { mes: _mesP, nome: _it.nome, marcou: _pp(true), repetiu: _pp(true), desmarcou: _pp(false), desmarcouDeNovo: _pp(false) };
+            }
+          } catch (ePt) { saida.pagamentoTeste = { erro: ePt.message }; }
         }
         if (body.ensaioBriefing) { try { saida.ensaioBriefing = diagBriefingTexto({ tag: String(body.ensaioBriefing) }); } catch (eEb) { saida.ensaioBriefing = { erro: eEb.message }; } }
         return ContentService.createTextOutput(JSON.stringify(saida)).setMimeType(ContentService.MimeType.JSON);

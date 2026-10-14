@@ -173,6 +173,20 @@ Sem você pedir, no tick de 15 min, em duas janelas: **manhã 9–11h** e **noit
 | 1.68 | Caderneta fora do ar numa compra | notifica e fala "Não consegui falar com a caderneta agora. Registro … assim que ela voltar." | ⏳ | |
 | 1.69 | Repetir "gastei 35 reais no mercado" enquanto ele pergunta como pagou | continua perguntando; **não** diz "registrei" | ⏳ | pegou um caso real em 14/10 |
 
+### 1f-f. 🧭 Consultor (fase 4) e conta paga por voz 🗣️🔑
+
+| # | Diga | Esperado | Status | Obs. |
+|---|---|---|---|---|
+| 1.70 | "Como está a minha carteira?" | cada categoria × alvo da estratégia, qual está mais abaixo, aviso se o rebalanceamento está pausado | ✅ | 14/10 (fala no aparelho) |
+| 1.71 | "Quanto posso aportar esse mês?" | livre do fim do mês − margem; divisão pelo alvo sem vender; ou "este mês não sobra" | ✅ | 14/10: "não sobra" (livre R$ 117) |
+| 1.72 | "Se eu aportar 1000 por mês durante 5 anos, quanto vou ter?" | patrimônio → valor futuro, aportes × rendimento, "estimativa, não promessa" | ✅ | 14/10: R$ 31.477,82 → R$ 127.397,31 a 0,8% ao mês |
+| 1.73 | "Em quanto tempo chego a 100 mil aportando 1000 por mês?" | prazo em anos e meses | ⏳ | coberto por teste automático |
+| 1.74 | "Minha reserva está suficiente?" | reserva em meses × alvo, quanto acima/abaixo em R$ | ✅ | 14/10: 11,5 meses × alvo 6 |
+| 1.75 | "Minha meta é casa própria, 150 mil, até 2030" → "sim" | confirma antes; grava a meta; "como estão minhas metas" mostra progresso e o aporte necessário | ⏳ | desfaz restaura |
+| 1.76 | "Paguei o aluguel" (conta aberta no mês) | "Marco como paga: Aluguel, R$ 700,00, dia 10. Diga sim ou não." → sim marca, diz o livre novo; desfaz desmarca | ⏳ | no mês atual nada estava pendente; o ciclo real foi provado no mês seguinte (`pagamentoTeste`) |
+| 1.77 | "Paguei a fatura" (mais de uma aberta) | "Achei mais de uma… Diga o nome completo" | ⏳ | |
+| 1.78 | "Desfaz" sem nada recente | "Não há nada recente para desfazer…" (não cai no modelo) | ✅ | 14/10 |
+
 ### 1g. 🔔 Notificações do celular 🗣️
 
 | # | O que conferir | Esperado | Status | Obs. |

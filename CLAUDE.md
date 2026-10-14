@@ -25,7 +25,7 @@ Projeto Google Apps Script gerenciado localmente via clasp.
 
 | Deployment ID | Versão | Descrição |
 |---|---|---|
-| `<DEPLOYMENT_ID>` | **@484** | **ATIVA** — "avisos financeiros com voz, entradas (Pix recebido) com confirmação, receita por voz" |
+| `<DEPLOYMENT_ID>` | **@487** | **ATIVA** — "consultor (fase 4), conta paga por voz, meta por voz" |
 | `<DEPLOYMENT_ID>` | @25 | Antiga — "TesteJobs" |
 | `<DEPLOYMENT_ID>` | @HEAD | Cabeça (muda a cada push, não é a de produção) |
 
@@ -91,6 +91,7 @@ arquivo. **Arquivo novo que precise subir tem que ser adicionado lá**, senão o
 | `SkillsManager.js` | Skills dinâmicas descobertas recursivamente no Drive (`SKILL.md`), com subagentes |
 | `Sandbox.js` | Sandbox para `run_dynamic_script`: APIs envolvidas (`_wrapped*`) + allowlist |
 | `Objetivos.js` | Autonomia por meta: planeja → confirma → executa em 2º plano → sintetiza |
+| `Consultor.js` | Fase 4 da caderneta: o consultor da estratégia do dono (carteira × alvo, aporte do mês, simulações, reserva, metas), só leitura, 100% no código |
 | `Briefing.js` | Briefings falados com **dados buscados pelo código** (agenda, tarefas, notícias locais e nacionais, tempo, versículo); o modelo só redige notícias — ver "Briefings" |
 | `Evals.js` / `QA.js` | `rodarEvals()` (comportamento, via `toolTrace` real) e `rodarQA()` (saúde funcional) |
 
@@ -295,6 +296,25 @@ rendimento, recarga e aluguel têm previsão própria e ficam de fora). "Desfaz"
 resposta é trocada por "Não registrei nada" (14/10: ele disse "Anotado! Registrei o gasto de 35 reais" sem registrar). Repetir o gasto
 inteiro enquanto o Jarvis espera a forma de pagar (o `/exec` perde respostas e o app repete) refaz a proposta em vez de cair no modelo.
 
+**Consultor (fase 4, desde 14/10) — a estratégia do dono, não a opinião do modelo.** `Consultor.js`, só leitura e sem Gemini. A
+distribuição-alvo vem da própria caderneta (config `meta_alocacao`, devolvida em `resumo.metaAlocacao`); as contas são feitas no código com os
+números do resumo. Responde por voz (rota `caderneta`, sempre no aparelho): **"como está minha carteira"** (cada categoria × alvo e qual está mais
+abaixo), **"quanto posso aportar este mês"** (livre do fim do mês − margem, dividido pelo alvo SEM vender nada: `dividirAporte`), **simulação**
+("se eu aportar 1000 por mês durante 5 anos…", "em quanto tempo chego a 100 mil aportando 1000"), **reserva contra o alvo** ("minha reserva está
+suficiente") e **metas** ("como estão minhas metas": progresso e aporte mensal necessário). Taxa e margem são parâmetros, e toda projeção diz
+que é estimativa. Parâmetros em Script Properties (via `config_fala`): `CONSULTOR_MARGEM` (R$, padrão 300), `CONSULTOR_TAXA_MES` (padrão
+0,008), `CONSULTOR_RESERVA_ALVO` (meses, padrão 6), `CONSULTOR_PAUSA_ATE` (data; o rebalanceamento pausado aparece na resposta). Metas:
+"minha meta é casa própria, 150 mil, até 2030" → confirma → `CONSULTOR_METAS` (desfaz restaura). Nada pessoal no repositório.
+
+**Marcar conta como paga por voz (14/10).** "Paguei o aluguel" / "paguei a fatura do Itaú" → o Jarvis acha a conta pelas pendências do mês
+(`resumo.obrigacoes[].chave`), repete nome, valor e dia (e avisa se o valor falado difere do da caderneta) e só o "sim" chama
+`POST /api/jarvis/pagamento` (mesmo efeito do check do app; só chaves d:/c:/v: que existem naquele mês, mês anterior/atual/seguinte,
+idempotente). Ambígua pede o nome; já paga ou paga por outra pessoa não marca; depois diz o livre novo; "desfaz" desmarca. Teste vivo sem
+mexer no mês atual: `ler_debug` com `pagamentoTeste:true` (marca/desmarca no mês seguinte). Os handlers do Worker têm teste contra um D1 falso
+(`test/handlers.test.js`): uma regex sem barras ("d{4}") deixou o endpoint recusando tudo e só um teste desse nível pega isso.
+
+**"Desfaz" seco nunca vai para o modelo** (ele respondeu "ação cancelada" sem saber de quê): sem nada recente, diz que não há o que desfazer.
+
 **Fila de falas** (`controlarDispositivo('falar')`): a fala nova espera a anterior
 acabar, **fora do lock**, em passos de 15 s, até 110 s. A duração vem do áudio (WAV
 do Gemini = bytes/48 ms; OGG ≈ 14 caracteres/s; teto 150 s). Antes dormia no
@@ -393,7 +413,7 @@ o histórico. Então:
   genérico no teste do lembrete relativo).
 - O `README.md` é o que um recrutador lê primeiro. O projeto Jarvis no
   LinkedIn e o README do perfil do GitHub citam "147 testes automatizados"
-  (o repo tem 279 desde 14/10 — a frase segue verdadeira como piso);
+  (o repo tem 292 desde 14/10 — a frase segue verdadeira como piso);
   se a contagem mudar muito, avise o dono para atualizar lá também.
 - Nada sobre o empregador nem sobre sistemas internos de trabalho entra aqui.
 
@@ -442,7 +462,7 @@ público").
 cd tests-local && node --test
 ```
 
-279 testes offline (sem cota, sem rede) sobre a lógica determinística: MODO
+292 testes offline (sem cota, sem rede) sobre a lógica determinística: MODO
 DIRETO, gate sem-cota, hooks, parsing de turno/briefing, validação de prefs,
 ordenação dos cards, cadeia da voz, lembrete relativo e alertas de uma vez só,
 `_urlParaMacro`, `lerBiblia`, briefing com dados reais e trava de agenda
@@ -451,7 +471,7 @@ caracteres da voz no briefing e autodiagnóstico sem alarme de app raro
 (`tests-local/dia-0110.test.js`). `tests-local/gas-shims.js` simula as
 APIs do GAS (`formatDate` é fixo: teste que depende de horário injeta o seu).
 `tests-local/jev-caderneta.test.js` cobre o roteador semântico novo (JEV simulado, interruptor, máscara de log).
-Estado em 14/10/2026: **279/279 passando**.
+Estado em 14/10/2026: **292/292 passando**.
 
 Contra o sistema vivo, pelo terminal: `ler_debug` (POST com `VOICE_API_TOKEN`,
 `n` até 200, `alertas:true`, `notificacoes:N`, `ensaioBriefing:'<tag>'`, `gatilhos:true`,

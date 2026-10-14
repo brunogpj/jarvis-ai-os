@@ -14,7 +14,8 @@ var Financas = (function () {
   var CACHE_S = 60;   // a caderneta muda pouco entre duas perguntas seguidas; evita bater no Worker toda hora
 
   var AJUDA = 'Sobre a caderneta, posso dizer quanto você tem livre hoje, a previsão do fim do mês, ' +
-              'o que vence, quanto falta pagar, o orçamento do mercado e quanto está investido.';
+              'o que vence, quanto falta pagar, o orçamento do mercado e quanto está investido. Como consultor, também falo da distribuição da carteira, ' +
+              'de quanto aportar este mês, de simulações, da reserva e das suas metas.';
 
   function _p(k) { try { return PropertiesService.getScriptProperties().getProperty(k); } catch (e) { return null; } }
 
@@ -168,6 +169,12 @@ var Financas = (function () {
   function interpretar(msg) {
     var s = String(msg || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[?!.,;:]/g, ' ').replace(/\s+/g, ' ').trim();
     if (!s) return null;
+    // CONSULTOR (fase 4): distribuição da carteira, quanto aportar, simulação, reserva contra o alvo, metas. Recebe a frase SEM tirar
+    // vírgula e ponto (são decimais e milhar: "1,5 milhão", "1.000") e vem antes das regras abaixo, que cortam esses sinais.
+    if (typeof Consultor !== 'undefined') {
+      var cs = Consultor.interpretar(_norm(msg));
+      if (cs) return cs;
+    }
     // Swile / vale: é da outra rota (_interpretarFinanceiro)
     if (/\b(swile|suav|suail|voucher|vale|mobilidade|alimentacao|refeicao|combustivel)\b/.test(s)) return null;
     // comando/ação que não é consulta (registrar, criar, cancelar...): fica para fases seguintes / modelo
@@ -211,6 +218,9 @@ var Financas = (function () {
       if (!configurado()) return 'A caderneta ainda não está conectada ao Jarvis.';
       var r = resumo();
       if (!r.ok) return r.codigo === 401 ? 'A caderneta recusou o acesso do Jarvis. Preciso que o acesso seja reconfigurado.' : 'Não consegui consultar a caderneta agora.';
+      if (/^(carteira|aporte|simular|tempo|reserva_alvo|metas)$/.test(consulta.tipo)) {
+        return (typeof Consultor !== 'undefined') ? (Consultor.falar(consulta.tipo, r.dados, consulta) || AJUDA) : AJUDA;
+      }
       var extra = { periodo: consulta.periodo };
       if (consulta.tipo === 'vencimentos' && consulta.periodo !== 'hoje') {
         var d = r.dados, hojeDia = _diaDe(d.hoje), fim = _diasNoMes(d.hoje);
@@ -703,6 +713,102 @@ var Financas = (function () {
     }
   };
 
+  // ── MARCAR CONTA COMO PAGA por voz ("paguei o aluguel", "paguei a fatura do Itaú") — com confirmação ───────────────
+  // Mesmo efeito do check do app: a conta sai das pendências e desconta do livre. Só contas que existem no mês (despesa, fatura, parcela).
+  // O gasto avulso ignora essas palavras de propósito (lançar de novo contaria duas vezes): quem as trata é esta ação.
+  var _PARADAS_PAGAR = /^(paguei|pagou|pagamos|pago|paga|pagar|quitei|quitou|ja|marca|marcar|marque|marcou|como|baixa|dar|da|de|do|das|dos|na|no|nas|nos|a|o|as|os|um|uma|conta|contas|mes|este|esse|essa|meu|minha|hoje|ontem|aqui|ai|reais?|real|valor|pelo|pela|com|foi|ta|esta|eh|que|e|em|para|pra|tambem|agora|ja|tudo)$/;
+  function _tokensConta(texto) {
+    return _norm(texto).replace(/[^a-z0-9 ]/g, ' ').split(' ').filter(function (t) { return t.length > 2 && !/^\d/.test(t) && !_PARADAS_PAGAR.test(t); });
+  }
+  function _tokenCasa(q, t) { return q === t || (q.length >= 4 && t.length >= 4 && (q.indexOf(t) === 0 || t.indexOf(q) === 0)); }
+
+  ACOES.pagar = {
+    propor: function (msg) {
+      var s = _norm(msg).replace(/[?]/g, '');
+      if (/\b(quanto|qual|quais|quando|onde|vence|vencem|falta|faltam)\b/.test(s)) return null;
+      var verbo = /\b(paguei|pagou|pagamos|quitei|quitou)\b/.test(s) || (/\bmarca\w*\b/.test(s) && /\bpag[ao]s?\b/.test(s)) || /\bja (foi|esta|ta) pag[ao]\b/.test(s) || /\bdar? baixa\b/.test(s);
+      if (!verbo) return null;
+      var q = _tokensConta(msg);
+      if (!q.length) return null;
+      var r = resumo();
+      if (!r.ok || !r.dados || !r.dados.obrigacoes) return null;   // sem a caderneta, deixa seguir (o aviso de falha vem do fluxo normal)
+      var mes = r.dados.mes;
+      var casam = r.dados.obrigacoes.filter(function (o) {
+        if (!o.chave) return false;
+        var ti = _tokensConta(o.nome);
+        return q.every(function (qq) { return ti.some(function (t) { return _tokenCasa(qq, t); }); });
+      });
+      if (!casam.length) return { resp: 'Não achei essa conta entre as de ' + (_MESES[Number(mes.slice(5, 7)) - 1] || mes) + ' na caderneta. Para um gasto avulso, diga o valor e onde foi.' };
+      var abertas = casam.filter(function (o) { return !o.pago; });
+      if (!abertas.length) return { resp: casam[0].nome + ' já está marcada como paga.' };
+      var minhas = abertas.filter(function (o) { return !o.outroPaga; });
+      if (!minhas.length) return { resp: abertas[0].nome + ' é paga por outra pessoa na caderneta, então não marco como paga por você.' };
+      if (minhas.length > 1) return { resp: 'Achei mais de uma: ' + minhas.slice(0, 3).map(function (o) { return o.nome; }).join(', ') + '. Diga o nome completo da que você pagou.' };
+      var o = minhas[0];
+      var dito = _numerosSimples(msg).match(/(\d+(?:\.\d+)?)/);
+      var aviso = '';
+      if (dito && Number(o.valor) > 0 && Math.abs(Number(dito[1]) - Number(o.valor)) / Number(o.valor) > 0.01) {
+        aviso = ' Você falou ' + _brl(Number(dito[1])) + ', mas na caderneta está ' + _brl(o.valor) + '.';
+      }
+      var p = { tipo: 'pagar', mes: mes, chave: o.chave, nome: o.nome, valor: o.valor, id: Utilities.getUuid().replace(/-/g, '').slice(0, 12) };
+      return { pend: p, resp: 'Marco como paga: ' + o.nome + ', ' + _brl(o.valor) + (o.dia ? ', dia ' + o.dia : '') + '.' + aviso + ' Diga sim ou não.' };
+    },
+    executar: function (p) {
+      var x = _post('/api/jarvis/pagamento', { mes: p.mes, chave: p.chave, pago: true });
+      if (!x.ok) return { resp: 'Não consegui marcar como paga agora. Não mudei nada; tente de novo daqui a pouco.' };
+      var livre = '';
+      var r = resumo();
+      if (r.ok && r.dados && r.dados.livreHoje != null) livre = ' Seu livre hoje agora é ' + _brl(r.dados.livreHoje) + (Number(r.dados.livreHoje) < 0 ? ' negativo' : '') + '.';
+      if (!x.dados.mudou) return { resp: p.nome + ' já estava marcada como paga.' };
+      return { resp: 'Marquei ' + p.nome + ' como paga.' + livre + ' Para desfazer, diga desfaz.', desfazer: { tipo: 'pagar', mes: p.mes, chave: p.chave, nome: p.nome } };
+    },
+    desfazer: function (u) {
+      var x = _post('/api/jarvis/pagamento', { mes: u.mes, chave: u.chave, pago: false });
+      return (x.ok && x.dados.mudou) ? 'Desfeito: ' + u.nome + ' voltou a ficar pendente.' : 'Não consegui desfazer. Ajuste na caderneta.';
+    }
+  };
+
+  // ── META por voz ("minha meta é casa própria, 150 mil, até 2030") — com confirmação; fica nas Script Properties (CONSULTOR_METAS) ──
+  function _lerMetas() { try { var m = JSON.parse(_p('CONSULTOR_METAS') || '[]'); return Array.isArray(m) ? m : []; } catch (e) { return []; } }
+  function _gravarMetas(m) { try { PropertiesService.getScriptProperties().setProperty('CONSULTOR_METAS', JSON.stringify(m)); return true; } catch (e) { return false; } }
+
+  ACOES.meta = {
+    propor: function (msg) {
+      var s = _norm(msg);
+      if (!/\b(minha meta|nova meta|defin\w* (a |uma )?meta|cadastr\w* (a |uma )?meta|meta (e|eh|seria))\b/.test(s)) return null;
+      if (typeof Consultor === 'undefined' || /\b(quanto falta|como estou|quais)\b/.test(s)) return null;
+      var ano = s.match(/\b(20\d{2})\b/);
+      var nums = Consultor.numerosFalados(s).filter(function (n) { return !(ano && String(n.valor) === ano[1]); });
+      var anos = s.match(/\bem (\d+) anos?\b/);
+      if (!nums.length) return null;
+      var valor = nums.slice().sort(function (a, b) { return b.valor - a.valor; })[0].valor;
+      var anoAlvo = ano ? ano[1] : (anos ? String(Number(Utilities.formatDate(new Date(), TZ, 'yyyy')) + Number(anos[1])) : '');
+      var bruto = String(msg || '').toLowerCase().split(/\bmeta\b/).slice(1).join(' meta ').split(/\d/)[0];
+      // (\b do JavaScript não enxerga "é" como letra: por isso o filtro é por palavra inteira, não por regex)
+      var _liga = { 'é': 1, e: 1, eh: 1, de: 1, da: 1, do: 1, seria: 1, para: 1, pra: 1, a: 1, o: 1, uma: 1, um: 1, em: 1, por: 1, ate: 1, 'até': 1 };
+      var nome = bruto.replace(/[,;:]/g, ' ').split(/\s+/).filter(function (t) { return t && !_liga[t]; }).join(' ');
+      if (!(valor >= 1000) || !anoAlvo || nome.length < 3) {
+        return { resp: 'Para cadastrar uma meta, diga o nome, o valor e o ano, por exemplo: minha meta é casa própria, 150 mil, até 2030.' };
+      }
+      if (valor > 100000000) return { resp: 'Esse valor passa de cem milhões. Diga um valor menor.' };
+      nome = nome.charAt(0).toUpperCase() + nome.slice(1);
+      var p = { tipo: 'meta', nome: nome.slice(0, 40), alvo: Math.round(valor), ate: anoAlvo };
+      return { pend: p, resp: 'Confirma a meta ' + p.nome + ': ' + _brl(p.alvo) + ' até ' + p.ate + '? Diga sim ou não.' };
+    },
+    executar: function (p) {
+      var antes = _lerMetas();
+      var depois = antes.filter(function (m) { return _norm(m.nome) !== _norm(p.nome); });
+      depois.push({ nome: p.nome, alvo: p.alvo, ate: p.ate });
+      if (depois.length > 5) depois = depois.slice(depois.length - 5);
+      if (!_gravarMetas(depois)) return { resp: 'Não consegui gravar a meta agora. Não mudei nada.' };
+      return { resp: 'Cadastrei a meta ' + p.nome + ': ' + _brl(p.alvo) + ' até ' + p.ate + '. Pergunte "como estão minhas metas" quando quiser. Para desfazer, diga desfaz.',
+               desfazer: { tipo: 'meta', antes: antes, nome: p.nome } };
+    },
+    desfazer: function (u) {
+      return _gravarMetas(u.antes || []) ? 'Desfeito: a meta ' + u.nome + ' voltou ao que era.' : 'Não consegui desfazer a meta.';
+    }
+  };
+
   var _SIM = /^(sim|isso|isso mesmo|confirmo|confirma|confirmado|pode|pode registrar|pode confirmar|pode gravar|esta certo|ta certo|certo|correto|exato|positivo|com certeza|claro)\b/;
   var _NAO = /^(nao|negativo|cancela|cancelar|cancelado|deixa|deixa pra la|esquece|errado|nao precisa|para|pare)\b/;
   var _FILLER = /^(ok|okay|beleza|entao|bom|ta bom|ta|e ai|eai|pois|bem|enfim|ah|hum|uhum)[,.\s]+/;
@@ -761,8 +867,8 @@ var Financas = (function () {
       var ult = _cacheGet('fin_ultima_acao');
       if (/^(desfaz|desfazer|desfaca|volta atras|(cancela|apaga|tira|remove) (a recarga|o gasto|esse gasto|o ultimo gasto|a receita))\b/.test(s)) {
         if (ult && ACOES[ult.tipo]) { _cacheDel('fin_ultima_acao'); return { resp: ACOES[ult.tipo].desfazer(ult) }; }
-        if (/recarga|gasto/.test(s)) return { resp: 'Não há nada recente para desfazer. Passou dos ' + DESFAZ_MIN + ' minutos, ajuste na caderneta.' };
-        return null;
+        if (/recarga|gasto|receita|meta|pagamento/.test(s) || s.split(' ').length <= 2) return { resp: 'Não há nada recente para desfazer. Passou dos ' + DESFAZ_MIN + ' minutos, ajuste na caderneta.' };
+        return null;   // (um "desfaz" seco NÃO pode cair no modelo: em 14/10 ele respondeu "ação cancelada, não registrei nada" sem saber de que ação falava)
       }
       var tipos = Object.keys(ACOES);
       for (var i = 0; i < tipos.length; i++) {
@@ -783,7 +889,7 @@ var Financas = (function () {
            registrarGastoSwile: registrarGastoSwile, desfazerGastoSwile: desfazerGastoSwile, falarSaldoSwile: falarSaldoSwile,
            interpretarRecarga: interpretarRecarga, conversar: conversar, registrarRecarga: registrarRecarga, desfazerRecarga: desfazerRecarga,
            interpretarGasto: interpretarGasto, categoriaDe: categoriaDe, registrarGasto: registrarGasto, desfazerGasto: desfazerGasto, guardarDesfazer: guardarDesfazer,
-           ehDoDono: ehDoDono, proporEntrada: proporEntrada, registrarReceita: registrarReceita, desfazerReceita: desfazerReceita };
+           _postBruto: _post, ehDoDono: ehDoDono, proporEntrada: proporEntrada, registrarReceita: registrarReceita, desfazerReceita: desfazerReceita };
 })();
 
 /** Diagnóstico no editor: mostra se está conectado e o que ele responderia, sem falar no celular. */

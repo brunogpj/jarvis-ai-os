@@ -958,7 +958,25 @@ function _extrairFala(mensagem) {
 var _ROTA_LIMIAR_LEITURA = 0.70;
 var _ROTA_LIMIAR_ACAO    = 0.85;
 
-function _rotaSemantica(mensagem, email, isOwner) {
+var _ROTA_ULTIMA = '';   // intenção que o JEV escolheu na última chamada (a voz usa para NÃO gravar valores financeiros no log)
+var _ROTA_LIMIAR_GUARDA = 0.85;
+
+/** Destino de um pedido de rota falado: tira "para/pra/me leve/direções…" do começo e deixa o lugar. PURA.
+ *  "para Rua Professor Edésio 105" → "Rua Professor Edésio 105"; "ir para casa" → "Casa"; "bom dia" → null. */
+function _destinoDoPedido(msg) {
+  var d = String(msg || '').trim().replace(/[\s.!?]+$/, '');
+  d = d.replace(/^(?:(?:por favor|jarvis)[\s,]+)?(?:(?:eu\s+)?(?:quero|preciso|vou|vamos)\s+)?(?:ir\s+|chegar\s+)?(?:tra[çc]ar?\s+(?:a\s+)?rota\s+|rota\s+|navegue?\s+|navegar\s+|me\s+lev[ae]\s+|me\s+direcion[ae]r?\s+|direcion[ae]-?me\s+|me\s+gui[ae]\s+|dire[çc][õo]es\s+|como\s+(?:eu\s+)?(?:ir|chego)\s+)?(?:para|pra|pro|até|ate|a|ao)\s+(?:o\s+|a\s+)?/i, '');
+  d = d.trim();
+  if (d.length < 3 || d.split(/\s+/).length > 12) return null;
+  if (/^(para|pra|pro|at[ée]|ao|ir|rota|dire[çc][õo]es|navegar|navegue)$/i.test(d)) return null;   // sobrou só a palavra de pedido
+  if (/^(trabalho|servi[çc]o|firma|emprego)$/i.test(d)) return 'Trabalho';
+  if (/^(casa|em casa|minha casa|lar)$/i.test(d)) return 'Casa';
+  return d;
+}
+
+function _rotaSemantica(mensagem, email, isOwner, opts) {
+  opts = opts || {};
+  _ROTA_ULTIMA = '';
   if (!isOwner) return null;
   var msg = String(mensagem || '').trim();
   if (!msg) return null;
@@ -978,7 +996,7 @@ function _rotaSemantica(mensagem, email, isOwner) {
                     'passar adiante do que atender o pedido errado.',
       criteria: {
         saldo_swile:      { what: 'Consultar quanto AINDA TEM no cartão de benefícios (Swile): voucher/alimentação ou mobilidade.',
-                            not_for: 'Quanto já gastou — isso é gastos_swile.',
+                            not_for: 'Quanto já gastou — isso é gastos_swile. Dinheiro livre na conta — isso é cad_livre.',
                             examples: ['quanto tenho no alimentação', 'qual o saldo do swile', 'sobrou quanto na mobilidade'] },
         gastos_swile:     { what: 'Consultar quanto JÁ GASTOU no cartão de benefícios num período, ou onde gastou.',
                             not_for: 'Saldo restante — isso é saldo_swile.',
@@ -1003,6 +1021,33 @@ function _rotaSemantica(mensagem, email, isOwner) {
         emails_nao_lidos: { what: 'Pedir o resumo geral dos e-mails NÃO LIDOS da caixa de entrada.',
                             not_for: 'Um e-mail específico, buscar, responder, enviar ou apagar — isso é nenhuma.',
                             examples: ['resuma meus e-mails', 'chegou e-mail novo?', 'tem algo importante na caixa de entrada?'] },
+        // ── CADERNETA (finanças pessoais, só leitura) — 14/10. A regex de Financas.interpretar é conservadora de
+        // propósito; o que ela não pega ("dá pra gastar quanto hoje?", "tô no azul?") ia para o Gemini, que não
+        // tem ferramenta financeira e poderia INVENTAR o número. Aqui o JEV escolhe e o código responde.
+        cad_livre:        { what: 'Perguntar quanto DINHEIRO ele tem livre/disponível/sobrando na conta (hoje) ou quanto vai sobrar no fim do mês — o dinheiro do dia a dia dele, não o cartão de benefícios.',
+                            not_for: 'Saldo do voucher/alimentação/mobilidade (Swile) — isso é saldo_swile; quanto já gastou — isso é gastos_swile ou cad_mercado.',
+                            examples: ['quanto eu tenho livre', 'dá pra gastar quanto hoje', 'sobrou dinheiro esse mês?', 'tô no azul?', 'quanto vai sobrar no fim do mês'] },
+        cad_vencimentos:  { what: 'Perguntar QUAIS contas, faturas ou boletos VENCEM hoje, amanhã ou nesta semana.',
+                            not_for: 'Compromissos da agenda — isso é agenda_consultar; o total que falta pagar no mês — isso é cad_falta_pagar.',
+                            examples: ['o que vence hoje', 'tem alguma conta pra amanhã', 'quais boletos vencem essa semana'] },
+        cad_falta_pagar:  { what: 'Perguntar QUANTO ou QUAIS contas ainda FALTAM PAGAR neste mês, no total.',
+                            not_for: 'Vencimentos de um dia específico — isso é cad_vencimentos.',
+                            examples: ['quanto falta pagar', 'o que ainda não paguei esse mês', 'quais contas estão em aberto'] },
+        cad_mercado:      { what: 'Perguntar quanto ele GASTOU neste mês com mercado e comida (categorias mercado/alimentação).',
+                            not_for: 'Gastos do cartão de benefícios por período — isso é gastos_swile.',
+                            examples: ['quanto gastei no mercado esse mês', 'como está o gasto com comida', 'quanto já foi de mercado'] },
+        cad_investido:    { what: 'Perguntar quanto ele tem INVESTIDO / de patrimônio, ou quantos meses de RESERVA de emergência tem.',
+                            not_for: 'Pedir uma ideia ou conselho de investimento, ou explicar um conceito — isso é nenhuma.',
+                            examples: ['quanto eu tenho investido', 'como está meu patrimônio', 'quantos meses de reserva eu tenho'] },
+        repetir_briefing: { what: 'Pedir para REPETIR ou refazer o briefing (resumo falado do dia) que ele não ouviu, que cortou ou que parou no meio.',
+                            not_for: 'Configurar, criar ou mudar o horário de um briefing — isso é nenhuma.',
+                            examples: ['repete o briefing', 'não ouvi o briefing', 'o briefing cortou no meio', 'fala o resumo do dia de novo'] },
+        folga_ponto:      { what: 'DECLARAR que NÃO vai trabalhar hoje e/ou amanhã (feriado, folga, atestado) e que não precisa ser lembrado de bater o ponto.',
+                            not_for: 'Mudar o turno da semana (manhã/tarde) — isso é turno_definir; perguntar se é feriado — isso é nenhuma.',
+                            examples: ['hoje é feriado eu não trabalho', 'amanhã estou de folga', 'não precisa me lembrar do ponto hoje'] },
+        navegar:          { what: 'Pedir para IR / traçar rota até um lugar, ou dizer só um endereço ou nome de lugar esperando que ele abra o caminho.',
+                            not_for: 'Perguntar onde fica algo sem pedir o caminho, ou abrir um aplicativo — isso é nenhuma.',
+                            examples: ['para Rua Professor Edésio 105', 'ir para o Carrefour do Ouro Preto', 'me leva pra casa', 'direções para o trabalho'] },
         nenhuma:          { what: 'Qualquer outra coisa: conversa, pergunta geral, pedido de ação, redação, busca na web, criar/mudar compromisso, e-mail específico, WhatsApp.',
                             examples: ['manda oi pro Douglas', 'explica o que é RAG', 'marca reunião amanhã às 10', 'lê o e-mail do banco'] }
       }
@@ -1038,6 +1083,33 @@ function _rotaSemantica(mensagem, email, isOwner) {
       criteria: { hoje: 'Hoje / ontem / últimos dias.',
                   semana: 'Esta semana / últimos 7 dias.',
                   mes: 'Este mês / últimos 30 dias, ou período não dito.' }
+    },
+    periodo_livre: {
+      type: 'choice',
+      instructions: 'SUPONDO que o pedido seja sobre o dinheiro LIVRE dele: ele quer o valor de agora ou a previsão para o fim do mês?',
+      criteria: { agora: 'O que tem livre agora/hoje, ou não especificou.', fim_mes: 'O que vai sobrar / a previsão para o fim do mês.' }
+    },
+    periodo_venc: {
+      type: 'choice',
+      instructions: 'SUPONDO que o pedido seja sobre o que VENCE: para qual período?',
+      criteria: { hoje: 'Hoje.', amanha: 'Amanhã.', semana: 'Esta semana / próximos dias, ou não especificou.' }
+    },
+    foco_invest: {
+      type: 'choice',
+      instructions: 'SUPONDO que o pedido seja sobre investimentos: ele quer saber o total investido ou a reserva de emergência?',
+      criteria: { investido: 'O total investido / o patrimônio, ou não especificou.', reserva: 'A reserva de emergência / quantos meses de reserva.' }
+    },
+    dia_folga: {
+      type: 'choice',
+      instructions: 'SUPONDO que o pedido seja avisar que NÃO vai trabalhar: em qual dia?',
+      criteria: { hoje: 'Hoje, ou não especificou.', amanha: 'Amanhã.', ambos: 'Hoje e amanhã.' }
+    },
+    // REDE DE SEGURANÇA: pergunta que exige um NÚMERO real do dinheiro dele e que nenhuma intenção acima atendeu.
+    // Sem isto ela cairia no Gemini, que não tem ferramenta financeira e poderia inventar o valor.
+    financas: {
+      type: 'noul',
+      instructions: 'O dono está perguntando por um VALOR ou DADO REAL das finanças pessoais dele (quanto tem, quanto gastou, quanto deve, quanto vence, saldo, investimentos, contas)? ' +
+                    'Responda não para explicar um conceito, pedir ideia ou conselho, conversa geral, ou qualquer outro assunto.'
     }
   }, { cacheSeg: 600 });
 
@@ -1045,10 +1117,30 @@ function _rotaSemantica(mensagem, email, isOwner) {
   var a = r.answers && r.answers.intencao;
   if (!a || a.type !== 'choice') return null;
   var intencao = a.choice, conf = Number(a.confidence);
-  if (intencao === 'nenhuma' || !isFinite(conf)) return null;
+  var limGuarda = Number(p.getProperty('ROTA_LIMIAR_GUARDA') || _ROTA_LIMIAR_GUARDA);
+  var pFin = (r.answers && r.answers.financas && typeof r.answers.financas.noul === 'number') ? r.answers.financas.noul : 0;
+  // DIAGNÓSTICO: devolve o julgamento cru, SEM executar nenhum handler (usado por ler_debug.rotaJev para medir o acerto).
+  if (opts.diag) return { intencao: intencao, conf: isFinite(conf) ? Math.round(conf * 1000) / 1000 : null, financas: Math.round(pFin * 1000) / 1000,
+                          args: { periodo_livre: arg0('periodo_livre'), periodo_venc: arg0('periodo_venc'), foco_invest: arg0('foco_invest'), dia_folga: arg0('dia_folga') } };
+  function arg0(id) { var x = r.answers && r.answers[id]; return (x && x.type === 'choice') ? x.choice : null; }
 
-  var limite = (intencao === 'turno_definir') ? limA : limL;
-  if (conf < limite) return null;               // incerto → não age, deixa o LLM tratar
+  // Interruptor das intenções novas (caderneta, folga, repetir briefing, rota): ROTA_JEV_NOVAS=nao devolve null para elas,
+  // como se o JEV não as conhecesse. Serve para medir o acerto na produção (ler_debug.rotaJev) antes de ligar.
+  if (/^(cad_|repetir_briefing$|folga_ponto$|navegar$)/.test(intencao) && String(p.getProperty('ROTA_JEV_NOVAS') || 'sim').toLowerCase() === 'nao') return null;
+  var _acoes = { turno_definir: 1, folga_ponto: 1, navegar: 1, repetir_briefing: 1 };
+  var limite = _acoes[intencao] ? limA : limL;
+  var _semIntencao = (intencao === 'nenhuma' || !isFinite(conf) || conf < limite);
+  if (_semIntencao) {
+    // Ninguém atendeu, mas é pergunta de dinheiro real: diz o que sabe responder em vez de deixar o modelo chutar.
+    if (pFin >= limGuarda && typeof Financas !== 'undefined') {
+      _ROTA_ULTIMA = 'cad_guarda';
+      try { if (typeof Jarvis !== 'undefined' && Jarvis.registrarEvento) Jarvis.registrarEvento({ tool: 'rota:jev:cad_guarda', ok: true, ms: r.ms, userEmail: email,
+        resumo: msg.substring(0, 80) + ' → financas ' + pFin.toFixed(2) + ' (limiar ' + limGuarda + ')' }); } catch (eG) {}
+      return 'Ainda não sei responder isso pela caderneta. ' + Financas.AJUDA;
+    }
+    return null;                                // incerto → não age, deixa o LLM tratar
+  }
+  _ROTA_ULTIMA = intencao;
 
   function arg(id, padrao) {
     var x = r.answers && r.answers[id];
@@ -1090,6 +1182,31 @@ function _rotaSemantica(mensagem, email, isOwner) {
       resp = _falarAgenda(arg('periodo_agenda', 'hoje'));
     } else if (intencao === 'emails_nao_lidos') {
       resp = _falarEmails();
+    } else if (/^cad_/.test(intencao)) {
+      // Perguntas da caderneta: o mesmo Financas.responder da regex (o número vem do Worker da caderneta, nunca do modelo).
+      if (typeof Financas === 'undefined') return null;
+      var _cq = null;
+      if (intencao === 'cad_livre') _cq = { tipo: arg('periodo_livre', 'agora') === 'fim_mes' ? 'livre_fim' : 'livre_hoje' };
+      else if (intencao === 'cad_vencimentos') _cq = { tipo: 'vencimentos', periodo: arg('periodo_venc', 'semana') };
+      else if (intencao === 'cad_falta_pagar') _cq = { tipo: 'falta_pagar' };
+      else if (intencao === 'cad_mercado') _cq = { tipo: 'orcamento' };
+      else if (intencao === 'cad_investido') _cq = { tipo: arg('foco_invest', 'investido') === 'reserva' ? 'reserva' : 'investido' };
+      resp = _cq ? Financas.responder(_cq) : null;
+    } else if (intencao === 'repetir_briefing') {
+      // Só por voz: gasta uma síntese de voz (~R$ 0,08). No chat, o dono não está ouvindo o celular.
+      if (opts.canal !== 'voz' || typeof AlertasVoz === 'undefined' || !AlertasVoz.repetirBriefing) return null;
+      var _rb = AlertasVoz.repetirBriefing();
+      resp = _rb.ok ? (_rb.novo ? 'Não tenho o último guardado, então refaço um briefing novo em um minuto.' : 'Certo, repito o briefing em um minuto.') : _rb.erro;
+    } else if (intencao === 'folga_ponto') {
+      var _df = arg('dia_folga', 'hoje');
+      var _fr = definirFolgaPonto({ dias: _df === 'ambos' ? ['hoje', 'amanha'] : [_df] });
+      resp = (_fr && _fr.ok) ? _fr.resumo : null;
+    } else if (intencao === 'navegar') {
+      if (opts.canal !== 'voz' || typeof Jarvis === 'undefined' || !Jarvis.controlarDispositivo) return null;
+      var _dest = _destinoDoPedido(msg);
+      if (!_dest) return null;                  // não achou um lugar na frase → deixa o modelo perguntar
+      Jarvis.controlarDispositivo({ acao: 'navegar', destino: _dest });
+      resp = 'Traçando a rota para ' + _dest + '.';
     }
   } catch (e) { return null; }                  // handler falhou → LLM, nunca uma resposta pela metade
 
@@ -1114,7 +1231,7 @@ function diagRotaSemantica(args) {
     return { ok: false, erro: 'TYPESAFE_API_KEY não configurada.' };
   }
   var det = _preverRotaDeterministica(msg);
-  var resp = _rotaSemantica(msg, PropertiesService.getScriptProperties().getProperty('OWNER_EMAIL'), true);
+  var resp = _rotaSemantica(msg, PropertiesService.getScriptProperties().getProperty('OWNER_EMAIL'), true, { diag: true });   // diag: julga e NÃO executa
   return { ok: true, frase: msg,
            rotaDeterministica: det,
            nota: det === 'nao_coberto' ? 'a regex NÃO pega — é aqui que o JEV entra' : 'a regex já resolve; o JEV nem seria chamado',
@@ -2960,7 +3077,7 @@ function doPost(e) {
       var _PERMITIDAS_CF = {
         FALA_PROATIVA_LOCAL: /^(sim|nao)$/, FALA_RESPOSTAS_LOCAL: /^(sim|nao)$/,
         MODO_FALA_VOZ: /^(nuvem|auto|local)$/, FALA_VOLUME_DB: /^(1[0-6]|[0-9])$/,
-        FALA_FORMATO: /^(ogg|wav)$/, FALA_ARQUIVO_UNICO: /^(sim|nao)$/
+        FALA_FORMATO: /^(ogg|wav)$/, FALA_ARQUIVO_UNICO: /^(sim|nao)$/, ROTA_JEV_NOVAS: /^(sim|nao)$/
       };
       var spCf = PropertiesService.getScriptProperties(), mudCf = {}, errCf = [];
       Object.keys(body.valores || {}).forEach(function (k) {
@@ -3599,7 +3716,7 @@ function doPost(e) {
           // tenta reconhecer a intenção e responder pelo handler determinístico. Null = ele não
           // reconheceu (ou ficou abaixo do limiar) → LLM, como sempre foi.
           var _sem = null;
-          try { _sem = _rotaSemantica(msgVoz, emailUser, true); } catch (eSem) { _sem = null; }
+          try { _sem = _rotaSemantica(msgVoz, emailUser, true, { canal: 'voz' }); } catch (eSem) { _sem = null; }
           _viaJev = !!_sem;
           respVoz = _sem || Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false, canal: 'voz' });
         }
@@ -3636,11 +3753,13 @@ function doPost(e) {
           // indistinguíveis na telemetria — e a pergunta "o JEV está pegando o quê?" não teria dado.
           : (typeof _viaJev !== 'undefined' && _viaJev) ? 'jev'
           : 'llm';
+        // Resposta financeira (regex OU JEV) não vai para o log nem para o histórico da conversa.
+        var _sensivelVoz = (_viaVoz === 'caderneta') || (_viaVoz === 'jev' && /^cad_/.test(_ROTA_ULTIMA));
         try {
           if (typeof Jarvis !== 'undefined' && Jarvis.registrarEvento) Jarvis.registrarEvento({
             tool: 'voz:' + _viaVoz, ok: true, ms: 0, userEmail: emailUser,
             // Caderneta: o log não guarda o NÚMERO falado (valores financeiros ficam só no app e no áudio do momento).
-            resumo: msgVoz.substring(0, 100) + ' → ' + (_viaVoz === 'caderneta' ? '[resposta financeira não registrada]' : String(respVoz).substring(0, 140))
+            resumo: msgVoz.substring(0, 100) + ' → ' + (_sensivelVoz ? '[resposta financeira não registrada]' : String(respVoz).substring(0, 140))
           });
         } catch (eEvV) {}
         var textoLimpo = _prepararTextoFala(respVoz);
@@ -3648,7 +3767,7 @@ function doPost(e) {
         // Persiste o turno da conversa por voz no Firestore para manter a continuidade do assunto
         if (uid) {
           try {
-            conversaId = _persistirTurno(uid, conversaId, msgVoz, null, { resposta: (_viaVoz === 'caderneta' ? '[consulta à caderneta respondida por voz]' : respVoz) });
+            conversaId = _persistirTurno(uid, conversaId, msgVoz, null, { resposta: (_sensivelVoz ? '[consulta à caderneta respondida por voz]' : respVoz) });
           } catch (ePersist) {
             Logger.log("[voice_command] Erro ao persistir turno: " + ePersist.message);
           }
@@ -3843,6 +3962,18 @@ function doPost(e) {
             chaves: { faturamento: !!_pg.getProperty('GEMINI_API_KEY'), gratuita1: !!_pg.getProperty('GEMINI_API_KEY_FALLBACK'), gratuita2: !!_pg.getProperty('GEMINI_API_KEY_FALLBACK2') }
           };
           try { if (typeof GastoIA !== 'undefined') saida.gemini.gasto = GastoIA.estado(); } catch (eGs) {}
+        }
+        // Mede o ACERTO do roteador JEV em várias frases: devolve intenção, confiança e a rede de segurança de cada uma,
+        // SEM executar nenhum handler (nada é gravado, falado nem aberto). Máx. 60 frases por chamada.
+        if (body.rotaJev && Array.isArray(body.rotaJev)) {
+          var _dono = PropertiesService.getScriptProperties().getProperty('OWNER_EMAIL');
+          saida.rotaJev = body.rotaJev.slice(0, 60).map(function (f) {
+            var fr = String(f);
+            try {
+              var j = _rotaSemantica(fr, _dono, true, { diag: true });
+              return { frase: fr, regex: _preverRotaDeterministica(fr), jev: j };
+            } catch (eRj) { return { frase: fr, erro: eRj.message }; }
+          });
         }
         // Ensaio ao vivo do Gemini (texto, chamada de função com thoughtSignature, busca, voz, embedding) e o gasto dele.
         if (body.geminiTeste) { try { saida.geminiTeste = _geminiTesteVivo(); } catch (eGt) { saida.geminiTeste = { erro: eGt.message }; } }

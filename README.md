@@ -53,7 +53,7 @@ Opera no **free tier** do Gemini por engenharia de cascata (free-first, múltipl
 
 ## 🧪 Testes / QA
 
-Catálogo completo em **`TESTES_JARVIS.md`** (o que pedir × tool esperada × resultado) e a ordem de execução em **`ROTEIRO_QA_JARVIS.md`** (Fases 0–11 + §15 dos recursos recentes). Harness automatizado: `rodarQA()` (saúde funcional) e **`rodarEvals()`** (testes de *comportamento* do agente: Gate P2 não burlável, anti-injeção, anti-alucinação, vazamento de chave — via `toolTrace` real). Testes locais offline (213, sem cota e sem rede, com as APIs do GAS simuladas): `cd tests-local && node --test`.
+Catálogo completo em **`TESTES_JARVIS.md`** (o que pedir × tool esperada × resultado) e a ordem de execução em **`ROTEIRO_QA_JARVIS.md`** (Fases 0–11 + §15 dos recursos recentes). Harness automatizado: `rodarQA()` (saúde funcional) e **`rodarEvals()`** (testes de *comportamento* do agente: Gate P2 não burlável, anti-injeção, anti-alucinação, vazamento de chave — via `toolTrace` real). Testes locais offline (227, sem cota e sem rede, com as APIs do GAS simuladas): `cd tests-local && node --test`.
 
 ## 🚀 Deploy
 
@@ -70,7 +70,7 @@ Segredos e config ficam em **Script Properties** (nunca no código). Diagnóstic
 |---|---|
 | `README.md` | Este front-door. |
 | `DOCUMENTACAO.md` | Documentação técnica completa (arquitetura, ferramentas, segurança, deploy). |
-| `TESTES_JARVIS.md` | Catálogo de testes (inclui §15 — recursos recentes). |
+| `TESTES_JARVIS.md` | Guia de uso e roteiro manual: o que o Jarvis faz, como pedir e o que esperar. |
 | `ROTEIRO_QA_JARVIS.md` | Ordem ideal de execução do QA. |
 | `MELHORIAS_JARVIS.md` | Roadmap e melhorias (rastreabilidade ideia→implementação). |
 | `SEGURANCA_OWASP_JARVIS.md` | Modelo de ameaças + mapa das defesas contra o OWASP Top 10 for LLMs. |

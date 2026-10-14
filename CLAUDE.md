@@ -21,11 +21,11 @@ Projeto Google Apps Script gerenciado localmente via clasp.
 | Web App | `executeAs: USER_DEPLOYING`, `access: ANYONE_ANONYMOUS` |
 | Repositório | https://github.com/brunogpj/jarvis-ai-os — **público** (ver "Repositório público" em Segurança) |
 
-## Implantações (`clasp deployments`, 28/09/2026)
+## Implantações (`clasp deployments`, 14/10/2026)
 
 | Deployment ID | Versão | Descrição |
 |---|---|---|
-| `<DEPLOYMENT_ID>` | **@454** | **ATIVA** — "briefing: notícias locais". É esta que o celular e os scripts de diagnóstico usam. |
+| `<DEPLOYMENT_ID>` | **@475** | **ATIVA** — "JEV: caderneta, rota, repetir briefing, folga". É esta que o celular e os scripts de diagnóstico usam. |
 | `<DEPLOYMENT_ID>` | @25 | Antiga — "TesteJobs" |
 | `<DEPLOYMENT_ID>` | @HEAD | Cabeça (muda a cada push, não é a de produção) |
 
@@ -121,7 +121,7 @@ tráfego interno; inclui `NOTIF` da fila de notificações) → rate limit globa
 `janela_notificacoes` / `fala_direta` / `config_fala` / `config_financas` / `config_gemini` / `ler_debug` (todas com
 `VOICE_API_TOKEN`) → diag (`DIAG_TOKEN`). `config_fala` troca, por HTTP, só uma
 lista fechada de chaves da entrega da fala (`FALA_PROATIVA_LOCAL`,
-`FALA_RESPOSTAS_LOCAL`, `MODO_FALA_VOZ`, `FALA_VOLUME_DB` 0–16, `FALA_FORMATO`, `FALA_ARQUIVO_UNICO`).
+`FALA_RESPOSTAS_LOCAL`, `MODO_FALA_VOZ`, `FALA_VOLUME_DB` 0–16, `FALA_FORMATO`, `FALA_ARQUIVO_UNICO`, `ROTA_JEV_NOVAS` sim|nao).
 
 ## Voz no Android (estado em 28/09/2026)
 
@@ -221,6 +221,19 @@ pré-pagamento. Rota `config_gemini` (token da voz) troca modelos, ordem e teto 
 mostra a configuração e o gasto; com `geminiTeste:true` roda um ensaio vivo (texto, chamada de função
 com thoughtSignature, busca, voz, embedding) e diz quanto ele custou.
 
+**Roteador semântico (JEV) para caderneta, rota, repetir briefing e folga (desde 14/10).**
+Só roda DEPOIS que a cadeia de padrões falhou (`_rotaSemantica` em Code.js, TypeSafe `perguntar`
+com todas as perguntas numa requisição só). Intenções novas: `cad_livre`, `cad_vencimentos`,
+`cad_falta_pagar`, `cad_mercado`, `cad_investido`, `repetir_briefing`, `folga_ponto`, `navegar`
+(as quatro últimas só por voz/ação). Leitura exige confiança 0,70 (`ROTA_LIMIAR_LEITURA`), ação
+(folga, navegar, repetir) 0,85 (`ROTA_LIMIAR_ACAO`). Pergunta financeira que nenhuma intenção cobre mas
+com `financas` ≥ 0,85 responde "Ainda não sei responder isso pela caderneta" + ajuda, em vez de cair
+no Gemini (que poderia inventar número); evento `rota:jev:cad_guarda`. Resposta de caderneta pelo
+JEV é mascarada no log como a da rota fixa. **Interruptor** `ROTA_JEV_NOVAS=nao` (via `config_fala`)
+desliga só as intenções novas. **Medir antes de ligar**: `ler_debug` com `rotaJev:['frase',…]`
+devolve regex × JEV por frase sem executar nada (medido em 14/10: 24/24 positivos certos, 0 falso
+positivo acima do limiar em 16 controles).
+
 **Fila de falas** (`controlarDispositivo('falar')`): a fala nova espera a anterior
 acabar, **fora do lock**, em passos de 15 s, até 110 s. A duração vem do áudio (WAV
 do Gemini = bytes/48 ms; OGG ≈ 14 caracteres/s; teto 150 s). Antes dormia no
@@ -314,7 +327,7 @@ o histórico. Então:
   genérico no teste do lembrete relativo).
 - O `README.md` é o que um recrutador lê primeiro. O projeto Jarvis no
   LinkedIn e o README do perfil do GitHub citam "147 testes automatizados"
-  (o repo tem 213 desde 14/10 — a frase segue verdadeira como piso);
+  (o repo tem 227 desde 14/10 — a frase segue verdadeira como piso);
   se a contagem mudar muito, avise o dono para atualizar lá também.
 - Nada sobre o empregador nem sobre sistemas internos de trabalho entra aqui.
 
@@ -363,7 +376,7 @@ público").
 cd tests-local && node --test
 ```
 
-213 testes offline (sem cota, sem rede) sobre a lógica determinística: MODO
+227 testes offline (sem cota, sem rede) sobre a lógica determinística: MODO
 DIRETO, gate sem-cota, hooks, parsing de turno/briefing, validação de prefs,
 ordenação dos cards, cadeia da voz, lembrete relativo e alertas de uma vez só,
 `_urlParaMacro`, `lerBiblia`, briefing com dados reais e trava de agenda
@@ -371,7 +384,8 @@ inventada (`tests-local/briefing.test.js`), despertador composto, teto de
 caracteres da voz no briefing e autodiagnóstico sem alarme de app raro
 (`tests-local/dia-0110.test.js`). `tests-local/gas-shims.js` simula as
 APIs do GAS (`formatDate` é fixo: teste que depende de horário injeta o seu).
-Estado em 14/10/2026: **213/213 passando**.
+`tests-local/jev-caderneta.test.js` cobre o roteador semântico novo (JEV simulado, interruptor, máscara de log).
+Estado em 14/10/2026: **227/227 passando**.
 
 Contra o sistema vivo, pelo terminal: `ler_debug` (POST com `VOICE_API_TOKEN`,
 `n` até 200, `alertas:true`, `notificacoes:N`, `ensaioBriefing:'<tag>'`, `gatilhos:true`,

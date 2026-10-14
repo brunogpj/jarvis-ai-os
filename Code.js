@@ -1658,7 +1658,7 @@ function configurarVozJarvis(args) {
   return { ok: true, engine: eng,
            voz: p.getProperty('TTS_VOICE_GEMINI') || 'Enceladus (padrão)',
            estilo: p.getProperty('TTS_STYLE') || '(sem estilo)',
-           modelo: p.getProperty('TTS_GEMINI_MODEL') || 'gemini-3.8-flash-tts',
+           modelo: p.getProperty('TTS_GEMINI_MODEL') || 'gemini-3.8-flash-lite-tts',
            volumeDb: isFinite(Number(p.getProperty('FALA_VOLUME_DB'))) ? Number(p.getProperty('FALA_VOLUME_DB')) : 6,
            nota: eng === 'gemini' ? 'Motor Gemini ativo — voz e estilo valem.'
                                   : 'Motor CLOUD ativo — voz e estilo do Gemini estão sendo IGNORADOS.' };
@@ -2664,7 +2664,7 @@ function configurarVozGemini(args) {
   if (args.voz) p.setProperty('TTS_VOICE_GEMINI', String(args.voz));
   if (args.model) p.setProperty('TTS_GEMINI_MODEL', String(args.model));
   p.setProperty('TTS_ENGINE', (args.ligar === false) ? 'cloud' : 'gemini');
-  return { ok: true, TTS_ENGINE: p.getProperty('TTS_ENGINE'), TTS_STYLE: p.getProperty('TTS_STYLE'), TTS_VOICE_GEMINI: p.getProperty('TTS_VOICE_GEMINI'), TTS_GEMINI_MODEL: p.getProperty('TTS_GEMINI_MODEL') || 'gemini-3.8-flash-tts' };
+  return { ok: true, TTS_ENGINE: p.getProperty('TTS_ENGINE'), TTS_STYLE: p.getProperty('TTS_STYLE'), TTS_VOICE_GEMINI: p.getProperty('TTS_VOICE_GEMINI'), TTS_GEMINI_MODEL: p.getProperty('TTS_GEMINI_MODEL') || 'gemini-3.8-flash-lite-tts' };
 }
 
 function carregarConversa(token, conversaId) {

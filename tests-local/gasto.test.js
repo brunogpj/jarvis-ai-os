@@ -134,7 +134,7 @@ test('Gemini: modelos padrão novos e nenhum modelo desligado na lista', functio
   assert.ok(/'GEMINI_MODEL'\) \|\| 'gemini-3\.8-flash'/.test(fonte));
   var voz = require('fs').readFileSync(require('path').join(__dirname, '..', 'Voz.js'), 'utf8');
   assert.ok(!/gemini-2\.5-flash-preview-tts'/.test(voz.replace(/\/\/.*$/gm, '')), 'o TTS 2.5 desliga em 17/11/2026');
-  assert.ok(/gemini-3\.8-flash-tts/.test(voz));
+  assert.ok(/gemini-3\.8-flash-lite-tts/.test(voz));
 });
 
 test('Gemini: com o teto estourado, a chave de FATURAMENTO sai da cascata; com folga, ela entra primeiro (billing_first)', function () {

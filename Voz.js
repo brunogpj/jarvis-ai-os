@@ -362,7 +362,7 @@ var Voz = (function () {
     var voz = opts.voz || _p('TTS_VOICE_GEMINI') || 'Enceladus';
     var estilo = (opts.estilo != null ? opts.estilo : _p('TTS_STYLE')) || '';
     // 14/10: o gemini-2.5-flash-preview-tts desliga em 17/11/2026.
-    var model = opts.model || _p('TTS_GEMINI_MODEL') || 'gemini-3.8-flash-tts';
+    var model = opts.model || _p('TTS_GEMINI_MODEL') || 'gemini-3.8-flash-lite-tts';   // lite: ~30% mais barata; aprovada de ouvido em 14/10
     var prompt = estilo ? ('Leia em voz alta em ' + estilo + ': ' + conteudo) : conteudo;
     var payload = {
       contents: [{ parts: [{ text: prompt }] }],

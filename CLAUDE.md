@@ -208,7 +208,7 @@ Swile. Fala no aparelho (`caderneta` está em `FALA_LOCAL_ROTAS`) e o log guarda
 
 **Gemini pago e teto de gasto (desde 14/10).** Tudo roda no plano pago: `GEMINI_FREE_ONLY=false`,
 `GEMINI_ORDER=billing_first` (as chaves gratuitas ficam de reserva), agente em `gemini-3.8-flash`
-(reserva `gemini-2.5-flash`), busca em `gemini-3.5-flash-lite`, voz em `gemini-3.8-flash-tts`
+(reserva `gemini-2.5-flash`), busca em `gemini-3.5-flash-lite`, voz em `gemini-3.8-flash-lite-tts`
 (o `gemini-2.5-flash-preview-tts` desliga em 17/11/2026), imagem em `gemini-3.1-flash-lite-image`.
 O `gemini-2.0-flash` foi desligado em 01/06/2026 e saiu das reservas. `GastoIA.js` soma tokens ×
 preço de cada chamada (tabela copiada da página de preços; o preço do 3.8 Flash e da voz dobra em

@@ -118,7 +118,7 @@ dispositivo (`?dispositivo=fila`, entrega *at-most-once*, esvazia ao ler).
 tráfego interno; inclui `NOTIF` da fila de notificações) → rate limit global
 (240/min) → webhook da Evolution (`body.event`) → `get_voice_token` /
 `telemetria` / `viagem` / `notificacao` / `voice_command` / `apps_celular` /
-`janela_notificacoes` / `fala_direta` / `config_fala` / `config_financas` / `ler_debug` (todas com
+`janela_notificacoes` / `fala_direta` / `config_fala` / `config_financas` / `config_gemini` / `ler_debug` (todas com
 `VOICE_API_TOKEN`) → diag (`DIAG_TOKEN`). `config_fala` troca, por HTTP, só uma
 lista fechada de chaves da entrega da fala (`FALA_PROATIVA_LOCAL`,
 `FALA_RESPOSTAS_LOCAL`, `MODO_FALA_VOZ`, `FALA_VOLUME_DB` 0–16, `FALA_FORMATO`, `FALA_ARQUIVO_UNICO`).
@@ -205,6 +205,21 @@ Swile. Fala no aparelho (`caderneta` está em `FALA_LOCAL_ROTAS`) e o log guarda
 `provisionar-jarvis.mjs` da caderneta, que gera o token e não o mostra. `ler_debug` com
 `caderneta:true` mostra o que ele responderia a cada pergunta, sem falar. Fases seguintes
 (avisos, registro por voz com confirmação) ainda não existem; escrita só por ações estreitas.
+
+**Gemini pago e teto de gasto (desde 14/10).** Tudo roda no plano pago: `GEMINI_FREE_ONLY=false`,
+`GEMINI_ORDER=billing_first` (as chaves gratuitas ficam de reserva), agente em `gemini-3.8-flash`
+(reserva `gemini-2.5-flash`), busca em `gemini-3.5-flash-lite`, voz em `gemini-3.8-flash-tts`
+(o `gemini-2.5-flash-preview-tts` desliga em 17/11/2026), imagem em `gemini-3.1-flash-lite-image`.
+O `gemini-2.0-flash` foi desligado em 01/06/2026 e saiu das reservas. `GastoIA.js` soma tokens ×
+preço de cada chamada (tabela copiada da página de preços; o preço do 3.8 Flash e da voz dobra em
+01/01/2027) e guarda o mês em `GEMINI_GASTO`. **Teto** `GEMINI_ORCAMENTO_BRL` (padrão 29,65 = 2% do
+limite de R$ 1.482,74), câmbio `GEMINI_USD_BRL` (padrão 5,70). Avisa em 50%, 80% e 100%; aos 100% a
+chave de faturamento sai da cascata até o mês virar (`GEMINI_ORCAMENTO_ATIVO=nao` desliga a trava).
+É estimativa, não fatura: o Google só mostra o custo horas depois. O teto real da Google é o
+pré-pagamento. Rota `config_gemini` (token da voz) troca modelos, ordem e teto numa lista fechada
+(nunca chaves de API nem o modelo de embedding, que exigiria reindexar). `ler_debug` com `gemini:true`
+mostra a configuração e o gasto; com `geminiTeste:true` roda um ensaio vivo (texto, chamada de função
+com thoughtSignature, busca, voz, embedding) e diz quanto ele custou.
 
 **Fila de falas** (`controlarDispositivo('falar')`): a fala nova espera a anterior
 acabar, **fora do lock**, em passos de 15 s, até 110 s. A duração vem do áudio (WAV
@@ -299,7 +314,7 @@ o histórico. Então:
   genérico no teste do lembrete relativo).
 - O `README.md` é o que um recrutador lê primeiro. O projeto Jarvis no
   LinkedIn e o README do perfil do GitHub citam "147 testes automatizados"
-  (o repo tem 199 desde 14/10 — a frase segue verdadeira como piso);
+  (o repo tem 213 desde 14/10 — a frase segue verdadeira como piso);
   se a contagem mudar muito, avise o dono para atualizar lá também.
 - Nada sobre o empregador nem sobre sistemas internos de trabalho entra aqui.
 
@@ -348,7 +363,7 @@ público").
 cd tests-local && node --test
 ```
 
-199 testes offline (sem cota, sem rede) sobre a lógica determinística: MODO
+213 testes offline (sem cota, sem rede) sobre a lógica determinística: MODO
 DIRETO, gate sem-cota, hooks, parsing de turno/briefing, validação de prefs,
 ordenação dos cards, cadeia da voz, lembrete relativo e alertas de uma vez só,
 `_urlParaMacro`, `lerBiblia`, briefing com dados reais e trava de agenda
@@ -356,7 +371,7 @@ inventada (`tests-local/briefing.test.js`), despertador composto, teto de
 caracteres da voz no briefing e autodiagnóstico sem alarme de app raro
 (`tests-local/dia-0110.test.js`). `tests-local/gas-shims.js` simula as
 APIs do GAS (`formatDate` é fixo: teste que depende de horário injeta o seu).
-Estado em 14/10/2026: **199/199 passando**.
+Estado em 14/10/2026: **213/213 passando**.
 
 Contra o sistema vivo, pelo terminal: `ler_debug` (POST com `VOICE_API_TOKEN`,
 `n` até 200, `alertas:true`, `notificacoes:N`, `ensaioBriefing:'<tag>'`, `gatilhos:true`,

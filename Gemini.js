@@ -13,10 +13,9 @@ var Gemini = (function () {
 
   function _p(k) { return PropertiesService.getScriptProperties().getProperty(k); }
 
-  // Modelos a tentar, em ordem. flash-lite = rápido/barato/thinking-off (sem problema de
-  // thought_signature); 2.5-flash = reserva robusta. Sobrescrevíveis por Script Property.
+  // Modelos a tentar, em ordem. Sobrescrevíveis por Script Property (rota config_gemini).
   function _models() {
-    var m1 = _p('GEMINI_MODEL') || 'gemini-2.5-flash-lite';
+    var m1 = _p('GEMINI_MODEL') || 'gemini-3.8-flash';           // 14/10: padrão novo (o 2.5 só atende quem já o usava)
     var m2 = _p('GEMINI_MODEL_FALLBACK') || 'gemini-2.5-flash';
     var arr = [m1];
     if (m2 && m2 !== m1) arr.push(m2);
@@ -43,7 +42,9 @@ var Gemini = (function () {
     var kFree = _p('GEMINI_API_KEY_FALLBACK'); if (kFree) keys.push({ key: kFree, tier: 'free' });
     var kFree2 = _p('GEMINI_API_KEY_FALLBACK2'); if (kFree2) keys.push({ key: kFree2, tier: 'free' });
     var kBill = _p('GEMINI_API_KEY');
-    if (kBill && !freeOnly) {  // paga só entra se NÃO for free-only
+    // Teto mensal atingido (GastoIA): a chave paga sai da cascata até o mês virar. Free-only também a tira.
+    var estourou = (typeof GastoIA !== 'undefined') && GastoIA.esgotado();
+    if (kBill && !freeOnly && !estourou) {  // paga só entra se NÃO for free-only nem estourou o teto
       if (String(_p('GEMINI_ORDER') || 'free_first') === 'billing_first') keys.unshift({ key: kBill, tier: 'faturamento' });
       else keys.push({ key: kBill, tier: 'faturamento' });                  // free_first → paga por último
     }
@@ -51,6 +52,20 @@ var Gemini = (function () {
     var list = [];
     keys.forEach(function (k) { models.forEach(function (m) { list.push({ key: k.key, model: m, tier: k.tier }); }); });
     return list;
+  }
+
+  // Quantas buscas do Google a resposta fez (cobradas à parte nos modelos 3+).
+  function _nBuscas(data) {
+    try { var q = data.candidates[0].groundingMetadata.webSearchQueries; return q ? q.length : 0; } catch (e) { return 0; }
+  }
+  /** Soma o custo estimado de uma resposta no gasto do mês (GastoIA). Nunca lança. */
+  function registrarUso(model, data, extras) {
+    try { if (typeof GastoIA !== 'undefined') GastoIA.registrar(model, data && data.usageMetadata, extras || { buscas: _nBuscas(data) }); } catch (e) {}
+  }
+  /** Chave para chamadas diretas fora da cascata (TTS), respeitando free-only, ordem e teto do mês. */
+  function chaveDireta() {
+    if (typeof GastoIA !== 'undefined' && GastoIA.esgotado()) return _p('GEMINI_API_KEY_FALLBACK') || _p('GEMINI_API_KEY_FALLBACK2') || null;
+    return _keyDireta();
   }
 
   function temChave() { return !!(_p('GEMINI_API_KEY') || _p('GEMINI_API_KEY_FALLBACK') || _p('GEMINI_API_KEY_FALLBACK2')); }
@@ -95,7 +110,7 @@ var Gemini = (function () {
       } catch (e) { erros.push(t.tier + '/' + t.model + ' → exceção: ' + e.message); continue; }
       var code = res.getResponseCode();
       if (code === 200) {
-        try { return { json: JSON.parse(res.getContentText()), model: t.model, tier: t.tier }; }
+        try { var jj = JSON.parse(res.getContentText()); registrarUso(t.model, jj); return { json: jj, model: t.model, tier: t.tier }; }
         catch (e) { erros.push(t.tier + '/' + t.model + ' → 200 mas JSON inválido'); continue; }
       }
       var msg = res.getContentText();
@@ -118,7 +133,7 @@ var Gemini = (function () {
     opts = opts || {};
     var key = _keyDireta();
     if (!key) throw new Error('Configure GEMINI_API_KEY (faturamento) para gerar imagens.');
-    var model = opts.model || _p('GEMINI_IMAGE_MODEL') || 'gemini-2.5-flash-image';
+    var model = opts.model || _p('GEMINI_IMAGE_MODEL') || 'gemini-3.1-flash-lite-image';   // o 2.5-flash-image está sendo desativado
     // P-M · prompt engineering: guia de SEGURANÇA + negative prompting (survey multimodal §9).
     // nano banana não tem campo negativo formal → embute como diretriz textual concisa.
     var promptFinal = String(prompt || '');
@@ -141,6 +156,7 @@ var Gemini = (function () {
       throw new Error('Geração de imagem falhou (HTTP ' + code + '): ' + String(msg).substring(0, 200));
     }
     var data = JSON.parse(res.getContentText() || '{}');
+    registrarUso(model, data, { buscas: 0 });
     var parts = (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) || [];
     for (var i = 0; i < parts.length; i++) {
       var p = parts[i];
@@ -170,7 +186,7 @@ var Gemini = (function () {
         var url = 'https://generativelanguage.googleapis.com/v1beta/models/' + modelos[m] + ':generateContent?key=' + encodeURIComponent(tents[k].key);
         var res = UrlFetchApp.fetch(url, { method: 'post', contentType: 'application/json', payload: JSON.stringify(payload), muteHttpExceptions: true });
         var code = res.getResponseCode();
-        if (code === 200) return { data: JSON.parse(res.getContentText() || '{}'), model: modelos[m], tier: tents[k].tier };
+        if (code === 200) { var dd = JSON.parse(res.getContentText() || '{}'); registrarUso(modelos[m], dd); return { data: dd, model: modelos[m], tier: tents[k].tier }; }
         var msg = res.getContentText();
         try { var j = JSON.parse(msg); if (j.error && j.error.message) msg = j.error.message; } catch (eP) {}
         ultErro = rotulo + ' HTTP ' + code + ': ' + String(msg).substring(0, 160);
@@ -193,7 +209,8 @@ var Gemini = (function () {
       tools: [{ google_search: {} }],
       generationConfig: { temperature: 0.3 }
     };
-    var modelos = [(_p('GEMINI_SEARCH_MODEL') || 'gemini-2.5-flash'), 'gemini-2.0-flash']
+    // 14/10: gemini-2.0-flash foi desligado em 01/06/2026 e saiu da reserva.
+    var modelos = [(_p('GEMINI_SEARCH_MODEL') || 'gemini-3.5-flash-lite'), 'gemini-2.5-flash']
       .filter(function (x, i, a) { return x && a.indexOf(x) === i; });
     var r = _fetchComCascata('busca web', payload, modelos);
     return _lerBusca(r.data);
@@ -223,7 +240,7 @@ var Gemini = (function () {
     consultas = (consultas || []).map(String);
     var out = consultas.map(function () { return null; });
     try {
-      var modelo = _p('GEMINI_SEARCH_MODEL') || 'gemini-2.5-flash';
+      var modelo = _p('GEMINI_SEARCH_MODEL') || 'gemini-3.5-flash-lite';
       var cache = null; try { cache = CacheService.getScriptCache(); } catch (eC) {}
       var chave = null, vistas = {};
       _tentativas().forEach(function (t) {
@@ -242,7 +259,7 @@ var Gemini = (function () {
         resps.forEach(function (res, i) {
           try {
             var code = res.getResponseCode();
-            if (code === 200) { var b = _lerBusca(JSON.parse(res.getContentText() || '{}')); if (b.texto) out[i] = b; }
+            if (code === 200) { var bj = JSON.parse(res.getContentText() || '{}'); registrarUso(modelo, bj); var b = _lerBusca(bj); if (b.texto) out[i] = b; }
             else if (code === 429) { try { if (cache) cache.put(chave.ck, '1', 600); } catch (eW) {} }
           } catch (eR) {}
         });
@@ -273,7 +290,7 @@ var Gemini = (function () {
       tools: [{ url_context: {} }],
       generationConfig: { temperature: 0.2 }
     };
-    var modelos = [(_p('GEMINI_MODEL') || 'gemini-2.5-flash'), 'gemini-2.0-flash']
+    var modelos = [(_p('GEMINI_MODEL') || 'gemini-3.8-flash'), 'gemini-2.5-flash']
       .filter(function (x, i, a) { return x && a.indexOf(x) === i; });
     var r = _fetchComCascata('url_context', payload, modelos);
     var data = r.data;
@@ -333,6 +350,7 @@ var Gemini = (function () {
       if (code === 200) {
         var data = JSON.parse(res.getContentText() || '{}');
         var vec = (data.embedding && data.embedding.values) || [];
+        registrarUso(model, { usageMetadata: { promptTokenCount: Math.ceil(String(texto || '').length / 3) } }, { buscas: 0 });
         if (ck && vec.length) { try { cache.put(ck, JSON.stringify(vec), 21600); } catch (eP) {} }
         return vec;
       }
@@ -504,7 +522,7 @@ var Gemini = (function () {
     return null;
   }
 
-  return { gerar: gerar, temChave: temChave, gerarImagem: gerarImagem, pesquisarWeb: pesquisarWeb, pesquisarWebVarias: pesquisarWebVarias, lerUrl: lerUrl, embeddar: embeddar, gerarTextoFallback: gerarTextoFallback };
+  return { gerar: gerar, temChave: temChave, gerarImagem: gerarImagem, pesquisarWeb: pesquisarWeb, pesquisarWebVarias: pesquisarWebVarias, registrarUso: registrarUso, chaveDireta: chaveDireta, lerUrl: lerUrl, embeddar: embeddar, gerarTextoFallback: gerarTextoFallback };
 })();
 
 /** Diagnóstico do MODO RESERVA: testa os provedores alternativos (Anthropic/OpenRouter/NVIDIA). Rode no editor. */
@@ -564,11 +582,11 @@ function usarModeloRobusto() {
  *  Se a chave ainda não tiver acesso ao 3, a cascata cai sozinha para o 2.5-flash. */
 function usarGemini3() {
   var p = PropertiesService.getScriptProperties();
-  p.setProperty('GEMINI_MODEL', 'gemini-3-flash-preview');
+  p.setProperty('GEMINI_MODEL', 'gemini-3.8-flash');
   p.setProperty('GEMINI_MODEL_FALLBACK', 'gemini-2.5-flash');
   p.setProperty('GEMINI_ORDER', 'billing_first');
-  Logger.log('✅ Gemini 3 ativo: gemini-3-flash-preview → gemini-2.5-flash (fallback). Rode rodarQA() para validar o loop FC ao vivo.');
-  return { GEMINI_MODEL: 'gemini-3-flash-preview', GEMINI_MODEL_FALLBACK: 'gemini-2.5-flash' };
+  Logger.log('✅ Gemini 3 ativo: gemini-3.8-flash → gemini-2.5-flash (fallback). Rode rodarQA() para validar o loop FC ao vivo.');
+  return { GEMINI_MODEL: 'gemini-3.8-flash', GEMINI_MODEL_FALLBACK: 'gemini-2.5-flash' };
 }
 
 /** MODO RÁPIDO: gemini-2.5-flash-lite como primário — mais veloz, porém menos confiável em FC. */

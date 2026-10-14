@@ -25,7 +25,7 @@ Projeto Google Apps Script gerenciado localmente via clasp.
 
 | Deployment ID | Versão | Descrição |
 |---|---|---|
-| `<DEPLOYMENT_ID>` | **@478** | **ATIVA** — "cancelar folga por voz + avisos da caderneta". É esta que o celular e os scripts de diagnóstico usam. |
+| `<DEPLOYMENT_ID>` | **@479** | **ATIVA** — "ponto: lembrete cede se o Sisponto já registrou; supermercado; teste de aviso". É esta que o celular e os scripts de diagnóstico usam. |
 | `<DEPLOYMENT_ID>` | @25 | Antiga — "TesteJobs" |
 | `<DEPLOYMENT_ID>` | @HEAD | Cabeça (muda a cada push, não é a de produção) |
 
@@ -244,6 +244,11 @@ guardado, refaz um novo. Se o áudio parar no meio sem fala por cima, procurar
 `Killing ... com.arlosoft.macrodroid` no `adb logcat`: em 13/10 a Play Store
 atualizou o WebView e o Android matou o MacroDroid.
 
+**Lembrete de ponto cede ao Sisponto (14/10).** Ele bateu o ponto às 14:00:29 e o lembrete das 14:00 saiu às 14:01
+(o tick é de 1 min). Agora o tick de `AlertasVoz`, antes de falar um alerta `tag:'ponto'`, pergunta a `_pontoJaRegistrado`
+se o Sisponto notificou entre 30 min antes do horário e agora; se sim, cala, marca o dia e deixa o evento
+`alertaVoz:suprimido`. Fail-open: sem ler as notificações, lembra como antes. A cobrança de ausência já olhava isso.
+
 **Folga e feriado** (`folga_ponto`): "hoje é feriado / não trabalho hoje / amanhã
 estou de folga" grava o dia em `PONTO_FOLGAS` ("cancela a folga de amanhã" tira); o tick e a cobrança "ponto
 ausente" calam nesse dia. O Jarvis não pula o ponto sozinho em feriado (ele pode
@@ -327,7 +332,7 @@ o histórico. Então:
   genérico no teste do lembrete relativo).
 - O `README.md` é o que um recrutador lê primeiro. O projeto Jarvis no
   LinkedIn e o README do perfil do GitHub citam "147 testes automatizados"
-  (o repo tem 235 desde 14/10 — a frase segue verdadeira como piso);
+  (o repo tem 240 desde 14/10 — a frase segue verdadeira como piso);
   se a contagem mudar muito, avise o dono para atualizar lá também.
 - Nada sobre o empregador nem sobre sistemas internos de trabalho entra aqui.
 
@@ -376,7 +381,7 @@ público").
 cd tests-local && node --test
 ```
 
-235 testes offline (sem cota, sem rede) sobre a lógica determinística: MODO
+240 testes offline (sem cota, sem rede) sobre a lógica determinística: MODO
 DIRETO, gate sem-cota, hooks, parsing de turno/briefing, validação de prefs,
 ordenação dos cards, cadeia da voz, lembrete relativo e alertas de uma vez só,
 `_urlParaMacro`, `lerBiblia`, briefing com dados reais e trava de agenda
@@ -385,7 +390,7 @@ caracteres da voz no briefing e autodiagnóstico sem alarme de app raro
 (`tests-local/dia-0110.test.js`). `tests-local/gas-shims.js` simula as
 APIs do GAS (`formatDate` é fixo: teste que depende de horário injeta o seu).
 `tests-local/jev-caderneta.test.js` cobre o roteador semântico novo (JEV simulado, interruptor, máscara de log).
-Estado em 14/10/2026: **235/235 passando**.
+Estado em 14/10/2026: **240/240 passando**.
 
 Contra o sistema vivo, pelo terminal: `ler_debug` (POST com `VOICE_API_TOKEN`,
 `n` até 200, `alertas:true`, `notificacoes:N`, `ensaioBriefing:'<tag>'`, `gatilhos:true`,

@@ -224,6 +224,20 @@ var AlertasVoz = (function () {
         if (a.dias && a.dias.length && a.dias.indexOf(dow) === -1) return;
         var carimbo = dia + 'T' + a.hora + ':' + (a.minuto || 0);   // uma vez por dia, por alerta
         if (a.ult === carimbo) return;
+        /* PONTO JÁ BATIDO NÃO SE LEMBRA. Em 14/10 ele marcou o ponto às 14:00:29 (a notificação do Sisponto
+         * chegou nesse segundo) e o lembrete das 14:00 saiu às 14:01, porque o tick só roda de minuto em minuto.
+         * A cobrança de ausência já olhava as notificações do app de ponto; o lembrete não olhava. Agora, se o
+         * Sisponto registrou entre 30 min antes do horário e agora, o lembrete cede (fail-open: sem leitura, lembra). */
+        if (a.tag === 'ponto' && typeof _pontoJaRegistrado === 'function' && _pontoJaRegistrado(alvo, 30)) {
+          a.ult = carimbo; mudou = true;
+          try {
+            if (typeof Jarvis !== 'undefined' && Jarvis.registrarEvento) Jarvis.registrarEvento({
+              tool: 'alertaVoz:suprimido', ok: true, ms: 0,
+              resumo: 'lembrete de ponto ' + _hhmm(Number(a.hora), Number(a.minuto || 0)) + ' calado: o Sisponto já registrou'
+            });
+          } catch (ePj) {}
+          return;
+        }
         /* COLISÃO DE BRIEFINGS. O 'briefing' (tag) ACOMPANHA O TURNO: com turno da tarde ele cai às
          * 13:30, antes do expediente — papel distinto, útil. Com turno da MANHÃ cai às 07:30 e
          * colide com o briefing_manha das 08:30: as mesmas manchetes duas vezes em uma hora.

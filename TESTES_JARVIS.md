@@ -56,7 +56,7 @@ Lê o app **Caderneta** (Cloudflare Worker + D1). **O número é calculado no se
 | 1.5 | "Quanto eu tenho livre hoje?" · "Dá pra gastar quanto agora?" · "Tô no azul?" · "Sobrou dinheiro?" | livre hoje (e, se pedir "fim do mês", a previsão) | ✅ | 14/10 celular: "dá pra gastar quanto agora", "tô no azul", "sobrou dinheiro" → R$ 117,18 (as duas últimas pelo JEV) |
 | 1.6 | "O que vence amanhã?" · "Tem conta pra pagar hoje?" · "Contas da semana" | vencimentos do período, com atrasadas | ✅ | 14/10 celular: "o que vence amanhã" e "tem conta pra pagar hoje" → "Nada vence…"; "essa semana" pela rota fixa |
 | 1.7 | "Quanto falta pagar esse mês?" | total ainda em aberto | ✅ | 14/10 celular: "Não há nada pendente de pagar neste mês." |
-| 1.8 | "Quanto gastei no mercado?" · "Como está o supermercado?" | orçamento do mercado (soma dos lançamentos) | ✅ | 14/10 celular: "quanto gastei no mercado" → R$ 960,59 em 10 lançamentos. "gastos de supermercado" cai no Swile (histórico de compras), não na caderneta |
+| 1.8 | "Quanto gastei no mercado?" · "Como estão os gastos de supermercado?" | orçamento do mercado (soma dos lançamentos) | ✅ | 14/10 celular: "quanto gastei no mercado" → R$ 960,59 em 10 lançamentos. "gastos de supermercado" cai no Swile (histórico de compras), não na caderneta |
 | 1.9 | "Quanto tenho investido?" · "Qual minha reserva de emergência?" | investido total ou reserva | ✅ | 14/10 celular: investido R$ 31.477,82; reserva R$ 25.259,91 (≈ 11,5 meses) |
 | 1.10 | "Quanto tenho de saldo no Swile?" | saldo do voucher (rota **Swile**, não a caderneta) | | |
 | 1.11 | Pergunta de conceito: "O que é reserva de emergência?" | **não** abre a caderneta; vai ao modelo (conversa) | | |
@@ -115,12 +115,15 @@ Sem você pedir, no tick de 15 min, em duas janelas: **manhã 9–11h** e **noit
 
 | # | O que conferir | Esperado | Status | Obs. |
 |---|---|---|---|---|
-| 1.32b | Manhã: conta que vence hoje · conta atrasada · saldo livre ou previsão do fim do mês negativos · orçamento a 80% / estourado | notificação "Caderneta" + fala no celular, com o valor | ⏳ | hoje não há nada a avisar (ensaio vazio) |
+| 1.32b | Manhã: conta que vence hoje · conta atrasada · saldo livre ou previsão do fim do mês negativos · orçamento a 80% / estourado | notificação "Caderneta" + fala no celular, com o valor | ⏳ | entrega de teste ✅ 14/10 (`cadernetaAvisosTeste`); aviso real aguarda uma conta/saldo a avisar |
 | 1.32c | Noite: o que vence amanhã (na virada do mês, olha o mês seguinte) | idem | ⏳ | |
 | 1.32d | Mesmo aviso no tick seguinte | **não repete** | ⏳ | coberto por teste automático |
 | 1.32e | `ler_debug` com `cadernetaAvisos:'manha'` ou `'noite'` | mostra o que avisaria agora, sem enviar nem gravar | ✅ | 14/10: vazio nas duas janelas |
+| 1.32h | `ler_debug` com `cadernetaAvisosTeste:true` | notificação "Caderneta (teste)" + fala "Teste do aviso da caderneta…" no celular | ✅ | 14/10: entregue (notificar e falar com sucesso) |
 | 1.32f | `config_fala` com `FIN_AVISOS_ATIVO=nao` | desliga os avisos | ⏳ | |
 | 1.32g | Log do evento `aviso:caderneta` | só a contagem, **sem valores** | ⏳ | |
+
+| 1.36 | Bata o ponto (Sisponto) um pouco antes do horário do lembrete | o lembrete de ponto **não fala** (evento `alertaVoz:suprimido` "Sisponto já registrou") | ⏳ | corrigido 14/10 após o lembrete das 14:00 sair às 14:01 com o ponto já batido |
 
 ### 1g. 🔔 Notificações do celular 🗣️
 

@@ -172,7 +172,7 @@ var Financas = (function () {
     if (/\b(swile|suav|suail|voucher|vale|mobilidade|alimentacao|refeicao|combustivel)\b/.test(s)) return null;
     // comando/ação que não é consulta (registrar, criar, cancelar...): fica para fases seguintes / modelo
     if (/\b(cri[ae]|agend\w*|cancel\w*|exclu\w*|apag\w*|regist\w*|lanc\w*|anot\w*|adicion\w*|coloc\w*|marc[ae]|paguei|gastei|recebi|apliquei|resgatei)\b/.test(s) &&
-        !/\bquanto (eu )?gastei no mercado\b/.test(s)) return null;
+        !/\bquanto (eu )?gastei n[oa] (super)?mercado\b/.test(s)) return null;
     var pergunta = /\b(quanto|quantos|quanta|qual|quais|me (diga|fale|fala|conta|mostre|mostra)|o que|como (esta|estao)|tem algo|tenho algo)\b/.test(s);
     var caderneta = /\bcaderneta\b/.test(s);
 
@@ -191,7 +191,8 @@ var Financas = (function () {
     if (/\b(fim|final) do mes\b|\bvai sobrar\b|\bsobrara\b/.test(s) && /\b(sobra|sobrar|sobrara|livre|fica|ficar|ficara)\b/.test(s) && pergunta) return { tipo: 'livre_fim' };
 
     // orçamento / mercado
-    if (/\bmercado\b/.test(s) && /\b(orcamento|resta|restam|sobra|sobrou|gastei|usei|gasto)\b/.test(s) && (pergunta || /\borcamento\b/.test(s))) return { tipo: 'orcamento' };
+    // "supermercado" também é mercado: "como estão os gastos de supermercado" caía no Swile (histórico de compras)
+    if (/\b(super)?mercado\b/.test(s) && /\b(orcamento|resta|restam|sobra|sobrou|gastei|usei|gastos?)\b/.test(s) && (pergunta || /\borcamento\b/.test(s))) return { tipo: 'orcamento' };
     if (/\borcamento\b/.test(s) && pergunta) return { tipo: 'orcamento' };
 
     // investimentos / reserva
@@ -287,6 +288,18 @@ var Financas = (function () {
   function verificarAvisos(opts) {
     opts = opts || {};
     try {
+      // TESTE REAL de entrega: passa pelos MESMOS _avisarDono/fala, mas com dados inventados e rotulado como teste.
+      // Não consulta a caderneta, não grava chave e não consome a janela do dia.
+      if (opts.teste) {
+        var dt = { hoje: Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd'), livreHoje: 1, livreFim: 1,
+                   obrigacoes: [{ nome: 'Conta de teste', dia: Number(Utilities.formatDate(new Date(), TZ, 'd')), valor: 10, pago: false, outroPaga: false }] };
+        var at = avisos(dt, null, 'manha');
+        var tx = 'Teste do aviso da caderneta. ' + at.map(function (a) { return a.texto; }).join(' ');
+        var rt = (typeof _avisarDono === 'function')
+          ? _avisarDono({ origem: 'caderneta', titulo: 'Caderneta (teste)', texto: tx, falar: tx, logResumo: 'caderneta: aviso de TESTE [valores não registrados]' })
+          : { ok: false };
+        return { ok: !!(rt && rt.ok), teste: true, texto: tx, notificacao: rt && rt.notificacao, fala: rt && rt.fala };
+      }
       var sp = PropertiesService.getScriptProperties();
       if (!opts.ensaio && String(sp.getProperty('FIN_AVISOS_ATIVO') || 'sim').toLowerCase() === 'nao') return { ok: true, pulou: 'desligado' };
       if (!configurado()) return { ok: true, pulou: 'não configurado' };

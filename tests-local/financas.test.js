@@ -247,7 +247,7 @@ test('Nada pendente, saldo positivo, orçamento folgado → nenhum aviso', funct
 
 function sbVerif(o) {
   var s = sandbox(o);
-  s.Utilities.formatDate = function (dt, tz, fmt) { return fmt === 'H' ? String((o && o.hora) == null ? 9 : o.hora) : '2026-10-14'; };
+  s.Utilities.formatDate = function (dt, tz, fmt) { return fmt === 'H' ? String((o && o.hora) == null ? 9 : o.hora) : (fmt === 'd' ? '14' : '2026-10-14'); };
   s._avisos = [];
   s._avisarDono = function (a) { s._avisos.push(a); return { ok: true }; };
   return s;
@@ -270,4 +270,24 @@ test('verificarAvisos: fora da janela não consulta a rede; desligado não envia
   var r = JSON.parse(JSON.stringify(en.Financas.verificarAvisos({ ensaio: true, janela: 'manha' })));
   assert.ok(r.avisos.length >= 1); assert.strictEqual(en._avisos.length, 0);
   assert.strictEqual(JSON.parse(JSON.stringify(en.Financas.verificarAvisos({ ensaio: true, janela: 'manha' }))).avisos.length, r.avisos.length, 'ensaio repetido dá o mesmo');
+});
+
+test('"supermercado" vai para a caderneta (orçamento do mercado), não para o Swile', function () {
+  var s = sandbox();
+  ['como estão os gastos de supermercado', 'quanto gastei no supermercado', 'quanto eu gastei no supermercado esse mês', 'como está o orçamento do supermercado', 'quais os gastos do mercado'].forEach(function (f) {
+    var r = s.Financas.interpretar(f);
+    assert.ok(r && r.tipo === 'orcamento', f + ' → ' + JSON.stringify(r));
+  });
+  assert.strictEqual(s.Financas.interpretar('quanto tem de saldo do vale do supermercado'), null, 'vale = Swile');
+});
+
+test('verificarAvisos teste: entrega um aviso rotulado como teste, com dados inventados, sem tocar na caderneta nem gravar chave', function () {
+  var s = sbVerif({ hora: 9 });
+  var r = JSON.parse(JSON.stringify(s.Financas.verificarAvisos({ teste: true })));
+  assert.strictEqual(r.ok, true); assert.strictEqual(r.teste, true);
+  assert.strictEqual(s._avisos.length, 1);
+  assert.ok(/^Teste do aviso da caderneta\./.test(s._avisos[0].falar) && /Conta de teste/.test(s._avisos[0].falar));
+  assert.strictEqual(s._fetches.length, 0, 'não consultou a caderneta');
+  assert.strictEqual(s.PropertiesService.getScriptProperties().getProperty('FIN_AVISOS'), null);
+  assert.strictEqual(s.PropertiesService.getScriptProperties().getProperty('FIN_AVISOS_JANELA'), null);
 });

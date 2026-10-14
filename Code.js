@@ -3994,6 +3994,8 @@ function doPost(e) {
         }
         // Avisos proativos da caderneta: o que sairia agora na janela pedida ('manha'|'noite'), sem enviar nem gravar.
         if (body.cadernetaAvisos) { try { saida.cadernetaAvisos = Financas.verificarAvisos({ ensaio: true, janela: String(body.cadernetaAvisos) === 'noite' ? 'noite' : 'manha' }); } catch (eCa) { saida.cadernetaAvisos = { erro: eCa.message }; } }
+        // Entrega REAL de um aviso de teste (notificação + fala no celular), com dados inventados e rotulado como teste.
+        if (body.cadernetaAvisosTeste) { try { saida.cadernetaAvisosTeste = Financas.verificarAvisos({ teste: true }); } catch (eCt) { saida.cadernetaAvisosTeste = { erro: eCt.message }; } }
         if (body.ensaioBriefing) { try { saida.ensaioBriefing = diagBriefingTexto({ tag: String(body.ensaioBriefing) }); } catch (eEb) { saida.ensaioBriefing = { erro: eEb.message }; } }
         return ContentService.createTextOutput(JSON.stringify(saida)).setMimeType(ContentService.MimeType.JSON);
       } catch (errDb) {
@@ -7139,6 +7141,19 @@ function diagRegrasNotificacao(args) {
  * ponto passou e nenhuma notificação do app de ponto chegou, provavelmente ele esqueceu.
  * Os horários vêm dos alertas tag:'ponto' — a mesma fonte do briefing, então segue troca de turno.
  */
+/** O app de ponto notificou entre `antesMin` minutos antes de `alvoMin` (minutos do dia) e agora? Fail-open: erro → false.
+ *  Usado pelo LEMBRETE de ponto (AlertasVoz) para não mandar bater um ponto que o Sisponto já registrou. */
+function _pontoJaRegistrado(alvoMin, antesMin) {
+  try {
+    var appPonto = String(PropertiesService.getScriptProperties().getProperty('PONTO_APP') || 'sisponto').toLowerCase();
+    var agora = new Date(), minAgora = agora.getHours() * 60 + agora.getMinutes();
+    var ini = Date.now() - (minAgora - alvoMin + (antesMin || 30)) * 60000;
+    return _notifLer(100).some(function (n) {
+      return Number(n.d.em || 0) >= ini && String(n.d.app || '').toLowerCase().indexOf(appPonto) !== -1;
+    });
+  } catch (e) { return false; }
+}
+
 function verificarPontoBatido(opts) {
   opts = opts || {};
   var p = PropertiesService.getScriptProperties();

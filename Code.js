@@ -2913,6 +2913,21 @@ function doPost(e) {
       return json({ ok: true, antes: antesFd, agora: vFd });
     }
 
+    // CONEXÃO COM A CADERNETA (finanças). Grava o endereço e o token do Worker em Script Properties, sem editor.
+    // Só com o token da voz; só duas chaves, com formato validado; o token NUNCA volta na resposta nem vai para o log.
+    // Quem chama é o provisionar-jarvis.mjs da caderneta, que gera o token e nunca o mostra.
+    if (body && body.action === 'config_financas') {
+      var _spFin = PropertiesService.getScriptProperties();
+      if (!body.token || body.token !== _spFin.getProperty('VOICE_API_TOKEN')) return json({ ok: false, erro: 'não autorizado' });
+      var _uF = String(body.url || '').trim().replace(/\/+$/, ''), _tF = String(body.api_token || '').trim();
+      if (!/^https:\/\/[a-z0-9.-]+\.[a-z]{2,}$/i.test(_uF)) return json({ ok: false, erro: 'url inválida (use https://dominio)' });
+      if (!/^[A-Za-z0-9_-]{32,128}$/.test(_tF)) return json({ ok: false, erro: 'token inválido (32 a 128 caracteres, letras e números)' });
+      _spFin.setProperty('FIN_API_URL', _uF);
+      _spFin.setProperty('FIN_API_TOKEN', _tF);
+      try { CacheService.getScriptCache().remove('fin_resumo_atual'); } catch (eCf) {}
+      return json({ ok: true, configurado: true });
+    }
+
     // ENTREGA DA FALA (nuvem × celular) sem editor e sem DIAG_TOKEN — o token de diagnóstico não fica
     // no PC, e em 28/09 a volta para a voz premium dependia de virar três chaves ao mesmo tempo.
     // LISTA FECHADA de chaves e valores: nada de gravar property arbitrária por HTTP.
@@ -3351,7 +3366,10 @@ function doPost(e) {
         var _fato = (_voto === null && _ofr === null) ? _interpretarFatoVoz(msgVoz) : null;
         var _perdi = (_voto === null && _ofr === null && _fato === null) ? _interpretarPerdi(msgVoz) : null;
         // (-1.5) SALDO/EXTRATO DO SWILE — determinístico. Número não passa pelo modelo.
-        var _fin = (_voto === null && _ofr === null && _perdi === null) ? _interpretarFinanceiro(msgVoz) : null;
+        // CADERNETA (finanças pessoais, só leitura): vem ANTES do Swile, que também fala de "saldo" e "gastei".
+        // Só pega o que é inequívoco ("livre", "vence", "falta pagar", orçamento do mercado, investido); resposta 100% do código.
+        var _cad = (_voto === null && _ofr === null && _perdi === null && _fato === null && typeof Financas !== 'undefined') ? Financas.interpretar(msgVoz) : null;
+        var _fin = (_voto === null && _ofr === null && _perdi === null && _cad === null) ? _interpretarFinanceiro(msgVoz) : null;
         // FOLGA/FERIADO: "hoje é feriado, não trabalho, não precisa me lembrar do ponto". Vem ANTES do turno
         // porque a mesma frase pode trazer os dois ("não trabalho hoje, e a partir dessa semana é o turno da tarde").
         // REPETIR O BRIEFING: "repete o briefing", "não ouvi o briefing". O briefing que o aparelho perdeu (aviso por cima,
@@ -3360,7 +3378,7 @@ function doPost(e) {
         var _folga = (_voto === null && _ofr === null && _perdi === null && _fin === null) ? _interpretarFolgaPonto(msgVoz) : null;
         var _trn = (_voto === null && _ofr === null && _perdi === null && _fin === null && _repB === null) ? _interpretarTurnoTrabalho(msgVoz) : null;
         var _insV = (_voto === null && _ofr === null && _perdi === null && _fin === null && _trn === null && _folga === null) ? _interpretarInsight(msgVoz) : null;
-        var _livre = (_fato === null && _voto === null && _ofr === null && _perdi === null && _fin === null && _trn === null && _folga === null && _repB === null && _insV === null);
+        var _livre = (_fato === null && _cad === null && _voto === null && _ofr === null && _perdi === null && _fin === null && _trn === null && _folga === null && _repB === null && _insV === null);
         var _viaJev = false;   // marcado se o roteamento semântico (JEV) atender no lugar do LLM
         var _notifPendentes = null;  // notificações do "o que eu perdi" AGUARDANDO confirmação de entrega
         var _lembC = _livre ? _interpretarLembreteCondicional(msgVoz) : null;
@@ -3369,6 +3387,8 @@ function doPost(e) {
         if (_fato !== null) {
           try { respVoz = (_fato.via === 'agenda') ? _falarAgenda(_fato.periodo) : (_fato.via === 'emails') ? _falarEmails() : (_fato.via === 'despertador') ? _falarDespertador() : _falarRelogio(_fato); }
           catch (eFt) { respVoz = 'Não consegui consultar isso agora.'; }
+        } else if (_cad !== null) {
+          respVoz = Financas.responder(_cad);   // nunca lança; sem conexão responde que não conseguiu
         } else if (_fin !== null) {
           try {
             if (_fin.tipo === 'gastos') {
@@ -3567,6 +3587,7 @@ function doPost(e) {
         // A ordem espelha a cadeia if/else if acima; ao mexer lá, mexer aqui também.
         var _viaVoz =
             (_fato  !== null) ? _fato.via
+          : (_cad   !== null) ? 'caderneta'
           : (_fin   !== null) ? 'financeiro'
           : (_repB  !== null) ? 'repetir_briefing'
           : (_folga !== null) ? 'folga_ponto'
@@ -3596,7 +3617,8 @@ function doPost(e) {
         try {
           if (typeof Jarvis !== 'undefined' && Jarvis.registrarEvento) Jarvis.registrarEvento({
             tool: 'voz:' + _viaVoz, ok: true, ms: 0, userEmail: emailUser,
-            resumo: msgVoz.substring(0, 100) + ' → ' + String(respVoz).substring(0, 140)
+            // Caderneta: o log não guarda o NÚMERO falado (valores financeiros ficam só no app e no áudio do momento).
+            resumo: msgVoz.substring(0, 100) + ' → ' + (_viaVoz === 'caderneta' ? '[resposta financeira não registrada]' : String(respVoz).substring(0, 140))
           });
         } catch (eEvV) {}
         var textoLimpo = _prepararTextoFala(respVoz);
@@ -3604,7 +3626,7 @@ function doPost(e) {
         // Persiste o turno da conversa por voz no Firestore para manter a continuidade do assunto
         if (uid) {
           try {
-            conversaId = _persistirTurno(uid, conversaId, msgVoz, null, { resposta: respVoz });
+            conversaId = _persistirTurno(uid, conversaId, msgVoz, null, { resposta: (_viaVoz === 'caderneta' ? '[consulta à caderneta respondida por voz]' : respVoz) });
           } catch (ePersist) {
             Logger.log("[voice_command] Erro ao persistir turno: " + ePersist.message);
           }
@@ -3652,7 +3674,7 @@ function doPost(e) {
          * Ajustável sem deploy pela property FALA_LOCAL_ROTAS (lista separada por vírgula).
          * O teto de caracteres continua como rede de segurança: resposta de ação que venha longa
          * (um extrato inteiro, por exemplo) volta para a nuvem. */
-        var _ROTAS_LOCAIS_PADRAO = 'relogio,agenda,emails,jev,lembrete_relativo,financeiro,turno,rotina,controle_nativo,abrir_app,spotify,youtube,google,navegar,compras,ligar,biblia,insight_gravar,voto_insight';
+        var _ROTAS_LOCAIS_PADRAO = 'relogio,agenda,emails,jev,lembrete_relativo,financeiro,caderneta,turno,rotina,controle_nativo,abrir_app,spotify,youtube,google,navegar,compras,ligar,biblia,insight_gravar,voto_insight';
         var _rotasLocais = String(PropertiesService.getScriptProperties().getProperty('FALA_LOCAL_ROTAS') || _ROTAS_LOCAIS_PADRAO)
           .split(',').map(function (x) { return x.trim(); }).filter(function (x) { return x; });
         var _viaBase = String((typeof _viaVoz !== 'undefined') ? _viaVoz : '').split(':')[0];
@@ -3787,6 +3809,19 @@ function doPost(e) {
         }
         if (body.gatilhos && typeof Heartbeat !== 'undefined' && Heartbeat.diario) { try { saida.diarioGatilhos = Heartbeat.diario(); } catch (eDg) {} }
         if (body.gatilhos && typeof Heartbeat !== 'undefined' && Heartbeat.status) { try { saida.heartbeat = Heartbeat.status(); } catch (eHb) { saida.heartbeat = { erro: eHb.message }; } }
+        // Caderneta: o que o Jarvis responderia a cada consulta, sem falar no celular. Só leitura.
+        if (body.caderneta) {
+          try {
+            var _cd = { configurado: (typeof Financas !== 'undefined') && Financas.configurado() };
+            if (_cd.configurado) {
+              _cd.respostas = {};
+              ['livre_hoje', 'livre_fim', 'falta_pagar', 'orcamento', 'investido', 'reserva'].forEach(function (t) { _cd.respostas[t] = Financas.responder({ tipo: t }); });
+              _cd.respostas.vencimentos_hoje = Financas.responder({ tipo: 'vencimentos', periodo: 'hoje' });
+              _cd.respostas.vencimentos_semana = Financas.responder({ tipo: 'vencimentos', periodo: 'semana' });
+            }
+            saida.caderneta = _cd;
+          } catch (eCad) { saida.caderneta = { erro: eCad.message }; }
+        }
         if (body.ensaioBriefing) { try { saida.ensaioBriefing = diagBriefingTexto({ tag: String(body.ensaioBriefing) }); } catch (eEb) { saida.ensaioBriefing = { erro: eEb.message }; } }
         return ContentService.createTextOutput(JSON.stringify(saida)).setMimeType(ContentService.MimeType.JSON);
       } catch (errDb) {
@@ -6572,6 +6607,7 @@ function _preverRotaDeterministica(msg) {
   var m = String(msg || '');
   var r;
   try { r = _interpretarFatoVoz(m); if (r) return r.via; } catch (e) {}   // vem antes de tudo, como na cadeia
+  try { if (typeof Financas !== 'undefined' && Financas.interpretar(m)) return 'caderneta'; } catch (e) {}
   try { r = _interpretarFinanceiro(m); if (r !== null && r !== undefined) return 'financeiro'; } catch (e) {}
   try { if (_interpretarRepetirBriefing(m)) return 'repetir_briefing'; } catch (e) {}
   try { r = _interpretarFolgaPonto(m); if (r) return 'folga_ponto'; } catch (e) {}

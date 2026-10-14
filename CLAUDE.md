@@ -101,7 +101,8 @@ arquivo. **Arquivo novo que precise subir tem que ser adicionado lá**, senão o
 `Gmail.js`, `Agenda.js` (tarefas agendadas, tick de 15 min), `Tarefas.js`
 (Google Tasks), `Contatos.js` (People API), `Formularios.js`, `Web.js` (leitura
 + monitor de páginas, com anti-SSRF), `Monitor.js` (monitor de Gmail),
-`DriveUploads.js`, `Autorizacoes.js`, `Secretaria.js`, `A2ABadge.js`.
+`DriveUploads.js`, `Autorizacoes.js`, `Secretaria.js`, `A2ABadge.js`, `Financas.js`
+(a **caderneta**, o app de finanças pessoais do dono, só leitura — ver "Caderneta").
 
 > `Agenda.js` (tarefas **agendadas** do Jarvis) ≠ `Tarefas.js` (app **Google
 > Tarefas**). O system prompt insiste nessa distinção porque o modelo confundia.
@@ -117,7 +118,7 @@ dispositivo (`?dispositivo=fila`, entrega *at-most-once*, esvazia ao ler).
 tráfego interno; inclui `NOTIF` da fila de notificações) → rate limit global
 (240/min) → webhook da Evolution (`body.event`) → `get_voice_token` /
 `telemetria` / `viagem` / `notificacao` / `voice_command` / `apps_celular` /
-`janela_notificacoes` / `fala_direta` / `config_fala` / `ler_debug` (todas com
+`janela_notificacoes` / `fala_direta` / `config_fala` / `config_financas` / `ler_debug` (todas com
 `VOICE_API_TOKEN`) → diag (`DIAG_TOKEN`). `config_fala` troca, por HTTP, só uma
 lista fechada de chaves da entrega da fala (`FALA_PROATIVA_LOCAL`,
 `FALA_RESPOSTAS_LOCAL`, `MODO_FALA_VOZ`, `FALA_VOLUME_DB` 0–16, `FALA_FORMATO`, `FALA_ARQUIVO_UNICO`).
@@ -189,6 +190,21 @@ consultado e ms por etapa). Ensaiar sem falar: `ler_debug` com
 **Trava de agenda inventada no chat e na voz** (`_hookAgendaSemFonte`, pós-hook):
 frase que afirma agenda/tarefas do dono sem ferramenta de agenda com sucesso
 no MESMO turno é cortada, com aviso; evento `hook:agenda_sem_fonte`.
+
+**Caderneta (fase 1, só leitura, desde 14/10).** `Financas.js` consulta o Worker da
+caderneta (`GET /api/jarvis/resumo`, `Authorization: Bearer`) e fala: livre hoje, previsão do
+fim do mês, o que vence (hoje/amanhã/semana, com atrasadas), quanto falta pagar, orçamento do
+mercado, investido e reserva. **O número vem do código**: a caderneta calcula no servidor
+(`src/calculos.js`, igual ao `app.js`, com teste de paridade) e o Jarvis só formata a frase.
+Nenhuma resposta passa pelo Gemini e o modelo não ganhou ferramenta financeira. A rota de voz
+`caderneta` vem ANTES do Swile e só pega o inequívoco ("livre", "vence", "falta pagar",
+"orçamento do mercado", "investido"); "saldo do voucher" e "quanto gastei essa semana" seguem no
+Swile. Fala no aparelho (`caderneta` está em `FALA_LOCAL_ROTAS`) e o log guarda
+"[resposta financeira não registrada]", sem o valor. Endereço e token ficam em Script Properties
+(`FIN_API_URL`, `FIN_API_TOKEN`), gravados pela rota `config_financas` (token da voz) a partir do
+`provisionar-jarvis.mjs` da caderneta, que gera o token e não o mostra. `ler_debug` com
+`caderneta:true` mostra o que ele responderia a cada pergunta, sem falar. Fases seguintes
+(avisos, registro por voz com confirmação) ainda não existem; escrita só por ações estreitas.
 
 **Fila de falas** (`controlarDispositivo('falar')`): a fala nova espera a anterior
 acabar, **fora do lock**, em passos de 15 s, até 110 s. A duração vem do áudio (WAV
@@ -283,7 +299,7 @@ o histórico. Então:
   genérico no teste do lembrete relativo).
 - O `README.md` é o que um recrutador lê primeiro. O projeto Jarvis no
   LinkedIn e o README do perfil do GitHub citam "147 testes automatizados"
-  (o repo tem 186 desde 13/10 — a frase segue verdadeira como piso);
+  (o repo tem 199 desde 14/10 — a frase segue verdadeira como piso);
   se a contagem mudar muito, avise o dono para atualizar lá também.
 - Nada sobre o empregador nem sobre sistemas internos de trabalho entra aqui.
 
@@ -332,7 +348,7 @@ público").
 cd tests-local && node --test
 ```
 
-186 testes offline (sem cota, sem rede) sobre a lógica determinística: MODO
+199 testes offline (sem cota, sem rede) sobre a lógica determinística: MODO
 DIRETO, gate sem-cota, hooks, parsing de turno/briefing, validação de prefs,
 ordenação dos cards, cadeia da voz, lembrete relativo e alertas de uma vez só,
 `_urlParaMacro`, `lerBiblia`, briefing com dados reais e trava de agenda
@@ -340,7 +356,7 @@ inventada (`tests-local/briefing.test.js`), despertador composto, teto de
 caracteres da voz no briefing e autodiagnóstico sem alarme de app raro
 (`tests-local/dia-0110.test.js`). `tests-local/gas-shims.js` simula as
 APIs do GAS (`formatDate` é fixo: teste que depende de horário injeta o seu).
-Estado em 13/10/2026: **186/186 passando**.
+Estado em 14/10/2026: **199/199 passando**.
 
 Contra o sistema vivo, pelo terminal: `ler_debug` (POST com `VOICE_API_TOKEN`,
 `n` até 200, `alertas:true`, `notificacoes:N`, `ensaioBriefing:'<tag>'`, `gatilhos:true`,

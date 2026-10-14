@@ -6,7 +6,7 @@ var { makeSandbox } = require('./gas-shims');
 var { loadGasFile } = require('./load');
 
 var DADOS = {
-  mes: '2026-10', hoje: '2026-10-14', livreHoje: 117.18, livreFim: 480.5, aPagar: 645.53,
+  mes: '2026-10', hoje: '2026-10-14', livreHoje: 117.18, livreFim: 480.5, aPagar: 645.53, receita: 4290, saidas: 3800, sobra: 490, aplicado: 0,
   obrigacoes: [{ nome: 'Fatura Itaú Click', tipo: 'fatura', dia: 19, valor: 387.57, pago: false, outroPaga: false }],
   orcamentos: [], mercado: { total: 960.59, noVoucher: 960.59, outros: 0, n: 10 },
   investimentos: { total: 31477.82, liquidezDiaria: 25259.91, porCategoria: { 'Renda fixa': 20759.91, 'Liquidez/Reserva': 4500, 'Tesouro Direto': 3986.36, 'FIIs': 2231.55 } }, reservaMeses: 11.48,
@@ -215,4 +215,15 @@ test('JEV → consultor: carteira, aporte, reserva contra o alvo e metas chegam 
 test('JEV → consultor: o interruptor ROTA_JEV_NOVAS=nao também desliga as intenções do consultor', function () {
   var s = sandbox(jev('cad_carteira', 0.99), { ROTA_JEV_NOVAS: 'nao' });
   assert.strictEqual(s._rotaSemantica('como anda a carteira', DONO, true, { canal: 'voz' }), null);
+});
+
+test('JEV → consultor: comparação com índices e resumo do mês chegam ao Consultor', function () {
+  var m = sandbox(jev('cad_mes', 0.93));
+  var r = m._rotaSemantica('me conta como foi esse mês', DONO, true, { canal: 'voz' });
+  assert.match(String(r), /^Em outubro até agora: renda R\$ 4\.290,00, saídas R\$ 3\.800,00/);
+  assert.strictEqual(m._ROTA_ULTIMA, 'cad_mes');
+  var i = sandbox(jev('cad_indices', 0.93));
+  var ri = i._rotaSemantica('meu dinheiro está ganhando da inflação', DONO, true, { canal: 'voz' });
+  assert.match(String(ri), /rendimento do ano|índices do Banco Central/);
+  assert.strictEqual(i._ROTA_ULTIMA, 'cad_indices');
 });

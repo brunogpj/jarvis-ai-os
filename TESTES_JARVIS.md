@@ -224,6 +224,16 @@ Sem você pedir, no tick de 15 min, em duas janelas: **manhã 9–11h** e **noit
 | 1.104 | "Aportei" durante a pausa | "Confirma registrar o aporte de R$ X no cofrinho do Mercado Pago, hoje? Isso sai do seu livre." → sim lança UMA Aplicação com o nome do destino | ✅ | 14/10 celular até a confirmação (teste não grava); lançamento coberto por teste automático |
 | 1.105 | Depois de janeiro de 2027 (pausa vencida) | volta a dividir o aporte pelo alvo | ⏳ | teste automático |
 
+### 1f-i. 📊 Rendimento × inflação e resumo do mês 🗣️🔑
+
+| # | Diga | Esperado | Status | Obs. |
+|---|---|---|---|---|
+| 1.106 | "Meus investimentos estão rendendo mais que a inflação?" · "Bati o CDI esse ano?" | rendimento do ano em R$ e %, contra IPCA, CDI e poupança do mesmo período, com "acima de…/abaixo de…" e o aviso de que é aproximado | ✅ | 14/10 celular: R$ 2.299,68 (7,9%) × IPCA 4,0%, CDI 11,0%, poupança 6,9% (índices reais do Banco Central) |
+| 1.107 | Banco Central fora do ar | "Não consegui buscar os índices do Banco Central agora, então não dá para comparar" (nunca inventa) | ⏳ | teste automático |
+| 1.108 | "Como foi o mês?" · "Balanço do mês" | renda, saídas, sobra, aplicado, previsão do fim do mês e a comparação com o mês anterior | ✅ | 14/10 celular |
+| 1.109 | "Como foi setembro?" | resumo do mês fechado; só compara com o mês anterior se ele tem dados | ✅ | 14/10 celular |
+| 1.110 | Paráfrases pelo JEV: "meu dinheiro está ganhando da inflação", "me conta como foi esse mês" | mesma resposta da regra, sem Gemini | ⏳ | teste automático (JEV simulado); falta medir com `rotaJev` |
+
 ### 1g. 🔔 Notificações do celular 🗣️
 
 | # | O que conferir | Esperado | Status | Obs. |

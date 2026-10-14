@@ -291,9 +291,89 @@ var Consultor = (function () {
   }
 
   /** Frase para uma consulta do consultor. `q` = o que o interpretar devolveu. */
+  // ── COMPARAÇÃO COM IPCA, CDI E POUPANÇA (dados oficiais do Banco Central, nunca de modelo) ─────────────────────────
+  // A regra da consultoria: "sempre comparar com inflação e poupança". As séries públicas do SGS/BCB (IPCA mensal 433, CDI mensal 4391, poupança 195) são
+  // acumuladas no ano e ficam 6 h em cache. O rendimento do ano vem da caderneta (investimentos.rendimentoAno); o percentual é APROXIMADO: rendimento
+  // dividido pelo saldo de começo (saldo − rendimento), sem descontar os aportes do ano. Falha de rede → o Jarvis diz que não conseguiu os índices.
+  var _BCB = 'https://api.bcb.gov.br/dados/serie/bcdata.sgs.';
+  function _serieBCB(codigo, ano) {
+    var chave = 'bcb_' + codigo + '_' + ano;
+    try { var ca = CacheService.getScriptCache().get(chave); if (ca) return JSON.parse(ca); } catch (e) {}
+    var res;
+    try {
+      res = UrlFetchApp.fetch(_BCB + codigo + '/dados?formato=json&dataInicial=01/01/' + ano, { muteHttpExceptions: true,
+        headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' } });
+    } catch (e1) { return null; }
+    if (res.getResponseCode() !== 200) return null;
+    var arr;
+    try { arr = JSON.parse(res.getContentText()); } catch (e2) { return null; }
+    if (!Array.isArray(arr) || !arr.length) return null;
+    var lim = arr.map(function (x) { return { data: String(x.data), valor: Number(String(x.valor).replace(',', '.')) }; }).filter(function (x) { return isFinite(x.valor); });
+    try { CacheService.getScriptCache().put(chave, JSON.stringify(lim), 21600); } catch (e3) {}
+    return lim;
+  }
+  /** Acumula taxas mensais em % → {acum, ate:'AAAA-MM', n}. PURA. */
+  function acumular(serie) {
+    if (!serie || !serie.length) return null;
+    var f = 1, ate = '';
+    serie.forEach(function (x) { f *= 1 + x.valor / 100; ate = x.data.slice(6, 10) + '-' + x.data.slice(3, 5); });
+    return { acum: (f - 1) * 100, ate: ate, n: serie.length };
+  }
+  function indices(ano) {
+    var out = { ipca: null, cdi: null, poupanca: null };
+    out.ipca = acumular(_serieBCB(433, ano));
+    out.cdi = acumular(_serieBCB(4391, ano));
+    var p = _serieBCB(195, ano);   // poupança: a taxa vale do dia 01 ao dia 01 seguinte; usa o ponto do dia 1 de cada mês
+    out.poupanca = acumular(p ? p.filter(function (x) { return x.data.slice(0, 2) === '01'; }) : null);
+    return out;
+  }
+  function _pct1(x) { return x.toFixed(1).replace('.', ',') + '%'; }
+  /** Compara o rendimento do ano com os índices. `idx` = indices(ano). */
+  function comparar(d, idx) {
+    var inv = _inv(d), rend = Number(inv.rendimentoAno), total = Number(inv.total) || 0;
+    if (!isFinite(rend) || !(total > 0) || rend === 0) return 'A caderneta ainda não tem o rendimento do ano dos seus investimentos para comparar.';
+    var base = total - rend, pct = base > 0 ? rend / base * 100 : null;
+    if (pct === null) return 'Não consegui calcular o percentual de rendimento do ano.';
+    var t = 'No ano, seus investimentos renderam ' + brl(rend) + ', cerca de ' + _pct1(pct) + ' sobre o saldo de começo';
+    var partes = [], melhor = [], pior = [];
+    [['ipca', 'da inflação (IPCA)', 'IPCA'], ['cdi', 'do CDI', 'CDI'], ['poupanca', 'da poupança', 'poupança']].forEach(function (k) {
+      var x = idx && idx[k[0]];
+      if (!x) return;
+      partes.push(k[2] + ' ' + _pct1(x.acum));
+      (pct >= x.acum ? melhor : pior).push(k[1]);
+    });
+    if (!partes.length) return t + '. Não consegui buscar os índices do Banco Central agora, então não dá para comparar.';
+    t += ', contra ' + partes.join(', ') + ' no mesmo período.';
+    var junta = function (a) { return a.length > 1 ? a.slice(0, -1).join(', ') + ' e ' + a[a.length - 1] : a[0]; };
+    if (melhor.length) t += ' Está acima ' + junta(melhor) + '.';
+    if (pior.length) t += ' Está abaixo ' + junta(pior) + '.';
+    var ate = idx.ipca ? idx.ipca.ate : '';
+    t += ' É aproximado: os aportes do ano não são descontados' + (ate ? ', e a inflação vai até ' + _mesFalado(ate) : '') + '.';
+    return t;
+  }
+
+  // ── RESUMO FALADO DO MÊS ──────────────────────────────────────────────────────────────
+  /** "Como foi o mês": renda, saídas, sobra, aplicado e a previsão do fim do mês, com a comparação com o mês anterior quando existe. `ant` = resumo do mês anterior. */
+  function mes(d, ant) {
+    if (!d || d.receita == null) return 'Não consegui ler o resumo do mês na caderneta.';
+    var nome = _mesFalado(d.mes).replace(/ de \d{4}$/, '');
+    var t = (d.fechado ? 'O mês de ' + nome + ' está fechado: ' : 'Em ' + nome + ' até agora: ') +
+            'renda ' + brl(d.receita) + ', saídas ' + brl(d.saidas) + ', sobra de ' + (Number(d.sobra) < 0 ? 'menos ' : '') + brl(d.sobra) + ' antes de aplicar' +
+            (Number(d.aplicado) ? ', e ' + (d.aplicado > 0 ? 'aplicado ' : 'resgatado ') + brl(d.aplicado) : '') + '.';
+    if (!d.fechado && d.livreFim != null) t += ' A previsão para o fim do mês é de ' + (Number(d.livreFim) < 0 ? 'menos ' : '') + brl(d.livreFim) + ' livres.';
+    // só compara com um mês que tem dados (agosto de 2026 nem existia na caderneta: "sobra R$ 845 maior" seria comparar com zero)
+    if (ant && ant.sobra != null && ant.mes && (Number(ant.receita) > 0 || ant.fechado)) {
+      var dif = Number(d.sobra) - Number(ant.sobra), nomeAnt = _mesFalado(ant.mes).replace(/ de \d{4}$/, '');
+      if (Math.abs(dif) >= 1) t += ' Frente a ' + nomeAnt + ', a sobra está ' + brl(Math.abs(dif)) + (dif > 0 ? ' maior' : ' menor') + '.';
+    }
+    return t;
+  }
+
   function falar(tipo, d, q) {
     var c = cfg(), hojeISO = (d && d.hoje) || Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
     if (!d) return 'Não consegui consultar a caderneta agora.';
+    if (tipo === 'indices') return comparar(d, indices(Number(hojeISO.slice(0, 4))));
+    if (tipo === 'mes') return mes(d, q && q.anterior);
     if (tipo === 'carteira') return carteira(d, c, hojeISO);
     if (tipo === 'aporte') return aporte(d, c, hojeISO);
     if (tipo === 'simular') return simular(d, c, q || {});
@@ -324,6 +404,19 @@ var Consultor = (function () {
     s = String(s || '');
     if (!s) return null;
     var nums = numerosFalados(s);
+    // comparação com os índices: "meus investimentos estão rendendo mais que a inflação?", "quanto rendeu esse ano", "bati o CDI?"
+    if ((/\b(ipca|inflacao|cdi|poupanca)\b/.test(s) && /\b(rend\w*|ganh\w*|supera\w*|bate\w*|bati|bateu|acima|abaixo|compar\w*|contra|em relacao|versus|perd\w*|vencend\w*|venc\w*)\b/.test(s)) ||
+        (/\b(quanto|qual)\b/.test(s) && /\b(rendeu|rendimento|rendendo|rendi)\b/.test(s) && /\b(ano|carteira|investimentos?|2026)\b/.test(s))) {
+      return { tipo: 'indices' };
+    }
+    // resumo do mês: "como foi o mês", "resumo do mês", "como está meu mês", "balanço do mês", "como foi setembro"
+    var nomesMes = ['janeiro', 'fevereiro', 'marco', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+    var mesNomeado = null;
+    for (var im = 0; im < 12; im++) if (new RegExp('\\b' + nomesMes[im] + '\\b').test(s)) mesNomeado = im + 1;
+    if ((/\b(como (foi|esta|estao|estou|ta|andou)|resumo|balanco|fechamento|panorama)\b/.test(s) && /\b(mes|meu mes)\b/.test(s)) ||
+        (mesNomeado && /\b(como (foi|ficou)|resumo|balanco|fechamento)\b/.test(s))) {
+      if (!/\b(livre|vence|vencem|pagar|mercado|investid\w*|carteira|reserva)\b/.test(s)) return { tipo: 'mes', mesNum: mesNomeado };
+    }
     // simulação: "se eu aportar 1000 por mês durante 5 anos" · "quanto vou ter aportando 500 por mês em 10 anos"
     var per = s.match(/\b(\d+)\s*(anos?|meses)\b/);
     var temAporteVerbo = /\b(aportar|aportando|investir|investindo|guardar|guardando|poupar|poupando|colocar|colocando|juntar)\b/.test(s);
@@ -351,5 +444,6 @@ var Consultor = (function () {
 
   return { cfg: cfg, valorFuturo: valorFuturo, mesesAteAlvo: mesesAteAlvo, aporteNecessario: aporteNecessario, dividirAporte: dividirAporte,
            falar: falar, interpretar: interpretar, numerosFalados: numerosFalados, brl: brl,
+           indices: indices, acumular: acumular, comparar: comparar, mes: mes,
            plano: plano, verificarAporte: verificarAporte, sugestaoAporte: sugestaoAporte, limparSugestao: limparSugestao };
 })();

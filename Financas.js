@@ -218,7 +218,21 @@ var Financas = (function () {
       if (!configurado()) return 'A caderneta ainda não está conectada ao Jarvis.';
       var r = resumo();
       if (!r.ok) return r.codigo === 401 ? 'A caderneta recusou o acesso do Jarvis. Preciso que o acesso seja reconfigurado.' : 'Não consegui consultar a caderneta agora.';
-      if (/^(carteira|aporte|simular|tempo|reserva_alvo|metas)$/.test(consulta.tipo)) {
+      if (consulta.tipo === 'mes') {
+        // "como foi o mês" (ou "como foi setembro"): o resumo do mês pedido e, para comparar, o do mês anterior
+        var alvoMes = r.dados;
+        if (consulta.mesNum) {
+          var anoRef = Number(String(r.dados.mes).slice(0, 4)), mesRef = Number(String(r.dados.mes).slice(5, 7));
+          var anoM = consulta.mesNum > mesRef ? anoRef - 1 : anoRef;   // "setembro" dito em outubro = este ano; "dezembro" dito em outubro = o do ano passado
+          var ym = anoM + '-' + (consulta.mesNum < 10 ? '0' : '') + consulta.mesNum;
+          if (ym !== r.dados.mes) { var rm = resumo(ym); if (!rm.ok) return 'Não consegui consultar esse mês na caderneta agora.'; alvoMes = rm.dados; }
+        }
+        var ma = Number(String(alvoMes.mes).slice(5, 7)) - 1, aa = Number(String(alvoMes.mes).slice(0, 4));
+        if (ma < 1) { ma = 12; aa--; }
+        var ra = resumo(aa + '-' + (ma < 10 ? '0' : '') + ma);
+        return (typeof Consultor !== 'undefined') ? Consultor.mes(alvoMes, ra.ok ? ra.dados : null) : AJUDA;
+      }
+      if (/^(carteira|aporte|simular|tempo|reserva_alvo|metas|indices)$/.test(consulta.tipo)) {
         return (typeof Consultor !== 'undefined') ? (Consultor.falar(consulta.tipo, r.dados, consulta) || AJUDA) : AJUDA;
       }
       var extra = { periodo: consulta.periodo };

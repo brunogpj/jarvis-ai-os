@@ -1048,6 +1048,12 @@ function _rotaSemantica(mensagem, email, isOwner, opts) {
         cad_reserva_alvo: { what: 'Perguntar se a RESERVA de emergência está SUFICIENTE contra o alvo em meses, ou quanto falta / sobra para o alvo.',
                             not_for: 'Só quantos meses de reserva tem — isso é cad_investido.',
                             examples: ['minha reserva está suficiente', 'quanto falta pra reserva ideal', 'a reserva já bateu o alvo'] },
+        cad_indices:      { what: 'Perguntar se os investimentos estão RENDENDO mais ou menos que a inflação (IPCA), o CDI ou a poupança, ou quanto RENDEU no ano.',
+                            not_for: 'Só quanto tem investido — isso é cad_investido; pedir qual investimento comprar — isso é nenhuma.',
+                            examples: ['meus investimentos estão ganhando da inflação', 'bati o CDI esse ano', 'quanto rendeu minha carteira esse ano'] },
+        cad_mes:          { what: 'Pedir o RESUMO / balanço do MÊS: como foi o mês (renda, saídas, sobra, quanto aplicou), do mês atual ou de um mês passado.',
+                            not_for: 'Só o livre de hoje — isso é cad_livre; só o que falta pagar — isso é cad_falta_pagar.',
+                            examples: ['como foi o mês', 'me dá o balanço do mês', 'como foi setembro'] },
         cad_metas:        { what: 'Perguntar como estão as METAS dele (casa própria, aposentadoria): progresso, quanto falta, quanto precisa aportar.',
                             not_for: 'Cadastrar, mudar ou apagar uma meta — isso é nenhuma.',
                             examples: ['como estão minhas metas', 'quanto falta pra casa própria', 'estou no caminho da aposentadoria'] },
@@ -1207,6 +1213,12 @@ function _rotaSemantica(mensagem, email, isOwner, opts) {
       else if (intencao === 'cad_aporte') _cq = { tipo: 'aporte' };
       else if (intencao === 'cad_reserva_alvo') _cq = { tipo: 'reserva_alvo' };
       else if (intencao === 'cad_metas') _cq = { tipo: 'metas' };
+      else if (intencao === 'cad_indices') _cq = { tipo: 'indices' };
+      else if (intencao === 'cad_mes') {
+        // o mês dito na frase ("como foi setembro"), se houver; o regex do consultor já sabe ler isso
+        var _qm = (typeof Consultor !== 'undefined') ? Consultor.interpretar(String(msg || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')) : null;
+        _cq = { tipo: 'mes', mesNum: (_qm && _qm.tipo === 'mes') ? _qm.mesNum : null };
+      }
       resp = _cq ? Financas.responder(_cq) : null;
     } else if (intencao === 'repetir_briefing') {
       // Só por voz: gasta uma síntese de voz (~R$ 0,08). No chat, o dono não está ouvindo o celular.
@@ -4096,6 +4108,21 @@ function doPost(e) {
         // Aviso mensal do consultor: 'ensaio' mostra o que avisaria agora (sem enviar nem gravar); 'teste' envia de VERDADE um aviso de teste com números inventados.
         if (body.consultorAviso) {
           try { saida.consultorAviso = Consultor.verificarAporte(body.consultorAviso === 'teste' ? { teste: true } : { ensaio: true }); } catch (eCo) { saida.consultorAviso = { erro: eCo.message }; }
+        }
+        // Amostra dos formatos de notificação financeira guardados (coleção "financeiro", retenção longa): por app, os textos distintos mais recentes.
+        // Serve para escrever o parser de um banco novo em cima de texto REAL, nunca de formato imaginado. Só leitura.
+        if (body.financeiroAmostra) {
+          try {
+            var _am = {}, _itens = _finLer(500);
+            _itens.forEach(function (it) {
+              var d = it.d, app = String(d.app || '?');
+              var forma = String((d.titulo || '') + ' | ' + (d.texto || '')).replace(/\d+(?:[.,]\d+)*/g, '#').slice(0, 170);
+              _am[app] = _am[app] || { n: 0, formas: {} };
+              _am[app].n++;
+              if (Object.keys(_am[app].formas).length < 8) _am[app].formas[forma] = (_am[app].formas[forma] || 0) + 1;
+            });
+            saida.financeiroAmostra = _am;
+          } catch (eFa) { saida.financeiroAmostra = { erro: eFa.message }; }
         }
         if (body.ensaioBriefing) { try { saida.ensaioBriefing = diagBriefingTexto({ tag: String(body.ensaioBriefing) }); } catch (eEb) { saida.ensaioBriefing = { erro: eEb.message }; } }
         return ContentService.createTextOutput(JSON.stringify(saida)).setMimeType(ContentService.MimeType.JSON);

@@ -1199,7 +1199,9 @@ function _rotaSemantica(mensagem, email, isOwner, opts) {
       resp = _rb.ok ? (_rb.novo ? 'Não tenho o último guardado, então refaço um briefing novo em um minuto.' : 'Certo, repito o briefing em um minuto.') : _rb.erro;
     } else if (intencao === 'folga_ponto') {
       var _df = arg('dia_folga', 'hoje');
-      var _fr = definirFolgaPonto({ dias: _df === 'ambos' ? ['hoje', 'amanha'] : [_df] });
+      var _canc = _interpretarFolgaPonto(msg);   // "cancela a folga" que o regex já entende: o JEV não pode gravar o contrário
+      var _fr = (_canc && _canc.remover) ? definirFolgaPonto({ dias: _canc.dias, remover: true })
+        : definirFolgaPonto({ dias: _df === 'ambos' ? ['hoje', 'amanha'] : [_df] });
       resp = (_fr && _fr.ok) ? _fr.resumo : null;
     } else if (intencao === 'navegar') {
       if (opts.canal !== 'voz' || typeof Jarvis === 'undefined' || !Jarvis.controlarDispositivo) return null;
@@ -3077,7 +3079,7 @@ function doPost(e) {
       var _PERMITIDAS_CF = {
         FALA_PROATIVA_LOCAL: /^(sim|nao)$/, FALA_RESPOSTAS_LOCAL: /^(sim|nao)$/,
         MODO_FALA_VOZ: /^(nuvem|auto|local)$/, FALA_VOLUME_DB: /^(1[0-6]|[0-9])$/,
-        FALA_FORMATO: /^(ogg|wav)$/, FALA_ARQUIVO_UNICO: /^(sim|nao)$/, ROTA_JEV_NOVAS: /^(sim|nao)$/
+        FALA_FORMATO: /^(ogg|wav)$/, FALA_ARQUIVO_UNICO: /^(sim|nao)$/, ROTA_JEV_NOVAS: /^(sim|nao)$/, FIN_AVISOS_ATIVO: /^(sim|nao)$/
       };
       var spCf = PropertiesService.getScriptProperties(), mudCf = {}, errCf = [];
       Object.keys(body.valores || {}).forEach(function (k) {
@@ -3552,7 +3554,7 @@ function doPost(e) {
           } catch (eRb) { respVoz = 'Não consegui repetir o briefing agora.'; }
         } else if (_folga !== null) {
           try {
-            var _rf = definirFolgaPonto({ dias: _folga.dias });
+            var _rf = definirFolgaPonto({ dias: _folga.dias, remover: !!_folga.remover });
             respVoz = (_rf && _rf.ok) ? _rf.resumo : ('Não consegui registrar a folga: ' + ((_rf && _rf.erro) || 'erro') + '.');
             // A mesma frase pode mudar o turno ("a partir dessa semana é o turno da tarde"): faz as duas coisas.
             if (_rf && _rf.ok && _trn !== null) {
@@ -3990,6 +3992,8 @@ function doPost(e) {
             saida.caderneta = _cd;
           } catch (eCad) { saida.caderneta = { erro: eCad.message }; }
         }
+        // Avisos proativos da caderneta: o que sairia agora na janela pedida ('manha'|'noite'), sem enviar nem gravar.
+        if (body.cadernetaAvisos) { try { saida.cadernetaAvisos = Financas.verificarAvisos({ ensaio: true, janela: String(body.cadernetaAvisos) === 'noite' ? 'noite' : 'manha' }); } catch (eCa) { saida.cadernetaAvisos = { erro: eCa.message }; } }
         if (body.ensaioBriefing) { try { saida.ensaioBriefing = diagBriefingTexto({ tag: String(body.ensaioBriefing) }); } catch (eEb) { saida.ensaioBriefing = { erro: eEb.message }; } }
         return ContentService.createTextOutput(JSON.stringify(saida)).setMimeType(ContentService.MimeType.JSON);
       } catch (errDb) {
@@ -5700,6 +5704,14 @@ function _interpretarFolgaPonto(msg) {
   var s = bruto.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[,;.!]/g, ' ').replace(/\s+/g, ' ').trim();
   if (/\?\s*$/.test(bruto.trim()) || /\b(sera que|qual|quais|quando|que dia|sera feriado)\b/.test(s)) return null;
   var hoje = /\bhoje\b/.test(s), amanha = /\bamanha\b/.test(s);
+  // DESFAZER: "cancela a folga de amanhã", "amanhã não é mais folga". Sem dia na frase, tira hoje e amanhã.
+  // Vem ANTES do guarda de "trabalhar" e do resto: "cancela" nunca pode virar uma folga nova.
+  if (/\b(cancel\w*|desfa\w*|tira\w*|remov\w*|anul\w*|apag\w*)\b.{0,25}\b(folga|feriado)\b/.test(s) || /\bnao (e|eh|vai ser|vou ter|tenho) mais (folga|feriado)\b/.test(s) || /\bnao (e|eh) mais\b.{0,12}\b(folga|feriado)\b/.test(s)) {
+    var dd = [];
+    if (hoje) dd.push('hoje');
+    if (amanha) dd.push('amanha');
+    return { dias: dd.length ? dd : ['hoje', 'amanha'], remover: true };
+  }
   if (!hoje && !amanha) return null;
   // trabalha mesmo assim → não é folga ("hoje vou trabalhar", "trabalho normal", "mesmo sendo feriado")
   if (/(?<!nao )(?<!nao vou )\b(vou trabalhar|trabalho normal|trabalho mesmo|trabalhando)\b/.test(s) || /\bmesmo (sendo|com|no) feriado\b/.test(s)) return null;
@@ -5722,6 +5734,13 @@ function definirFolgaPonto(args) {
     .filter(function (d) { return /^\d{4}-\d{2}-\d{2}$/.test(d); });
   if (!datas.length) return { ok: false, erro: 'nenhum dia válido' };
   var atual = String(p.getProperty('PONTO_FOLGAS') || '').split(',').filter(function (d) { return d && d >= hoje; });
+  if (args.remover) {
+    var tinha = atual.filter(function (d) { return datas.indexOf(d) !== -1; });
+    atual = atual.filter(function (d) { return datas.indexOf(d) === -1; });
+    p.setProperty('PONTO_FOLGAS', atual.join(','));
+    return { ok: true, removidas: tinha, folgas: atual,
+      resumo: tinha.length ? 'Certo, tirei a folga: volto a lembrar e cobrar o ponto.' : 'Não havia folga marcada nesses dias.' };
+  }
   datas.forEach(function (d) { if (atual.indexOf(d) === -1) atual.push(d); });
   atual.sort();
   p.setProperty('PONTO_FOLGAS', atual.join(','));
@@ -7254,7 +7273,7 @@ function _avisarDono(o) {
   try {
     if (Jarvis.registrarEvento) Jarvis.registrarEvento({
       tool: 'aviso:' + (o.origem || 'geral'), ok: r.ok, ms: 0,
-      resumo: r.ok ? (titulo + ' — ' + texto).substring(0, 160) : ('FALHOU: ' + ((r.notificacao && (r.notificacao.erro || r.notificacao.status)) || 'sem resposta'))
+      resumo: r.ok ? (o.logResumo || (titulo + ' — ' + texto)).substring(0, 160) : ('FALHOU: ' + ((r.notificacao && (r.notificacao.erro || r.notificacao.status)) || 'sem resposta'))
     });
   } catch (eEv) {}
   return r;

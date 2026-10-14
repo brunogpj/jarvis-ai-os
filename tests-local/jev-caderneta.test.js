@@ -177,3 +177,21 @@ test('Interruptor ROTA_JEV_NOVAS=nao: as intenções novas viram null; as antiga
   var s3 = sandbox(jev('cad_livre', 0.9, { periodo_livre: 'agora' }), { ROTA_JEV_NOVAS: 'nao' });
   assert.strictEqual(s3._rotaSemantica('livre', DONO, true, { diag: true }).intencao, 'cad_livre');
 });
+
+test('Cancelar folga: o interpretador devolve remover e nunca vira uma folga nova', function () {
+  var s = sandbox(jev('nenhuma', 0.5, {}), {});
+  var r = s._interpretarFolgaPonto('cancela a folga de amanhã');
+  assert.strictEqual(r.remover, true); assert.strictEqual(r.dias.join(), 'amanha');
+  assert.strictEqual(s._interpretarFolgaPonto('amanhã não é mais folga').remover, true);
+  assert.strictEqual(s._interpretarFolgaPonto('tira a folga').dias.join(), 'hoje,amanha');
+  var n = s._interpretarFolgaPonto('amanhã estou de folga');
+  assert.ok(n && !n.remover);
+});
+
+test('definirFolgaPonto remover: tira só o dia pedido e responde de acordo', function () {
+  var s = sandbox(jev('nenhuma', 0.5, {}), { PONTO_FOLGAS: '2099-01-01,2099-01-02' });
+  var r = JSON.parse(JSON.stringify(s.definirFolgaPonto({ dias: ['2099-01-01'], remover: true })));
+  assert.strictEqual(r.ok, true); assert.strictEqual(r.folgas.join(), '2099-01-02'); assert.ok(/tirei a folga/.test(r.resumo));
+  assert.strictEqual(s.PropertiesService.getScriptProperties().getProperty('PONTO_FOLGAS'), '2099-01-02');
+  assert.ok(/Não havia folga/.test(s.definirFolgaPonto({ dias: ['2099-03-03'], remover: true }).resumo));
+});

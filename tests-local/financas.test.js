@@ -200,3 +200,74 @@ test('config_financas: grava endereço e token, valida o formato e nunca devolve
   assert.strictEqual(JSON.parse(s.__post({ action: 'config_financas', token: 'T', url: 'https://x.dev', api_token: 'curto' })).ok, false);
   assert.strictEqual(JSON.parse(s.__post({ action: 'config_financas', token: 'T', url: 'https://x.dev', api_token: 'não é válido ' + 'd'.repeat(40) })).ok, false);
 });
+
+// ── fase 2: avisos proativos ─────────────────────────────────────────────────────────
+function sbAv(o) { var s = sandbox(o); return s; }
+test('Avisos da manhã: vence hoje, atrasada, saldo negativo e orçamento a 80% — cada um com a sua chave', function () {
+  var s = sbAv();
+  var d = JSON.parse(JSON.stringify(DADOS));
+  d.hoje = '2026-10-14';
+  d.obrigacoes.push({ nome: 'Luz', tipo: 'conta', dia: 14, valor: 180, pago: false, outroPaga: false });
+  d.livreFim = -50;
+  d.orcamentos = [{ nome: 'Mercado', previsto: 1000, usado: 850, resta: 150, estourou: false }];
+  var r = JSON.parse(JSON.stringify(s.Financas.avisos(d, null, 'manha')));
+  var chaves = r.map(function (a) { return a.chave; });
+  assert.ok(chaves.indexOf('venc_hoje:2026-10-14') !== -1);
+  assert.ok(chaves.indexOf('atraso:2026-10:Fatura Passaí') !== -1);
+  assert.ok(chaves.indexOf('fim_neg:2026-10') !== -1);
+  assert.ok(chaves.indexOf('orc80:2026-10:Mercado') !== -1);
+  assert.ok(!chaves.some(function (k) { return /venc_amanha/.test(k); }), 'a janela da manhã não fala de amanhã');
+  assert.ok(/Luz, R\$ 180,00/.test(r[0].texto));
+});
+
+test('Orçamento estourado vira aviso de 100% (não o de 80%)', function () {
+  var s = sbAv();
+  var d = JSON.parse(JSON.stringify(DADOS)); d.orcamentos = [{ nome: 'Mercado', previsto: 1000, usado: 1100, resta: 0, estourou: true }];
+  var ch = JSON.parse(JSON.stringify(s.Financas.avisos(d, null, 'manha'))).map(function (a) { return a.chave; });
+  assert.ok(ch.indexOf('orc100:2026-10:Mercado') !== -1); assert.ok(ch.indexOf('orc80:2026-10:Mercado') === -1);
+});
+
+test('Aviso da noite: só o que vence amanhã; na virada do mês olha o mês seguinte', function () {
+  var s = sbAv();
+  var d = JSON.parse(JSON.stringify(DADOS)); d.hoje = '2026-10-18'; d.obrigacoes.push({ nome: 'Seguro', tipo: 'conta', dia: 19, valor: 90, pago: false, outroPaga: false });
+  var r = JSON.parse(JSON.stringify(s.Financas.avisos(d, null, 'noite')));
+  assert.strictEqual(r.length, 1); assert.strictEqual(r[0].chave, 'venc_amanha:2026-10-19');
+  assert.ok(/Seguro/.test(r[0].texto) && /Fatura Itaú Click/.test(r[0].texto));
+  var fim = { hoje: '2026-10-31' }; var prox = { obrigacoes: [{ nome: 'Aluguel', dia: 1, valor: 700, pago: false, outroPaga: false }] };
+  var r2 = JSON.parse(JSON.stringify(s.Financas.avisos(Object.assign({ obrigacoes: [] }, fim), prox, 'noite')));
+  assert.strictEqual(r2[0].chave, 'venc_amanha:2026-11-01');
+});
+
+test('Nada pendente, saldo positivo, orçamento folgado → nenhum aviso', function () {
+  var s = sbAv();
+  var d = { hoje: '2026-10-14', livreHoje: 100, livreFim: 300, obrigacoes: [{ nome: 'Aluguel', dia: 10, valor: 700, pago: true }], orcamentos: [{ nome: 'Mercado', previsto: 1000, usado: 100 }] };
+  assert.strictEqual(s.Financas.avisos(d, null, 'manha').length, 0);
+  assert.strictEqual(s.Financas.avisos(null, null, 'manha').length, 0);
+});
+
+function sbVerif(o) {
+  var s = sandbox(o);
+  s.Utilities.formatDate = function (dt, tz, fmt) { return fmt === 'H' ? String((o && o.hora) == null ? 9 : o.hora) : '2026-10-14'; };
+  s._avisos = [];
+  s._avisarDono = function (a) { s._avisos.push(a); return { ok: true }; };
+  return s;
+}
+test('verificarAvisos: manda uma vez por janela e não repete no tick seguinte; log sem valores', function () {
+  var s = sbVerif({ hora: 9 });
+  var r1 = JSON.parse(JSON.stringify(s.Financas.verificarAvisos()));
+  assert.strictEqual(r1.ok, true); assert.ok(r1.enviados >= 1, 'deveria ter avisado a fatura atrasada');
+  assert.strictEqual(s._avisos.length, 1);
+  assert.ok(!/\d/.test(s._avisos[0].logResumo.replace(/\d+ aviso/, '')), 'o log não leva número financeiro');
+  var r2 = JSON.parse(JSON.stringify(s.Financas.verificarAvisos()));
+  assert.strictEqual(r2.pulou, 'janela já verificada'); assert.strictEqual(s._avisos.length, 1);
+});
+test('verificarAvisos: fora da janela não consulta a rede; desligado não envia; ensaio não grava', function () {
+  var s = sbVerif({ hora: 14 });
+  assert.strictEqual(JSON.parse(JSON.stringify(s.Financas.verificarAvisos())).pulou, 'fora da janela'); assert.strictEqual(s._fetches.length, 0);
+  var off = sbVerif({ hora: 9, props: { FIN_AVISOS_ATIVO: 'nao' } });
+  assert.strictEqual(JSON.parse(JSON.stringify(off.Financas.verificarAvisos())).pulou, 'desligado'); assert.strictEqual(off._avisos.length, 0);
+  var en = sbVerif({ hora: 9 });
+  var r = JSON.parse(JSON.stringify(en.Financas.verificarAvisos({ ensaio: true, janela: 'manha' })));
+  assert.ok(r.avisos.length >= 1); assert.strictEqual(en._avisos.length, 0);
+  assert.strictEqual(JSON.parse(JSON.stringify(en.Financas.verificarAvisos({ ensaio: true, janela: 'manha' }))).avisos.length, r.avisos.length, 'ensaio repetido dá o mesmo');
+});

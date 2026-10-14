@@ -228,7 +228,106 @@ var Financas = (function () {
     }
   }
 
-  return { configurado: configurado, resumo: resumo, falar: falar, interpretar: interpretar, responder: responder, AJUDA: AJUDA };
+  // ── FASE 2: avisos proativos (só leitura, o Jarvis fala/notifica sozinho) ──────────────────────
+  // Duas janelas por dia, no tick de 15 min: MANHÃ (9–11h: vence hoje, atrasadas, saldo negativo, orçamento) e
+  // NOITE (19–21h: o que vence amanhã). Cada aviso tem uma CHAVE e só sai uma vez (FIN_AVISOS), senão o tick de
+  // 15 min repetiria a mesma frase oito vezes. Nenhum número vai para o log (só a contagem).
+  var JANELAS = { manha: [9, 11], noite: [19, 21] };
+
+  /**
+   * Avisos que valem agora. PURA. `d` = resumo do mês, `proximo` = resumo do mês seguinte (só p/ "amanhã" na virada),
+   * `janela` = 'manha' | 'noite'. → [{chave, texto}] (ainda sem filtrar os já enviados).
+   */
+  function avisos(d, proximo, janela) {
+    var out = [];
+    if (!d || !d.hoje) return out;
+    var hojeISO = String(d.hoje), mes = hojeISO.slice(0, 7), hojeDia = _diaDe(hojeISO), fim = _diasNoMes(hojeISO);
+    var pend = _pendentes(d).filter(function (o) { return o.dia; });
+    function lista(arr) { return arr.slice(0, 4).map(function (o) { return _item(o, false); }).join('; ') + (arr.length > 4 ? '; e mais ' + (arr.length - 4) : ''); }
+
+    if (janela === 'noite') {
+      var amanha = hojeDia + 1 <= fim ? pend.filter(function (o) { return o.dia === hojeDia + 1; })
+                                      : _pendentes(proximo || {}).filter(function (o) { return o.dia === 1; });
+      if (amanha.length) {
+        var dt = new Date(Date.UTC(Number(hojeISO.slice(0, 4)), Number(hojeISO.slice(5, 7)) - 1, hojeDia + 1)).toISOString().slice(0, 10);
+        out.push({ chave: 'venc_amanha:' + dt, texto: 'Amanhã ' + (amanha.length > 1 ? 'vencem' : 'vence') + ': ' + lista(amanha) + '.' });
+      }
+      return out;
+    }
+
+    var hoje = pend.filter(function (o) { return o.dia === hojeDia; });
+    if (hoje.length) out.push({ chave: 'venc_hoje:' + hojeISO, texto: 'Hoje ' + (hoje.length > 1 ? 'vencem' : 'vence') + ': ' + lista(hoje) + '.' });
+    pend.filter(function (o) { return o.dia < hojeDia; }).forEach(function (o) {
+      out.push({ chave: 'atraso:' + mes + ':' + o.nome, texto: 'Atenção, está atrasada: ' + _item(o, true) + '.' });
+    });
+    if (Number(d.livreHoje) < 0) out.push({ chave: 'hoje_neg:' + hojeISO, texto: 'Seu saldo livre está negativo em ' + _brl(d.livreHoje) + ' hoje.' });
+    else if (Number(d.livreFim) < 0) out.push({ chave: 'fim_neg:' + mes, texto: 'A previsão para o fim do mês é ficar negativo em ' + _brl(d.livreFim) + '.' });
+    (d.orcamentos || []).forEach(function (o) {
+      var prev = Number(o.previsto), uso = Number(o.usado);
+      if (!(prev > 0)) return;
+      if (uso >= prev) out.push({ chave: 'orc100:' + mes + ':' + o.nome, texto: 'O orçamento de ' + o.nome + ' estourou: ' + _brl(uso) + ' de ' + _brl(prev) + '.' });
+      else if (uso >= prev * 0.8) out.push({ chave: 'orc80:' + mes + ':' + o.nome, texto: 'O orçamento de ' + o.nome + ' já está em ' + Math.round(uso / prev * 100) + '%: ' + _brl(uso) + ' de ' + _brl(prev) + '.' });
+    });
+    return out;
+  }
+
+  /** Janela do momento ('manha' | 'noite' | null), pela hora de Brasília. */
+  function _janelaAgora(agora) {
+    var h = Number(Utilities.formatDate(agora || new Date(), TZ, 'H'));
+    var j = null;
+    Object.keys(JANELAS).forEach(function (k) { if (h >= JANELAS[k][0] && h <= JANELAS[k][1]) j = k; });
+    return j;
+  }
+
+  /**
+   * Roda no tick de 15 min. Fora das janelas não faz nada (nem chamada de rede); dentro, consulta UMA vez por janela.
+   * opts.ensaio = só devolve o que avisaria (não envia, não grava); opts.janela força a janela (ensaio/teste).
+   * Nunca lança.
+   */
+  function verificarAvisos(opts) {
+    opts = opts || {};
+    try {
+      var sp = PropertiesService.getScriptProperties();
+      if (!opts.ensaio && String(sp.getProperty('FIN_AVISOS_ATIVO') || 'sim').toLowerCase() === 'nao') return { ok: true, pulou: 'desligado' };
+      if (!configurado()) return { ok: true, pulou: 'não configurado' };
+      var janela = opts.janela || _janelaAgora();
+      if (!janela) return { ok: true, pulou: 'fora da janela' };
+      var hojeISO = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd'), marca = hojeISO + ':' + janela;
+      if (!opts.ensaio && sp.getProperty('FIN_AVISOS_JANELA') === marca) return { ok: true, pulou: 'janela já verificada' };
+      var r = resumo();
+      if (!r.ok) return { ok: false, erro: r.erro };
+      var proximo = null;
+      if (janela === 'noite' && _diaDe(r.dados.hoje) + 1 > _diasNoMes(r.dados.hoje)) {
+        var y = Number(String(r.dados.hoje).slice(0, 4)), m = Number(String(r.dados.hoje).slice(5, 7)) + 1;
+        if (m > 12) { m = 1; y++; }
+        var rn = resumo(y + '-' + (m < 10 ? '0' : '') + m);
+        if (rn.ok) proximo = rn.dados;
+      }
+      var enviados = {};
+      try { enviados = JSON.parse(sp.getProperty('FIN_AVISOS') || '{}'); } catch (eJ) {}
+      var novos = avisos(r.dados, proximo, janela).filter(function (a) { return !enviados[a.chave]; });
+      if (opts.ensaio) return { ok: true, janela: janela, avisos: novos };
+      // grava ANTES de enviar: no máximo uma vez (um aviso perdido é melhor que o mesmo repetido a cada 15 min)
+      sp.setProperty('FIN_AVISOS_JANELA', marca);
+      if (!novos.length) return { ok: true, janela: janela, enviados: 0 };
+      var corte = Utilities.formatDate(new Date(Date.now() - 40 * 86400000), TZ, 'yyyy-MM-dd');
+      Object.keys(enviados).forEach(function (k) { if (enviados[k] < corte) delete enviados[k]; });
+      novos.forEach(function (a) { enviados[a.chave] = hojeISO; });
+      sp.setProperty('FIN_AVISOS', JSON.stringify(enviados));
+      var texto = novos.map(function (a) { return a.texto; }).join(' ');
+      if (typeof _avisarDono === 'function') {
+        _avisarDono({ origem: 'caderneta', titulo: 'Caderneta', texto: texto, falar: texto,
+                      logResumo: 'caderneta: ' + novos.length + ' aviso(s) [valores não registrados]' });
+      }
+      return { ok: true, janela: janela, enviados: novos.length };
+    } catch (e) {
+      Logger.log('[Financas.avisos] ' + e.message);
+      return { ok: false, erro: e.message };
+    }
+  }
+
+  return { configurado: configurado, resumo: resumo, falar: falar, interpretar: interpretar, responder: responder, AJUDA: AJUDA,
+           avisos: avisos, verificarAvisos: verificarAvisos };
 })();
 
 /** Diagnóstico no editor: mostra se está conectado e o que ele responderia, sem falar no celular. */

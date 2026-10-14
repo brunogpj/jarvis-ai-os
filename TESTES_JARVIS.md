@@ -53,11 +53,11 @@ Lê o app **Caderneta** (Cloudflare Worker + D1). **O número é calculado no se
 
 | # | Diga (qualquer jeito parecido) | Esperado | Status | Obs. |
 |---|---|---|---|---|
-| 1.5 | "Quanto eu tenho livre hoje?" · "Dá pra gastar quanto agora?" · "Tô no azul?" · "Sobrou dinheiro?" | livre hoje (e, se pedir "fim do mês", a previsão) | | |
-| 1.6 | "O que vence amanhã?" · "Tem conta pra pagar hoje?" · "Contas da semana" | vencimentos do período, com atrasadas | | |
-| 1.7 | "Quanto falta pagar esse mês?" | total ainda em aberto | | |
-| 1.8 | "Quanto gastei no mercado?" · "Como está o supermercado?" | orçamento do mercado (soma dos lançamentos) | | |
-| 1.9 | "Quanto tenho investido?" · "Qual minha reserva de emergência?" | investido total ou reserva | | |
+| 1.5 | "Quanto eu tenho livre hoje?" · "Dá pra gastar quanto agora?" · "Tô no azul?" · "Sobrou dinheiro?" | livre hoje (e, se pedir "fim do mês", a previsão) | ✅ | 14/10 celular: "dá pra gastar quanto agora", "tô no azul", "sobrou dinheiro" → R$ 117,18 (as duas últimas pelo JEV) |
+| 1.6 | "O que vence amanhã?" · "Tem conta pra pagar hoje?" · "Contas da semana" | vencimentos do período, com atrasadas | ✅ | 14/10 celular: "o que vence amanhã" e "tem conta pra pagar hoje" → "Nada vence…"; "essa semana" pela rota fixa |
+| 1.7 | "Quanto falta pagar esse mês?" | total ainda em aberto | ✅ | 14/10 celular: "Não há nada pendente de pagar neste mês." |
+| 1.8 | "Quanto gastei no mercado?" · "Como está o supermercado?" | orçamento do mercado (soma dos lançamentos) | ✅ | 14/10 celular: "quanto gastei no mercado" → R$ 960,59 em 10 lançamentos. "gastos de supermercado" cai no Swile (histórico de compras), não na caderneta |
+| 1.9 | "Quanto tenho investido?" · "Qual minha reserva de emergência?" | investido total ou reserva | ✅ | 14/10 celular: investido R$ 31.477,82; reserva R$ 25.259,91 (≈ 11,5 meses) |
 | 1.10 | "Quanto tenho de saldo no Swile?" | saldo do voucher (rota **Swile**, não a caderneta) | | |
 | 1.11 | Pergunta de conceito: "O que é reserva de emergência?" | **não** abre a caderneta; vai ao modelo (conversa) | | |
 | 1.12 | Pergunta financeira que ele não cobre: "Quanto vou ter daqui a 5 anos?" | "Ainda não sei responder isso pela caderneta" + lista do que sabe. **Nunca inventa valor** | | |
@@ -69,17 +69,18 @@ Lê o app **Caderneta** (Cloudflare Worker + D1). **O número é calculado no se
 
 | # | Diga | Esperado | Status | Obs. |
 |---|---|---|---|---|
-| 1.13 | "Hoje é feriado, não trabalho" | grava o dia em `PONTO_FOLGAS`; cobranças de ponto calam hoje | | |
-| 1.14 | "Amanhã estou de folga" | idem para amanhã | | |
+| 1.13 | "Hoje é feriado, não trabalho" | grava o dia em `PONTO_FOLGAS`; cobranças de ponto calam hoje | ✅ | 14/10: "amanhã estou de folga" gravou; entrega confirmada por evento |
+| 1.14 | "Amanhã estou de folga" | idem para amanhã | ✅ | 14/10 celular: ok |
 | 1.15 | "Hoje e amanhã eu não vou trabalhar" | grava os dois dias | | |
 | 1.16 | Despertador em feriado nacional | avisa "Hoje é feriado nacional: X" (não pula o ponto sozinho) | | |
 | 1.17 | **Controle negativo:** "Não vou trabalhar de carro hoje" | **não** grava folga (confiança baixa, abaixo do limiar de ação) | | |
+| 1.17b | "Cancela a folga de amanhã" · "amanhã não é mais folga" | tira o dia de `PONTO_FOLGAS`; o ponto volta a ser cobrado. Nunca grava uma folga nova | ✅ | 14/10 celular |
 
 ### 1d. 🧭 Rota, mídia e apps 🗣️
 
 | # | Diga | Esperado | Status | Obs. |
 |---|---|---|---|---|
-| 1.18 | "Para Rua <endereço>" · "Me leve para o trabalho" · "Rota para o shopping" | abre a navegação no destino; fala "Traçando a rota para X" | | |
+| 1.18 | "Para Rua <endereço>" · "Me leve para o trabalho" · "Rota para o shopping" | abre a navegação no destino; fala "Traçando a rota para X" | ✅ | 14/10 celular: "para Rua…" (JEV navegar 1,00) e "navegar até a casa da minha mãe" |
 | 1.19 | "Pausa" / "Toca" / "Próxima" | controle de mídia (comandos distintos) | | |
 | 1.20 | "Toca <música> no Spotify" · "Abre o YouTube" | abre o app/busca certa | | |
 | 1.21 | "Abre o WhatsApp" · "Liga a lanterna" · "Não perturbe" | ação no aparelho + confirmação curta | | |
@@ -101,12 +102,25 @@ Manhã e noite (tags `briefing*`). **O código busca tudo** — o modelo só red
 
 | # | O que conferir | Esperado | Status | Obs. |
 |---|---|---|---|---|
-| 1.28 | Briefing da manhã/noite | saudação única, agenda real, tarefas, tempo, notícias **locais primeiro** (BH/MG) e nacionais, versículo | | |
+| 1.28 | Briefing da manhã/noite | saudação única, agenda real, tarefas, tempo, notícias **locais primeiro** (BH/MG) e nacionais, versículo | ✅ | 14/10 13:30: 41 s, 6 fontes locais + 4 nacionais, versículo; agenda/tarefas vazias sem inventar |
 | 1.29 | Dia sem compromisso | diz que não há; **nunca inventa** agenda | | |
-| 1.30 | "Repete o briefing" / "Não ouvi o briefing" | repete o último em ~1 min; sem nada guardado, refaz | | |
+| 1.30 | "Repete o briefing" / "Não ouvi o briefing" | repete o último em ~1 min; sem nada guardado, refaz | ✅ | 14/10 celular: "Pet o briefing" → repetição em 1 min |
 | 1.31 | Fala longa não é cortada por outra | a nova fala **espera** a anterior acabar (fila, até 110 s) | | |
-| 1.32 | Evento `briefing:fontes` no `ler_debug` | mostra o que foi consultado e ms por etapa | | |
+| 1.32 | Evento `briefing:fontes` no `ler_debug` | mostra o que foi consultado e ms por etapa | ✅ | 14/10: evento briefing:fontes conferido |
 | 1.33 | Ensaiar sem falar | `ler_debug` com `ensaioBriefing:'<tag>'` | | |
+
+### 1f-b. 💰 Avisos proativos da caderneta (fase 2) 🗣️🔑
+
+Sem você pedir, no tick de 15 min, em duas janelas: **manhã 9–11h** e **noite 19–21h**. Cada aviso sai **uma vez** (`FIN_AVISOS`).
+
+| # | O que conferir | Esperado | Status | Obs. |
+|---|---|---|---|---|
+| 1.32b | Manhã: conta que vence hoje · conta atrasada · saldo livre ou previsão do fim do mês negativos · orçamento a 80% / estourado | notificação "Caderneta" + fala no celular, com o valor | ⏳ | hoje não há nada a avisar (ensaio vazio) |
+| 1.32c | Noite: o que vence amanhã (na virada do mês, olha o mês seguinte) | idem | ⏳ | |
+| 1.32d | Mesmo aviso no tick seguinte | **não repete** | ⏳ | coberto por teste automático |
+| 1.32e | `ler_debug` com `cadernetaAvisos:'manha'` ou `'noite'` | mostra o que avisaria agora, sem enviar nem gravar | ✅ | 14/10: vazio nas duas janelas |
+| 1.32f | `config_fala` com `FIN_AVISOS_ATIVO=nao` | desliga os avisos | ⏳ | |
+| 1.32g | Log do evento `aviso:caderneta` | só a contagem, **sem valores** | ⏳ | |
 
 ### 1g. 🔔 Notificações do celular 🗣️
 
@@ -202,7 +216,7 @@ e 👍/👎 (alimenta o card **Para revisar**).
 
 | # | Teste | Esperado | Status | Obs. |
 |---|---|---|---|---|
-| 4.1 | `ler_debug` com `gemini:true` | modelos em uso, gasto do mês em R$, % do teto, projeção, por modelo | | |
+| 4.1 | `ler_debug` com `gemini:true` | modelos em uso, gasto do mês em R$, % do teto, projeção, por modelo | ✅ | 14/10: gasto do dia R$ 0,24 (0,8%), projeção R$ 0,53 |
 | 4.2 | Teto `GEMINI_ORCAMENTO_BRL` (29,65) | avisa em 50/80/100%; aos 100% a chave paga sai da cascata até o mês virar | | |
 | 4.3 | `ler_debug` com `geminiTeste:true` | ensaio vivo (texto, função, busca, voz, embedding) e quanto custou | | |
 | 4.4 | Voz dos briefings | `gemini-3.8-flash-lite-tts` (o TTS antigo desliga em 17/11/2026) | | |

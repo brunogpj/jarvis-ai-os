@@ -1658,7 +1658,7 @@ function configurarVozJarvis(args) {
   return { ok: true, engine: eng,
            voz: p.getProperty('TTS_VOICE_GEMINI') || 'Enceladus (padrão)',
            estilo: p.getProperty('TTS_STYLE') || '(sem estilo)',
-           modelo: p.getProperty('TTS_GEMINI_MODEL') || 'gemini-2.5-flash-preview-tts',
+           modelo: p.getProperty('TTS_GEMINI_MODEL') || 'gemini-3.8-flash-lite-tts',
            volumeDb: isFinite(Number(p.getProperty('FALA_VOLUME_DB'))) ? Number(p.getProperty('FALA_VOLUME_DB')) : 6,
            nota: eng === 'gemini' ? 'Motor Gemini ativo — voz e estilo valem.'
                                   : 'Motor CLOUD ativo — voz e estilo do Gemini estão sendo IGNORADOS.' };
@@ -2664,7 +2664,7 @@ function configurarVozGemini(args) {
   if (args.voz) p.setProperty('TTS_VOICE_GEMINI', String(args.voz));
   if (args.model) p.setProperty('TTS_GEMINI_MODEL', String(args.model));
   p.setProperty('TTS_ENGINE', (args.ligar === false) ? 'cloud' : 'gemini');
-  return { ok: true, TTS_ENGINE: p.getProperty('TTS_ENGINE'), TTS_STYLE: p.getProperty('TTS_STYLE'), TTS_VOICE_GEMINI: p.getProperty('TTS_VOICE_GEMINI'), TTS_GEMINI_MODEL: p.getProperty('TTS_GEMINI_MODEL') || 'gemini-2.5-flash-preview-tts' };
+  return { ok: true, TTS_ENGINE: p.getProperty('TTS_ENGINE'), TTS_STYLE: p.getProperty('TTS_STYLE'), TTS_VOICE_GEMINI: p.getProperty('TTS_VOICE_GEMINI'), TTS_GEMINI_MODEL: p.getProperty('TTS_GEMINI_MODEL') || 'gemini-3.8-flash-lite-tts' };
 }
 
 function carregarConversa(token, conversaId) {
@@ -2911,6 +2911,28 @@ function doPost(e) {
       var antesFd = spFd.getProperty('FALA_TEXTO_DIRETO') || 'nao (padrão)';
       spFd.setProperty('FALA_TEXTO_DIRETO', vFd);
       return json({ ok: true, antes: antesFd, agora: vFd });
+    }
+
+    // CONFIGURAÇÃO DO GEMINI sem editor (modelos, ordem das chaves, teto mensal). Só com o token da voz, lista FECHADA de
+    // chaves e formatos validados. NÃO inclui GEMINI_EMBED_MODEL/DIMS de propósito: trocar o modelo de embedding muda o
+    // vetor e exigiria reindexar a wiki inteira. Devolve antes/agora; nunca mexe nas chaves de API.
+    if (body && body.action === 'config_gemini') {
+      var _spGm = PropertiesService.getScriptProperties();
+      if (!body.token || body.token !== _spGm.getProperty('VOICE_API_TOKEN')) return json({ ok: false, erro: 'não autorizado' });
+      var _mod = /^gemini-[a-z0-9.-]{3,60}$/;
+      var _PERM_GM = {
+        GEMINI_MODEL: _mod, GEMINI_MODEL_FALLBACK: _mod, GEMINI_SEARCH_MODEL: _mod, GEMINI_IMAGE_MODEL: _mod, TTS_GEMINI_MODEL: _mod,
+        GEMINI_ORDER: /^(free_first|billing_first)$/, GEMINI_FREE_ONLY: /^(true|false)$/,
+        GEMINI_ORCAMENTO_BRL: /^\d{1,4}(\.\d{1,2})?$/, GEMINI_USD_BRL: /^\d{1,2}(\.\d{1,3})?$/, GEMINI_ORCAMENTO_ATIVO: /^(sim|nao)$/
+      };
+      var _antesGm = {}, _agoraGm = {}, _errGm = [];
+      Object.keys(body.valores || {}).forEach(function (k) {
+        var v = String(body.valores[k]).trim();
+        if (!_PERM_GM[k]) { _errGm.push(k + ': chave não permitida'); return; }
+        if (!_PERM_GM[k].test(v)) { _errGm.push(k + ': valor inválido'); return; }
+        _antesGm[k] = _spGm.getProperty(k); _spGm.setProperty(k, v); _agoraGm[k] = v;
+      });
+      return json({ ok: _errGm.length === 0, antes: _antesGm, agora: _agoraGm, erros: _errGm });
     }
 
     // CONEXÃO COM A CADERNETA (finanças). Grava o endereço e o token do Worker em Script Properties, sem editor.
@@ -3809,6 +3831,21 @@ function doPost(e) {
         }
         if (body.gatilhos && typeof Heartbeat !== 'undefined' && Heartbeat.diario) { try { saida.diarioGatilhos = Heartbeat.diario(); } catch (eDg) {} }
         if (body.gatilhos && typeof Heartbeat !== 'undefined' && Heartbeat.status) { try { saida.heartbeat = Heartbeat.status(); } catch (eHb) { saida.heartbeat = { erro: eHb.message }; } }
+        // Configuração do Gemini em uso (só leitura; NUNCA as chaves, só se existem): decidir modelo, plano gratuito x pago.
+        if (body.gemini) {
+          var _pg = PropertiesService.getScriptProperties();
+          saida.gemini = {
+            modelos: { GEMINI_MODEL: _pg.getProperty('GEMINI_MODEL'), GEMINI_MODEL_FALLBACK: _pg.getProperty('GEMINI_MODEL_FALLBACK'),
+                       GEMINI_SEARCH_MODEL: _pg.getProperty('GEMINI_SEARCH_MODEL'), GEMINI_EMBED_MODEL: _pg.getProperty('GEMINI_EMBED_MODEL'),
+                       GEMINI_IMAGE_MODEL: _pg.getProperty('GEMINI_IMAGE_MODEL'), TTS_GEMINI_MODEL: _pg.getProperty('TTS_GEMINI_MODEL') },
+            ordem: { GEMINI_ORDER: _pg.getProperty('GEMINI_ORDER'), GEMINI_FREE_ONLY: _pg.getProperty('GEMINI_FREE_ONLY') },
+            voz: { TTS_ENGINE: _pg.getProperty('TTS_ENGINE'), TTS_ENGINE_BRIEFING: _pg.getProperty('TTS_ENGINE_BRIEFING'), TTS_ENGINE_RESPOSTAS: _pg.getProperty('TTS_ENGINE_RESPOSTAS'), TTS_GEMINI_MAX_CHARS: _pg.getProperty('TTS_GEMINI_MAX_CHARS') },
+            chaves: { faturamento: !!_pg.getProperty('GEMINI_API_KEY'), gratuita1: !!_pg.getProperty('GEMINI_API_KEY_FALLBACK'), gratuita2: !!_pg.getProperty('GEMINI_API_KEY_FALLBACK2') }
+          };
+          try { if (typeof GastoIA !== 'undefined') saida.gemini.gasto = GastoIA.estado(); } catch (eGs) {}
+        }
+        // Ensaio ao vivo do Gemini (texto, chamada de função com thoughtSignature, busca, voz, embedding) e o gasto dele.
+        if (body.geminiTeste) { try { saida.geminiTeste = _geminiTesteVivo(); } catch (eGt) { saida.geminiTeste = { erro: eGt.message }; } }
         // Caderneta: o que o Jarvis responderia a cada consulta, sem falar no celular. Só leitura.
         if (body.caderneta) {
           try {
@@ -8728,4 +8765,49 @@ function diagExecUrl() {
            amostra: u ? (u.substring(0, 46) + '…/exec') : null,
            nota: u ? 'Notificações interativas e webhook do WhatsApp operacionais.'
                    : 'AUSENTE — rode configurarExecUrl({url:"…"}). Sem ela, os botões da notificação interativa não funcionam.' };
+}
+
+/**
+ * Ensaio ao vivo do Gemini com a configuração ATUAL (14/10/2026): confere cada caminho que o Jarvis usa depois de uma
+ * troca de modelo. A chamada de função é em DUAS rodadas porque o Gemini 3 exige devolver o thoughtSignature da primeira.
+ * Devolve também quanto o ensaio custou (GastoIA). Chamado por ler_debug {geminiTeste:true}.
+ */
+function _geminiTesteVivo() {
+  var out = {};
+  var antes = (typeof GastoIA !== 'undefined') ? GastoIA.estado().gastoBRL : null;
+  function passo(nome, fn) {
+    var t = Date.now();
+    try { var r = fn() || {}; out[nome] = Object.assign({ ok: true, ms: Date.now() - t }, r); }
+    catch (e) { out[nome] = { ok: false, ms: Date.now() - t, erro: String(e.message).substring(0, 400) }; }
+  }
+  function textoDe(json) {
+    var c = json && json.candidates && json.candidates[0];
+    return (c && c.content && c.content.parts ? c.content.parts.map(function (p) { return p.text || ''; }).join('') : '').trim();
+  }
+  passo('texto', function () {
+    var r = Gemini.gerar({ contents: [{ role: 'user', parts: [{ text: 'Responda apenas com a palavra: ok' }] }], generationConfig: { maxOutputTokens: 200 }, _thinking: 'low' });
+    return { modelo: r.model, tier: r.tier, resposta: textoDe(r.json).substring(0, 40), tokens: r.json.usageMetadata };
+  });
+  passo('funcao', function () {
+    var tools = [{ functionDeclarations: [{ name: 'hora_atual', description: 'Devolve a hora atual do usuário.', parameters: { type: 'OBJECT', properties: {} } }] }];
+    var user = { role: 'user', parts: [{ text: 'Que horas são agora? Use a ferramenta hora_atual.' }] };
+    var r1 = Gemini.gerar({ contents: [user], tools: tools });
+    var partes1 = r1.json.candidates[0].content.parts || [];
+    var chamada = partes1.filter(function (p) { return p.functionCall; })[0];
+    if (!chamada) throw new Error('o modelo não chamou a ferramenta: ' + textoDe(r1.json).substring(0, 80));
+    var r2 = Gemini.gerar({ contents: [user, { role: 'model', parts: partes1 }, { role: 'user', parts: [{ functionResponse: { name: 'hora_atual', response: { hora: '10:30' } } }] }], tools: tools });
+    return { modelo: r1.model, assinatura: partes1.some(function (p) { return !!p.thoughtSignature; }), resposta: textoDe(r2.json).substring(0, 80) };
+  });
+  passo('busca', function () {
+    var r = Gemini.pesquisarWeb('Qual a previsão do tempo para Belo Horizonte hoje? Responda em uma frase.');
+    return { fontes: (r.fontes || []).length, texto: String(r.texto || '').substring(0, 90) };
+  });
+  passo('voz', function () {
+    var r = Voz.sintetizarGemini('Teste de voz do Jarvis.', {});
+    if (r.status !== 'success') throw new Error(r.erro || 'sem áudio');
+    return { modelo: r.model, formato: r.ext, bytesBase64: String(r.base64).length };
+  });
+  passo('embedding', function () { var v = Gemini.embeddar('teste de embedding do Jarvis', { tipo: 'RETRIEVAL_QUERY' }); return { dimensoes: v.length }; });
+  if (typeof GastoIA !== 'undefined') { var d = GastoIA.estado(); out.gasto = { totalMesBRL: d.gastoBRL, esteEnsaioBRL: Math.round((d.gastoBRL - antes) * 10000) / 10000, tetoBRL: d.tetoBRL, pct: d.pct }; }
+  return out;
 }

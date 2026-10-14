@@ -239,7 +239,8 @@ var Voz = (function () {
   // (ex.: "tom caloroso e acolhedor"), diferente do Cloud TTS Chirp3 (estilo fixo). Saída = PCM 24kHz
   // → embrulhamos em WAV. Usa a GEMINI key (free-first). É modelo PREVIEW (pode mudar). ──
   function _keyGemini() {
-    // free-first: prioriza as chaves free (mesma lógica do modo 100% free do projeto).
+    // Mesma regra da cascata do Gemini (free-only, ordem e teto mensal). Antes pegava sempre a chave free primeiro.
+    try { if (typeof Gemini !== 'undefined' && Gemini.chaveDireta) { var kc = Gemini.chaveDireta(); if (kc) return kc; } } catch (e) {}
     return _p('GEMINI_API_KEY_FALLBACK') || _p('GEMINI_API_KEY_FALLBACK2') || _p('GEMINI_API_KEY') || '';
   }
   /* NORMALIZAÇÃO DE PICO do PCM do Gemini. O Cloud TTS recebe +6 dB (FALA_VOLUME_DB) na própria
@@ -360,7 +361,8 @@ var Voz = (function () {
     if (!conteudo) return { status: 'error', erro: 'Texto vazio para sintetizar.' };
     var voz = opts.voz || _p('TTS_VOICE_GEMINI') || 'Enceladus';
     var estilo = (opts.estilo != null ? opts.estilo : _p('TTS_STYLE')) || '';
-    var model = opts.model || _p('TTS_GEMINI_MODEL') || 'gemini-2.5-flash-preview-tts';
+    // 14/10: o gemini-2.5-flash-preview-tts desliga em 17/11/2026.
+    var model = opts.model || _p('TTS_GEMINI_MODEL') || 'gemini-3.8-flash-lite-tts';   // lite: ~30% mais barata; aprovada de ouvido em 14/10
     var prompt = estilo ? ('Leia em voz alta em ' + estilo + ': ' + conteudo) : conteudo;
     var payload = {
       contents: [{ parts: [{ text: prompt }] }],
@@ -374,6 +376,7 @@ var Voz = (function () {
       return { status: 'error', erro: 'Gemini TTS HTTP ' + code + ': ' + String(msg).substring(0, 220), model: model };
     }
     var data = JSON.parse(res.getContentText() || '{}');
+    try { if (typeof Gemini !== 'undefined' && Gemini.registrarUso) Gemini.registrarUso(model, data, { buscas: 0 }); } catch (eU) {}
     var part = (((((data.candidates || [])[0] || {}).content || {}).parts || [])[0]) || {};
     var inline = part.inlineData || part.inline_data;
     if (!inline || !inline.data) return { status: 'error', erro: 'Gemini TTS não retornou áudio (resposta sem inlineData).' };

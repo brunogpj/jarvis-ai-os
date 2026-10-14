@@ -53,7 +53,7 @@ var Registry = {
 
 /** Diag no editor: grava um ativo de teste e mostra o que voltaria. */
 function testarRegistry() {
-  Registry.definir('MODELS', 'chat_fc', ['gemini-2.5-flash', 'gemini-2.0-flash']);
+  Registry.definir('MODELS', 'chat_fc', ['gemini-3.8-flash', 'gemini-2.5-flash']);
   var out = {
     modelos: Registry.getModelos('chat_fc', ['(padrão)']),
     textoInexistente: Registry.getTexto('nao_existe', '(usa padrão)')

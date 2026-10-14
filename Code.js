@@ -1052,7 +1052,7 @@ function _rotaSemantica(mensagem, email, isOwner, opts) {
                             not_for: 'Só quanto tem investido — isso é cad_investido; pedir qual investimento comprar — isso é nenhuma.',
                             examples: ['meus investimentos estão ganhando da inflação', 'bati o CDI esse ano', 'quanto rendeu minha carteira esse ano'] },
         cad_mes:          { what: 'Pedir o RESUMO / balanço do MÊS: como foi o mês (renda, saídas, sobra, quanto aplicou), do mês atual ou de um mês passado.',
-                            not_for: 'Só o livre de hoje — isso é cad_livre; só o que falta pagar — isso é cad_falta_pagar.',
+                            not_for: 'Só o livre de hoje — isso é cad_livre; só o que falta pagar — isso é cad_falta_pagar; FECHAR, ENCERRAR ou REABRIR o mês (uma ordem, não uma pergunta) — isso é nenhuma.',
                             examples: ['como foi o mês', 'me dá o balanço do mês', 'como foi setembro'] },
         cad_metas:        { what: 'Perguntar como estão as METAS dele (casa própria, aposentadoria): progresso, quanto falta, quanto precisa aportar.',
                             not_for: 'Cadastrar, mudar ou apagar uma meta — isso é nenhuma.',
@@ -1214,6 +1214,7 @@ function _rotaSemantica(mensagem, email, isOwner, opts) {
       else if (intencao === 'cad_reserva_alvo') _cq = { tipo: 'reserva_alvo' };
       else if (intencao === 'cad_metas') _cq = { tipo: 'metas' };
       else if (intencao === 'cad_indices') _cq = { tipo: 'indices' };
+      else if (intencao === 'cad_mes' && /\b(fech\w+|encerr\w+|reabr\w+|reabert\w+)\b/i.test(String(msg || '').normalize('NFD').replace(/[̀-ͯ]/g, ''))) return null;   // ordem de fechar/reabrir não é pedido de resumo: quem trata é a ação de fechar mês
       else if (intencao === 'cad_mes') {
         // o mês dito na frase ("como foi setembro"), se houver; o regex do consultor já sabe ler isso
         var _qm = (typeof Consultor !== 'undefined') ? Consultor.interpretar(String(msg || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')) : null;
@@ -4124,6 +4125,15 @@ function doPost(e) {
             saida.financeiroAmostra = _am;
           } catch (eFa) { saida.financeiroAmostra = { erro: eFa.message }; }
         }
+        // Prova que o endpoint de fechar mês está no ar e protegido SEM mexer em nada: pede para fechar o mês em curso (o Worker tem que recusar) e um mês fora do intervalo.
+        if (body.fecharMesProva) {
+          try {
+            var _hf = Utilities.formatDate(new Date(), 'America/Sao_Paulo', 'yyyy-MM-dd');
+            saida.fecharMesProva = { mesAtual: Financas._postBruto('/api/jarvis/fechar-mes', { mes: _hf.slice(0, 7), acao: 'fechar' }),
+                                     mesFuturo: Financas._postBruto('/api/jarvis/fechar-mes', { mes: '2099-01', acao: 'fechar' }),
+                                     acaoInvalida: Financas._postBruto('/api/jarvis/fechar-mes', { mes: '2026-09', acao: 'apagar' }) };
+          } catch (eFp) { saida.fecharMesProva = { erro: eFp.message }; }
+        }
         if (body.ensaioBriefing) { try { saida.ensaioBriefing = diagBriefingTexto({ tag: String(body.ensaioBriefing) }); } catch (eEb) { saida.ensaioBriefing = { erro: eEb.message }; } }
         return ContentService.createTextOutput(JSON.stringify(saida)).setMimeType(ContentService.MimeType.JSON);
       } catch (errDb) {
@@ -5621,6 +5631,24 @@ function _bancoParse(app, titulo, texto) {
       return { origem: 'mp', valor: _finNum(m[1]), estabelecimento: m[2].trim(), meio: credito ? 'Cartão de crédito' : 'Pix / débito', auto: credito };
     }
   }
+  // ITAÚ — ainda SEM formato conhecido: nenhuma notificação do Itaú chegou ao Jarvis até hoje (o app precisa estar no filtro da macro), então não há texto real
+  // para escrever um parser exato. Em vez de chutar um formato, lê o que dá para ler com segurança — UM único valor em R$ e palavras de compra/pagamento ou de
+  // recebimento — e NUNCA registra sozinho: vira uma pergunta falada ("Registro como gasto?") e o texto bruto fica guardado para o parser exato ser escrito depois.
+  if (/ita[uú]/.test(a) && !/investiment/.test(a)) {
+    if (/fatura|boleto|vencimento|vence|limite|oferta|promo[cç]|seguro|empr[eé]stimo|cr[eé]dito pr[eé]/i.test(junto)) return null;   // avisos, não transação: seguem as regras de sempre
+    var vals = junto.match(/R\$\s*([\d.,]*\d)/g) || [];
+    if (vals.length === 1) {
+      var vi = _finNum(vals[0].replace(/R\$\s*/, ''));
+      var recebido = /\b(voc[eê] recebeu|recebeu|recebido|cr[eé]dito em conta)\b/i.test(junto);
+      var gasto = /\b(compra|pagamento|pagou|voc[eê] fez um pix|pix enviado|d[eé]bito|debitad[oa]|saque|transfer[eê]ncia enviada)\b/i.test(junto);
+      var estab = (junto.match(/(?:\bem:?|\bno|\bna|\bpara)\s+([A-ZÀ-Ý0-9][^.,;]{2,50})/) || [])[1];
+      var meioIt = /cr[eé]dito/i.test(junto) ? 'Cartão de crédito' : (/d[eé]bito/i.test(junto) || /pix/i.test(junto) ? 'Pix / débito' : null);
+      if (vi > 0 && recebido) return { entrada: true, generico: true, origem: 'it', valor: vi, remetente: (junto.match(/\bde\s+(?!R\$)([A-ZÀ-Ý][^,.;]{2,50})/) || [])[1] || 'alguém', instituicao: '', auto: false };
+      if (vi > 0 && gasto && !/saque/i.test(junto)) return { generico: true, origem: 'it', valor: vi, estabelecimento: (estab || '').trim(), meio: meioIt, auto: false };
+    }
+    if (vals.length >= 1) return { desconhecido: true, origem: 'it', auto: false };   // do Itaú, tem valor, mas não dá para interpretar com segurança
+    return null;                                                                      // sem valor em R$: não é transação, segue as regras de sempre
+  }
   // ENTRADA: Pix/transferência recebida. Nunca vira receita sozinha (pode ser transferência entre as contas dele, reembolso, venda…):
   // o Jarvis conta e pergunta "registro como receita extra?", e só o "sim" grava.
   m = junto.match(/voc[eê] recebeu um pix de R\$\s*([\d.,]*\d)\s+de\s+(.+?),\s*da institui[cç][aã]o\s+(.+?)\.?$/i)
@@ -5643,13 +5671,31 @@ function _bancoParaCaderneta(d, opts) {
   try {
     if (String(PropertiesService.getScriptProperties().getProperty('BANCOS_PARA_CADERNETA') || 'sim').toLowerCase() === 'nao') return null;
     var p = _bancoParse(d.app, d.titulo, d.texto);
-    if (!p || !(p.valor > 0)) return null;
+    if (!p || (!p.desconhecido && !(p.valor > 0))) return null;
     if (typeof Financas === 'undefined' || !Financas.configurado()) return null;
     var em = d.em || Date.now(), dia = Utilities.formatDate(new Date(em), 'America/Sao_Paulo', 'yyyy-MM-dd');
     var idFin = 'b' + _notifHash((d.app || '') + '|' + (d.titulo || '') + '|' + (d.texto || '')) + '_' + dia;
     var existente = null;
     try { existente = Firestore.getDoc(_FIN_COL, idFin); } catch (eG) {}
     if (existente) return { regra: 'gasto_banco', acao: 'gasto_banco', jaRegistrado: true };
+    if (p.desconhecido) {
+      // Itaú com valor que não dá para interpretar com segurança: guarda o texto BRUTO (coleção de retenção longa) para escrever o parser em cima de texto real e avisa.
+      var docU = { app: d.app || '', pacote: d.pacote || '', titulo: d.titulo || '', texto: d.texto || '', bruto: ((d.titulo || '') + ' | ' + (d.texto || '')).trim(),
+                   em: em, dia: dia, tipo: 'banco_desconhecido', origem: p.origem, parseado: false, versaoParser: 0, caderneta: 'formato_desconhecido' };
+      if (!opts.simular) Firestore.setDoc(_FIN_COL, idFin, docU);
+      _finAvisarCaderneta('Itaú', 'Chegou uma notificação do Itaú com valor que eu ainda não sei interpretar: ' + String(docU.bruto).slice(0, 140) + '. Guardei o texto para aprender o formato.', 'desconhecido');
+      return { regra: 'gasto_banco', acao: 'banco_desconhecido', status: 'formato_desconhecido' };
+    }
+    if (p.generico && !p.entrada) {
+      // Itaú, gasto: NUNCA automático. Pergunta ("Registro como gasto?"), com a forma de pagar se o texto não disse, e só o "sim" grava (origem it, com dedup).
+      var docG = { app: d.app || '', pacote: d.pacote || '', titulo: d.titulo || '', texto: d.texto || '', bruto: ((d.titulo || '') + ' | ' + (d.texto || '')).trim(),
+                   em: em, dia: dia, tipo: 'gasto_banco', valor: p.valor, estabelecimento: p.estabelecimento, meio: p.meio, origem: p.origem, parseado: true, versaoParser: 0,
+                   caderneta: 'aguarda_confirmacao' };
+      var fraseG = Financas.proporBancoGenerico({ chave: idFin, valor: p.valor, descricao: p.estabelecimento, meio: p.meio, origem: p.origem, dia: dia });
+      if (!opts.simular) Firestore.setDoc(_FIN_COL, idFin, docG);
+      _finAvisarCaderneta('Itaú', fraseG, 'validacao');
+      return { regra: 'gasto_banco', acao: 'gasto_banco', status: 'aguarda_confirmacao' };
+    }
     if (p.entrada) {
       var docE = { app: d.app || '', pacote: d.pacote || '', titulo: d.titulo || '', texto: d.texto || '', bruto: ((d.titulo || '') + ' | ' + (d.texto || '')).trim(),
                    em: em, dia: dia, tipo: 'entrada_banco', valor: p.valor, remetente: p.remetente, origem: p.origem, parseado: true, versaoParser: 1 };

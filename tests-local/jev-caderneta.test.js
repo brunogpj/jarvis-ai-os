@@ -227,3 +227,10 @@ test('JEV → consultor: comparação com índices e resumo do mês chegam ao Co
   assert.match(String(ri), /rendimento do ano|índices do Banco Central/);
   assert.strictEqual(i._ROTA_ULTIMA, 'cad_indices');
 });
+
+test('JEV → resumo do mês: uma ORDEM de fechar ou reabrir o mês não vira resumo', function () {
+  var s = sandbox(jev('cad_mes', 0.9));
+  assert.strictEqual(s._rotaSemantica('fecha setembro', DONO, true, { canal: 'voz' }), null);
+  assert.strictEqual(s._rotaSemantica('reabre o mês de setembro', DONO, true, { canal: 'voz' }), null);
+  assert.match(String(sandbox(jev('cad_mes', 0.9))._rotaSemantica('me conta como foi esse mês', DONO, true, { canal: 'voz' })), /^Em outubro até agora/);
+});

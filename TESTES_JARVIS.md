@@ -234,6 +234,20 @@ Sem você pedir, no tick de 15 min, em duas janelas: **manhã 9–11h** e **noit
 | 1.109 | "Como foi setembro?" | resumo do mês fechado; só compara com o mês anterior se ele tem dados | ✅ | 14/10 celular |
 | 1.110 | Paráfrases pelo JEV: "meu dinheiro está ganhando da inflação", "me conta como foi esse mês" | mesma resposta da regra, sem Gemini | ⏳ | teste automático (JEV simulado); falta medir com `rotaJev` |
 
+### 1f-j. 🗓️ Fechar o mês e Itaú assistido 🗣️🔑
+
+| # | Diga / o que conferir | Esperado | Status | Obs. |
+|---|---|---|---|---|
+| 1.111 | "Fecha setembro" (já fechado) | "Setembro já está fechado. Para atualizar o retrato, use o app; para reabrir, diga reabre setembro." | ✅ | 14/10 celular |
+| 1.112 | "Fecha outubro" (mês em curso) · "fecha agosto" (antes do início) | recusa com o motivo, nada gravado | ✅ | 14/10 celular + prova do Worker (`fecharMesProva`) |
+| 1.113 | "Reabre setembro" → "não" | repete que o livre volta a ser calculado e cancela sem tocar em nada | ✅ | 14/10 celular |
+| 1.114 | "Fecha o mês" depois que o mês terminou, com contas abertas | "Atenção: ainda há N contas sem marcar como paga…" + os números + "Fecho <mês>? Diga sim ou não." → sim fecha; desfaz reabre | ⏳ | testado por teste automático e por paridade do retrato; o primeiro real será outubro, depois de 1º/11 |
+| 1.115 | Itaú: notificação de compra ("Compra … R$ 50,00 em X") | notificação **e** fala: "No Itaú: gasto de R$ 50,00 em X, no crédito. Registro na caderneta, categoria Y?" — nada gravado antes do sim | ⏳ | precisa do app Itaú no FILTRO da macro de notificações; hoje nenhuma chega |
+| 1.116 | Itaú sem dizer crédito/débito/pix | pergunta a forma de pagar; a resposta completa a proposta | ⏳ | teste automático |
+| 1.117 | Itaú: fatura, boleto, oferta, limite | seguem as regras de sempre (lembrete), sem pergunta de gasto | ⏳ | teste automático |
+| 1.118 | Itaú: valor que não dá para interpretar | guarda o texto bruto e avisa; `ler_debug` `financeiroAmostra:true` mostra | ⏳ | para escrever o parser exato depois |
+| 1.119 | JEV: paráfrases de índices e resumo do mês | `rotaJev` em 34 frases: 32 certas; as 2 "erradas" são "quanto sobrou esse mês depois das contas" (foi para o livre, razoável) e "fecha setembro" (agora ignorado pelo resumo) | ✅ | 14/10 |
+
 ### 1g. 🔔 Notificações do celular 🗣️
 
 | # | O que conferir | Esperado | Status | Obs. |

@@ -597,6 +597,8 @@ var Financas = (function () {
       case 'meta': return 'a alteração da meta ' + (u.nome || '');
       case 'aplicar': return (u.mov === 'Resgate' ? 'o resgate de ' : 'a aplicação de ') + v + (u.descricao ? ' em ' + u.descricao : '');
       case 'aporte': return 'o aporte de ' + v;
+      // u.acao é o que o DESFAZ faz: desfazer um fechamento = reabrir, então a ação original foi o fechamento
+      case 'fecharMes': return (u.acao === 'reabrir' ? 'o fechamento de ' : 'a reabertura de ') + (u.nome || 'um mês');
       case 'saldoInvest': return 'a atualização do saldo de ' + (u.nome || 'um investimento');
       case 'consultor': return 'o ajuste ' + (u.rotulo || 'do consultor');
       default: return 'a última ação';
@@ -678,10 +680,11 @@ var Financas = (function () {
         via = 'swile';
         r = registrarGastoSwile({ chave: p.id, data: data, carteira: p.carteira, valor: p.valor, estabelecimento: p.descricao });
       } else {
-        via = 'vz';
-        r = registrarGasto({ origem: 'vz', chave: p.id, data: data, valor: p.valor, meio: p.meio, categoria: p.categoria, descricao: p.descricao });
+        via = p.origem || 'vz';   // 'it' quando vem de uma notificação do Itaú confirmada por voz (com dedup contra o que ele digitou)
+        r = registrarGasto({ origem: via, chave: p.id, data: data, valor: p.valor, meio: p.meio, categoria: p.categoria, descricao: p.descricao });
       }
       if (!r.ok) return { resp: 'Não consegui registrar o gasto agora. Não gravei nada; tente de novo daqui a pouco.' };
+      if (r.criado === false) return { resp: r.motivo === 'ja_existe' ? 'Já havia um gasto igual na caderneta, então não dupliquei.' : 'Esse gasto já estava registrado.' };
       var quando = p.dias === 1 ? ' de ontem' : '';
       return { resp: 'Registrei o gasto' + quando + ' de ' + _brl(p.valor) + (p.descricao ? ' em ' + p.descricao : '') + ', ' + p.rotulo + '. Para desfazer, diga desfaz.',
                desfazer: { tipo: 'gasto', via: via, chave: p.id, valor: p.valor, descricao: p.descricao || '' } };
@@ -725,6 +728,20 @@ var Financas = (function () {
   function desfazerReceita(chave) {
     var x = _post('/api/jarvis/receita/desfazer', { chave: chave });
     return x.ok ? { ok: true, removido: Number(x.dados.removido) || 0 } : { ok: false, erro: x.erro };
+  }
+
+  /**
+   * Notificação de banco SEM parser exato (Itaú) → guarda a proposta de gasto (15 min, `fin_pend_banco`) e devolve a frase que o Code.js notifica E fala.
+   * Sem a forma de pagar no texto, a frase pergunta "crédito, débito ou pix?" e a resposta completa a proposta; o "sim" grava (origem it).
+   */
+  function proporBancoGenerico(g) {
+    var rotulo = g.meio === 'Cartão de crédito' ? 'no crédito' : (g.meio ? 'no débito ou pix' : null);
+    var desc = String(g.descricao || '').trim();
+    var p = { tipo: 'gasto', valor: g.valor, meio: g.meio || null, rotulo: rotulo, carteira: null, descricao: desc, categoria: categoriaDe(desc), dias: 0, id: g.chave, origem: g.origem || 'it', aguarda: g.meio ? null : 'meio' };
+    _cachePut('fin_pend_banco', p, 900);
+    var base = 'No Itaú: gasto de ' + _brl(g.valor) + (desc ? ' em ' + desc : '');
+    return g.meio ? base + ', ' + rotulo + '. Registro na caderneta, categoria ' + p.categoria + '? Diga sim ou não.'
+                  : base + '. Foi no crédito, no débito ou no pix?';
   }
 
   /** Notificação de Pix recebido → guarda a proposta (15 min) e devolve a frase que o Code.js notifica E fala. */
@@ -1191,7 +1208,66 @@ var Financas = (function () {
     }
   };
 
-  var ORDEM_ACOES = ['recarga', 'receber', 'gasto', 'receita', 'pagar', 'aporte', 'aplicar', 'saldoInvest', 'consultor', 'meta'];
+  // ── FECHAR / REABRIR O MÊS por voz ("fecha setembro", "fecha o mês", "reabre setembro") — com confirmação ───────────────────────
+  // Mesmo retrato do botão "Fechar mês" do app (o Worker usa o snapshot com teste de paridade contra o app.js). O livre de um mês fechado fica CONGELADO e vira o
+  // ponto de partida do seguinte, por isso a confirmação repete os números e avisa das contas ainda sem marcar como paga. Só mês que já terminou; mês já fechado
+  // não é refeito por aqui (atualizar o retrato é no app). "Desfaz" de um fechamento reabre; "desfaz" de uma reabertura fecha de novo.
+  var _NOMES_MES_FM = ['janeiro', 'fevereiro', 'marco', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+  function _mesCurto(ym) { return (_MESES[Number(String(ym).slice(5, 7)) - 1] || ym); }
+  function _mesAnterior(ym) { var a = Number(ym.slice(0, 4)), m = Number(ym.slice(5, 7)) - 1; if (m < 1) { m = 12; a--; } return a + '-' + (m < 10 ? '0' : '') + m; }
+  function _mesSeguinte(ym) { var a = Number(ym.slice(0, 4)), m = Number(ym.slice(5, 7)) + 1; if (m > 12) { m = 1; a++; } return a + '-' + (m < 10 ? '0' : '') + m; }
+
+  ACOES.fecharMes = {
+    propor: function (msg) {
+      var s = _norm(msg).replace(/[?]/g, '');
+      var fechar = /\b(fech\w+|encerr\w+)\b/.test(s), reabrir = /\b(reabr\w+|reabert\w+)\b/.test(s);
+      if (!fechar && !reabrir) return null;
+      var mnum = null;
+      for (var k = 0; k < 12; k++) if (new RegExp('\\b' + _NOMES_MES_FM[k] + '\\b').test(s)) mnum = k + 1;
+      if (!mnum && !/\b(mes|mes passado|mes anterior)\b/.test(s)) return null;      // "fecha a porta" não é com a caderneta
+      if (/\b(quanto|qual|quais|quando|como|onde)\b/.test(s)) return null;
+      var r = resumo();
+      if (!r.ok || !r.dados || !r.dados.mes) return null;
+      var atual = r.dados.mes, ym;
+      if (mnum) { var ano = Number(atual.slice(0, 4)); if (mnum > Number(atual.slice(5, 7))) ano--; ym = ano + '-' + (mnum < 10 ? '0' : '') + mnum; }
+      else ym = _mesAnterior(atual);
+      var nome = _mesCurto(ym);
+      if (ym >= atual) return { resp: 'Só dá para mexer em mês que já terminou. ' + _mesCurto(atual).charAt(0).toUpperCase() + _mesCurto(atual).slice(1) + ' ainda está em curso.' };
+      var rm = resumo(ym);
+      if (!rm.ok || !rm.dados) return { resp: 'Não consegui consultar ' + nome + ' na caderneta agora.' };
+      var d = rm.dados;
+      if (d.inicio && ym < d.inicio) return { resp: 'A caderneta só começa em ' + _mesFalado(d.inicio) + ', então não há ' + nome + ' para mexer.' };
+      var proximo = _mesCurto(_mesSeguinte(ym));
+      var p = { tipo: 'fecharMes', acao: reabrir ? 'reabrir' : 'fechar', mes: ym, nome: nome, proximo: proximo, livreFim: d.livreFim };
+      if (reabrir) {
+        if (!d.fechado) return { resp: nome.charAt(0).toUpperCase() + nome.slice(1) + ' não está fechado.' };
+        return { pend: p, resp: 'Reabro ' + nome + '? O livre que passa para ' + proximo + ' volta a ser calculado em vez de ficar congelado. Diga sim ou não.' };
+      }
+      if (d.fechado) return { resp: nome.charAt(0).toUpperCase() + nome.slice(1) + ' já está fechado. Para atualizar o retrato, use o app; para reabrir, diga reabre ' + nome + '.' };
+      var abertas = (d.obrigacoes || []).filter(function (o) { return !o.pago && !o.outroPaga && Number(o.valor) > 0; });
+      var aviso = abertas.length ? 'Atenção: ainda há ' + abertas.length + (abertas.length === 1 ? ' conta' : ' contas') + ' sem marcar como paga em ' + nome + ': ' +
+                  abertas.slice(0, 3).map(function (o) { return o.nome; }).join(', ') + (abertas.length > 3 ? ' e mais ' + (abertas.length - 3) : '') + '. ' : '';
+      return { pend: p, resp: aviso + 'Fecho ' + nome + '? Renda ' + _brl(d.receita) + ', saídas ' + _brl(d.saidas) + ', sobra de ' + (Number(d.sobra) < 0 ? 'menos ' : '') + _brl(d.sobra) +
+        ', e o livre que passa para ' + proximo + ' é ' + (Number(d.livreFim) < 0 ? 'menos ' : '') + _brl(d.livreFim) + '. Isso congela os números de ' + nome + '. Diga sim ou não.' };
+    },
+    executar: function (p) {
+      var x = _post('/api/jarvis/fechar-mes', { mes: p.mes, acao: p.acao });
+      if (!x.ok) return { resp: 'Não consegui ' + (p.acao === 'fechar' ? 'fechar' : 'reabrir') + ' ' + p.nome + ' agora. Não mudei nada.' };
+      if (!x.dados.mudou) return { resp: p.nome.charAt(0).toUpperCase() + p.nome.slice(1) + (p.acao === 'fechar' ? ' já estava fechado.' : ' já estava aberto.') };
+      if (p.acao === 'fechar') {
+        var livre = x.dados.livreFim != null ? x.dados.livreFim : p.livreFim;
+        return { resp: 'Fechei ' + p.nome + '. O livre que passa para ' + p.proximo + ' é ' + (Number(livre) < 0 ? 'menos ' : '') + _brl(livre) + '. Para reabrir, diga desfaz.',
+                 desfazer: { tipo: 'fecharMes', acao: 'reabrir', mes: p.mes, nome: p.nome } };
+      }
+      return { resp: 'Reabri ' + p.nome + '. Para fechar de novo, diga desfaz.', desfazer: { tipo: 'fecharMes', acao: 'fechar', mes: p.mes, nome: p.nome } };
+    },
+    desfazer: function (u) {
+      var x = _post('/api/jarvis/fechar-mes', { mes: u.mes, acao: u.acao });
+      return (x.ok && x.dados.mudou) ? (u.acao === 'reabrir' ? 'Desfeito: reabri ' + u.nome + '.' : 'Desfeito: fechei ' + u.nome + ' de novo.') : 'Não consegui desfazer. Ajuste no app.';
+    }
+  };
+
+  var ORDEM_ACOES = ['recarga', 'receber', 'gasto', 'receita', 'pagar', 'fecharMes', 'aporte', 'aplicar', 'saldoInvest', 'consultor', 'meta'];
 
   var _SIM = /^(sim|isso|isso mesmo|confirmo|confirma|confirmado|pode|pode registrar|pode confirmar|pode gravar|esta certo|ta certo|certo|correto|exato|positivo|com certeza|claro)\b/;
   var _NAO = /^(nao|negativo|cancela|cancelar|cancelado|deixa|deixa pra la|esquece|errado|nao precisa|para|pare)\b/;
@@ -1248,6 +1324,20 @@ var Financas = (function () {
         }
         if (_NAO.test(s)) { _cacheDel('fin_pend_entrada'); return { resp: 'Certo, não registrei a receita.' }; }
       }
+      // Gasto de banco sem parser exato (Itaú) esperando a forma de pagar ou o sim. Só vale sem outra proposta aberta.
+      var pb = pend ? null : _cacheGet('fin_pend_banco');
+      if (pb) {
+        if (_NAO.test(s)) { _cacheDel('fin_pend_banco'); return { resp: 'Certo, não registrei esse gasto do Itaú.' }; }
+        if (pb.aguarda === 'meio') {
+          var mb = _meioDe(s);
+          if (mb && mb.meio) { pb.meio = mb.meio; pb.rotulo = mb.rotulo; pb.aguarda = null; _cachePut('fin_pend_banco', pb, 900); return { resp: _fraseGasto(pb) }; }
+        } else if (_SIM.test(s)) {
+          _cacheDel('fin_pend_banco');
+          var outB = ACOES.gasto.executar(pb);
+          if (outB.desfazer) guardarDesfazer(outB.desfazer);
+          return { resp: outB.resp };
+        }
+      }
       var ult = _ultimaAcao();
       if (/^(desfaz|desfazer|desfaca|volta atras|(cancela|apaga|tira|remove) (a recarga|o gasto|esse gasto|o ultimo gasto|a receita|o pagamento|a aplicacao))\b/.test(s)) {
         if (ult && ACOES[ult.tipo]) {
@@ -1284,7 +1374,7 @@ var Financas = (function () {
            registrarGastoSwile: registrarGastoSwile, desfazerGastoSwile: desfazerGastoSwile, falarSaldoSwile: falarSaldoSwile,
            interpretarRecarga: interpretarRecarga, conversar: conversar, registrarRecarga: registrarRecarga, desfazerRecarga: desfazerRecarga,
            interpretarGasto: interpretarGasto, categoriaDe: categoriaDe, registrarGasto: registrarGasto, desfazerGasto: desfazerGasto, guardarDesfazer: guardarDesfazer,
-           _postBruto: _post, ehDoDono: ehDoDono, proporEntrada: proporEntrada, registrarReceita: registrarReceita, desfazerReceita: desfazerReceita };
+           _postBruto: _post, ehDoDono: ehDoDono, proporEntrada: proporEntrada, proporBancoGenerico: proporBancoGenerico, registrarReceita: registrarReceita, desfazerReceita: desfazerReceita };
 })();
 
 /** Diagnóstico no editor: mostra se está conectado e o que ele responderia, sem falar no celular. */

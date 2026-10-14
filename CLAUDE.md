@@ -25,7 +25,7 @@ Projeto Google Apps Script gerenciado localmente via clasp.
 
 | Deployment ID | Versão | Descrição |
 |---|---|---|
-| `<DEPLOYMENT_ID>` | **@494** | **ATIVA** — "consultor: comparação com IPCA/CDI/poupança e resumo do mês" |
+| `<DEPLOYMENT_ID>` | **@497** | **ATIVA** — "fechar mês por voz, Itaú assistido, JEV cad_mes sem ordem de fechar" |
 | `<DEPLOYMENT_ID>` | @25 | Antiga — "TesteJobs" |
 | `<DEPLOYMENT_ID>` | @HEAD | Cabeça (muda a cada push, não é a de produção) |
 
@@ -358,6 +358,21 @@ com números inventados (o "aportei" que se segue não grava nada).
 Os dois também entram no JEV (`cad_indices`, `cad_mes`), com o mesmo interruptor `ROTA_JEV_NOVAS`. Ainda sem notificações do **Itaú** no Jarvis: só chegam Swile, Mercado Pago e Bradesco; para espelhar o
 Itaú (e ações) é preciso incluir o app no filtro da macro e ver o texto REAL das notificações antes de escrever o parser. `ler_debug` com `financeiroAmostra:true` mostra, por app, os formatos guardados.
 
+**Fechar e reabrir o mês por voz (14/10).** "Fecha setembro" / "fecha o mês" (o anterior) → o Jarvis repete renda, saídas, sobra e o livre que passa para o mês seguinte,
+avisa das contas ainda sem marcar como paga ("Atenção: ainda há 2 contas…") e só o "sim" fecha (`POST /api/jarvis/fechar-mes`, `acao: fechar|reabrir`). O retrato é o MESMO do botão
+do app: `snapshot()` em `src/calculos.js`, com teste de paridade contra o `app.js` (`test/paridade.test.js`), porque o livre de um mês fechado fica congelado e vira o ponto de partida
+do seguinte. Regras do Worker: só mês que já terminou, desde o início da caderneta (`config.saldo_inicio`) e até 12 meses atrás; mês já fechado NÃO é refeito por voz
+("Atualizar retrato" é no app). "Desfaz" de um fechamento reabre; "desfaz" de uma reabertura fecha de novo. `ler_debug` com `fecharMesProva:true` prova que o endpoint
+recusa fechar o mês em curso / futuro / ação inválida sem mexer em nada. **Não houve fechamento real por voz ainda**: setembro já estava fechado e refazê-lo trocaria o retrato histórico;
+o primeiro real será outubro, a partir de 1º de novembro.
+
+**Itaú: espelho assistido, sem chute (14/10).** Nenhuma notificação do Itaú chegou ao Jarvis até hoje (os apps `com.itau` e `com.itau.investimentos` estão instalados e com notificação ligada,
+mas falta o app no FILTRO da macro de notificações), então não há texto real para escrever um parser exato. O Jarvis lê o que dá com segurança — UM valor em R$ e palavras de compra/pagamento
+ou de recebimento — e **nunca registra sozinho**: fala e notifica "No Itaú: gasto de R$ 50,00 em X, no crédito. Registro na caderneta, categoria Y? Diga sim ou não." (se o texto não diz
+crédito/débito/pix, pergunta); o "sim" grava com origem `it` (id `it_`, com dedup contra o que ele digitou). Pix recebido vira a pergunta da receita extra. Valor que não dá para interpretar
+(dois valores, saque…) guarda o texto bruto (`tipo:banco_desconhecido`) e avisa; fatura, boleto, oferta, limite e sem valor seguem as regras de sempre; o app de investimentos fica de fora.
+Com os textos reais guardados (`ler_debug` com `financeiroAmostra:true`), escreve-se o parser exato e o que for seguro passa a registrar sozinho, como Mercado Pago e Bradesco.
+
 **Fila de falas** (`controlarDispositivo('falar')`): a fala nova espera a anterior
 acabar, **fora do lock**, em passos de 15 s, até 110 s. A duração vem do áudio (WAV
 do Gemini = bytes/48 ms; OGG ≈ 14 caracteres/s; teto 150 s). Antes dormia no
@@ -456,7 +471,7 @@ o histórico. Então:
   genérico no teste do lembrete relativo).
 - O `README.md` é o que um recrutador lê primeiro. O projeto Jarvis no
   LinkedIn e o README do perfil do GitHub citam "147 testes automatizados"
-  (o repo tem 326 desde 14/10 — a frase segue verdadeira como piso);
+  (o repo tem 338 desde 14/10 — a frase segue verdadeira como piso);
   se a contagem mudar muito, avise o dono para atualizar lá também.
 - Nada sobre o empregador nem sobre sistemas internos de trabalho entra aqui.
 
@@ -505,7 +520,7 @@ público").
 cd tests-local && node --test
 ```
 
-326 testes offline (sem cota, sem rede) sobre a lógica determinística: MODO
+338 testes offline (sem cota, sem rede) sobre a lógica determinística: MODO
 DIRETO, gate sem-cota, hooks, parsing de turno/briefing, validação de prefs,
 ordenação dos cards, cadeia da voz, lembrete relativo e alertas de uma vez só,
 `_urlParaMacro`, `lerBiblia`, briefing com dados reais e trava de agenda
@@ -514,7 +529,7 @@ caracteres da voz no briefing e autodiagnóstico sem alarme de app raro
 (`tests-local/dia-0110.test.js`). `tests-local/gas-shims.js` simula as
 APIs do GAS (`formatDate` é fixo: teste que depende de horário injeta o seu).
 `tests-local/jev-caderneta.test.js` cobre o roteador semântico novo (JEV simulado, interruptor, máscara de log).
-Estado em 14/10/2026: **326/326 passando** (mais 26 do Worker da caderneta, `npm test` na pasta `app`).
+Estado em 14/10/2026: **338/338 passando** (mais 34 do Worker da caderneta, `npm test` na pasta `app`).
 
 Contra o sistema vivo, pelo terminal: `ler_debug` (POST com `VOICE_API_TOKEN`,
 `n` até 200, `alertas:true`, `notificacoes:N`, `ensaioBriefing:'<tag>'`, `gatilhos:true`,

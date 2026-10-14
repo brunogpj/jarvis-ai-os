@@ -150,10 +150,10 @@ Sem você pedir, no tick de 15 min, em duas janelas: **manhã 9–11h** e **noit
 | # | O que conferir | Esperado | Status | Obs. |
 |---|---|---|---|---|
 | 1.52 | Compra no crédito do Mercado Pago (notificação "Você pagou R$ X a Y") | gasto registrado (Cartão de crédito, categoria pelo lugar) + notificação "Registrei…"; o livre **não muda** | ✅ | 14/10: Google Cloud R$ 30 (Trabalho); livre seguiu R$ 117,18 |
-| 1.53 | Compra no débito do Bradesco ("compra com seu cartão de débito final…") | gasto em Pix / débito, desconta do livre | ⏳ | formato visto em 11/10 (Sam's Club R$ 5,90 → Mercado) |
+| 1.53 | Compra no débito do Bradesco ("compra com seu cartão de débito final…") | gasto em Pix / débito, desconta do livre | ✅ | 14/10: notificação do Bradesco simulada pela integração (R$ 0,01 no débito): registrada em Pix / débito; "desfaz" tirou |
 | 1.54 | Gasto que você já digitou na caderneta e depois chega a notificação | "Já havia um gasto igual na caderneta… Não dupliquei" | ⏳ | coberto por teste automático |
 | 1.55 | Pix enviado / pagamento do MP sem linha da fatura | avisa que não registrou sozinho (você diz por voz) | ⏳ | |
-| 1.56 | Diga "desfaz" até 10 min depois de um registro automático | "Desfeito: tirei o gasto de R$ X em Y." | ⏳ | |
+| 1.56 | Diga "desfaz" até 10 min depois de um registro automático | "Desfeito: tirei o gasto de R$ X em Y." | ✅ | 14/10 celular: "desfaz" logo depois do registro automático → "Desfeito: tirei o gasto de R$ 0,01…" |
 | 1.57 | "Gastei 35 reais no mercado no débito" | repete: "Confirma o gasto de R$ 35,00 em mercado, no débito, categoria Mercado, hoje?" — nada gravado ainda | ✅ | 14/10 (teste de R$ 0,01 no crédito) |
 | 1.58 | Responder "sim" | "Registrei o gasto…"; aparece na caderneta | ✅ | 14/10 |
 | 1.59 | "Gastei 35 no mercado" (sem dizer como pagou) | "Foi no débito, no crédito, no pix, em dinheiro ou no voucher?" → "no pix" → confirma | ✅ | 14/10 |
@@ -167,8 +167,8 @@ Sem você pedir, no tick de 15 min, em duas janelas: **manhã 9–11h** e **noit
 | 1.62 | Qualquer gasto registrado sozinho (banco ou Swile) | notificação do MacroDroid **e** o Jarvis fala **a mesma frase** ("Registrei R$ X em Y (no crédito, Trabalho). Diga desfaz para tirar.") | ✅ | 14/10: confirmado no logcat (TTS do celular falou nos dois avisos de teste) |
 | 1.63 | Recarga do Swile cai | notifica e fala "Caiu a recarga do Swile. Diga os valores, por exemplo…" | ⏳ | |
 | 1.64 | Pix de você mesmo (entre suas contas) | avisa e fala "…transferência entre as suas contas, não registrei como receita." | ✅ | 14/10 (reprocesso do Pix de 08/10) |
-| 1.65 | Pix de outra pessoa | fala "Você recebeu um Pix de R$ X de Y. Registro como receita extra? Diga sim ou não." — nada gravado | ⏳ | espera 15 min |
-| 1.66 | Responder "sim" (ou "sim, é reembolso") | "Registrei a receita extra de R$ X de Y (categoria)…"; entra como Receita; desfaz por 10 min | ⏳ | coberto por teste automático |
+| 1.65 | Pix de outra pessoa | fala "Você recebeu um Pix de R$ X de Y. Registro como receita extra? Diga sim ou não." — nada gravado | ✅ | 14/10: notificação simulada (Pix de R$ 0,01 de "Teste Jarvis"): perguntou e falou, nada gravado antes do sim |
+| 1.66 | Responder "sim" (ou "sim, é reembolso") | "Registrei a receita extra de R$ X de Y (categoria)…"; entra como Receita; desfaz por 10 min | ✅ | 14/10 celular: "sim, é reembolso" registrou a receita (categoria Reembolso); "desfaz" tirou |
 | 1.67 | "Recebi 450 da Maria no pix" | "Confirma a receita extra de R$ 450,00 de Maria, hoje?" → sim grava | ⏳ | salário/rendimento não entram |
 | 1.68 | Caderneta fora do ar numa compra | notifica e fala "Não consegui falar com a caderneta agora. Registro … assim que ela voltar." | ⏳ | |
 | 1.69 | Repetir "gastei 35 reais no mercado" enquanto ele pergunta como pagou | continua perguntando; **não** diz "registrei" | ⏳ | pegou um caso real em 14/10 |
@@ -182,8 +182,8 @@ Sem você pedir, no tick de 15 min, em duas janelas: **manhã 9–11h** e **noit
 | 1.72 | "Se eu aportar 1000 por mês durante 5 anos, quanto vou ter?" | patrimônio → valor futuro, aportes × rendimento, "estimativa, não promessa" | ✅ | 14/10: R$ 31.477,82 → R$ 127.397,31 a 0,8% ao mês |
 | 1.73 | "Em quanto tempo chego a 100 mil aportando 1000 por mês?" | prazo em anos e meses | ⏳ | coberto por teste automático |
 | 1.74 | "Minha reserva está suficiente?" | reserva em meses × alvo, quanto acima/abaixo em R$ | ✅ | 14/10: 11,5 meses × alvo 6 |
-| 1.75 | "Minha meta é casa própria, 150 mil, até 2030" → "sim" | confirma antes; grava a meta; "como estão minhas metas" mostra progresso e o aporte necessário | ⏳ | desfaz restaura |
-| 1.76 | "Paguei o aluguel" (conta aberta no mês) | "Marco como paga: Aluguel, R$ 700,00, dia 10. Diga sim ou não." → sim marca, diz o livre novo; desfaz desmarca | ⏳ | no mês atual nada estava pendente; o ciclo real foi provado no mês seguinte (`pagamentoTeste`) |
+| 1.75 | "Minha meta é casa própria, 150 mil, até 2030" → "sim" | confirma antes; grava a meta; "como estão minhas metas" mostra progresso e o aporte necessário | ✅ | 14/10 celular: criou (meta de teste), mostrou o progresso, editou, apagou e o desfaz trouxe de volta; tudo desfeito no fim |
+| 1.76 | "Paguei o aluguel" (conta aberta no mês) | "Marco como paga: Aluguel, R$ 700,00, dia 10. Diga sim ou não." → sim marca, diz o livre novo; desfaz desmarca | ⚠️ parcial | 14/10 celular: a conta já estava paga ("já está marcada como paga"); o ciclo real foi provado no mês seguinte (`pagamentoTeste`). Falta uma conta aberta no mês |
 | 1.77 | "Paguei a fatura" (mais de uma aberta) | "Achei mais de uma… Diga o nome completo" | ⏳ | |
 | 1.78 | "Desfaz" sem nada recente | "Não há nada recente para desfazer…" (não cai no modelo) | ✅ | 14/10 |
 
@@ -198,7 +198,7 @@ Sem você pedir, no tick de 15 min, em duas janelas: **manhã 9–11h** e **noit
 | 1.83 | "Recebi o salário" (já recebido no mês) | "Salário já está marcado como recebido." | ✅ | 14/10 celular |
 | 1.84 | "Recebi o salário" (ainda não recebido) | "Marco Salário como recebido: R$ …. Isso entra no seu livre de hoje." → sim marca e diz o livre; desfaz volta | ✅ | ciclo real no mês seguinte (`pagamentoTeste`/`recebimentoTeste`): marcou, repetiu sem mudar, desmarcou |
 | 1.85 | "Muda a margem para 500" → sim | confirma "de R$ 300,00 para R$ 500,00"; grava; "quanto posso aportar" já usa a margem nova; desfaz restaura | ✅ | 14/10 celular |
-| 1.86 | "Taxa de 1% ao mês" · "reserva alvo de 8 meses" · "pausa o rebalanceamento até janeiro de 2027" · "retoma o rebalanceamento" | cada um confirma e grava; taxa fora de 0–5% é recusada | ⏳ | teste automático |
+| 1.86 | "Taxa de 1% ao mês" · "reserva alvo de 8 meses" · "pausa o rebalanceamento até janeiro de 2027" · "retoma o rebalanceamento" | cada um confirma e grava; taxa fora de 0–5% é recusada | ⚠️ parcial | 14/10 celular: margem confirmada (muda, grava, desfaz); taxa, reserva-alvo e pausa por teste automático |
 | 1.87 | "Minha meta é viagem, 20 mil, até 2028" → sim | confirma nome, valor e ano; "como estão minhas metas" mostra o progresso | ✅ | 14/10 celular (meta de teste, apagada em seguida) |
 | 1.88 | "Muda a meta viagem para 25 mil até 2029" → sim | "Confirma mudar a meta … de R$ 20.000,00 até 2028 para R$ 25.000,00 até 2029?" — acha por nome parcial, não duplica | ✅ | 14/10 celular |
 | 1.89 | "Apaga a meta viagem" → sim | confirma e apaga; depois "você ainda não cadastrou metas"; desfaz traz de volta | ✅ | 14/10 celular |

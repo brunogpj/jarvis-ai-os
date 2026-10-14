@@ -1066,6 +1066,28 @@ function _rotaSemantica(mensagem, email, isOwner, opts) {
         navegar:          { what: 'Pedir para IR / traçar rota até um lugar, ou dizer só um endereço ou nome de lugar esperando que ele abra o caminho.',
                             not_for: 'Perguntar onde fica algo sem pedir o caminho, ou abrir um aplicativo — isso é nenhuma.',
                             examples: ['para Rua Professor Edésio 105', 'ir para o Carrefour do Ouro Preto', 'me leva pra casa', 'direções para o trabalho'] },
+        // ── CONTROLES DO CELULAR (14/10) — a regex só pega "pausa/pula/volume" literais; "dá uma pausada no vídeo", "tá baixo demais" iam ao
+        // modelo (20 a 160 s). Sem argumento a extrair (só o nível do volume, em pergunta própria): o JEV só diz QUAL comando. Ação → limiar 0,85.
+        midia_pausar:     { what: 'Pedir para PAUSAR ou parar o que está tocando (música, vídeo, podcast).',
+                            not_for: 'Tocar uma música/artista específico, abrir um app, ou mexer no volume — isso é nenhuma ou volume.',
+                            examples: ['para essa música', 'dá uma pausada no vídeo', 'chega de música por agora'] },
+        midia_tocar:      { what: 'RETOMAR o que estava pausado (dar play, continuar tocando).',
+                            not_for: 'Pedir uma música, artista ou playlist específica — isso é nenhuma.',
+                            examples: ['continua a música', 'pode despausar', 'volta a tocar'] },
+        midia_proxima:    { what: 'Pular para a PRÓXIMA faixa ou música.',
+                            examples: ['pula essa', 'próxima', 'troca de música'] },
+        midia_anterior:   { what: 'Voltar para a faixa ANTERIOR.',
+                            examples: ['volta a música', 'coloca a que estava antes', 'a anterior'] },
+        volume:           { what: 'MUDAR o volume do celular (aumentar, diminuir, deixar no mudo ou num nível).',
+                            not_for: 'Perguntar qual é o volume atual, ou pedir música — isso é nenhuma.',
+                            examples: ['abaixa o som', 'tá baixo demais, sobe', 'deixa no mudo', 'coloca o volume no médio'] },
+        lanterna:         { what: 'Ligar ou desligar a LANTERNA do celular.',
+                            not_for: 'Perguntar se está ligada — isso é nenhuma.',
+                            examples: ['acende a luz do celular', 'apaga a lanterna', 'preciso de uma luz aqui'] },
+        naoperturbe_ligar:    { what: 'ATIVAR o modo não perturbe (parar de ser incomodado por notificações e chamadas).',
+                                examples: ['não quero ser incomodado', 'ativa o não perturbe', 'entrei em reunião, silencia as notificações'] },
+        naoperturbe_desligar: { what: 'DESATIVAR o modo não perturbe (voltar a receber avisos).',
+                                examples: ['pode voltar a me avisar', 'tira o não perturbe', 'acabou a reunião, libera as notificações'] },
         nenhuma:          { what: 'Qualquer outra coisa: conversa, pergunta geral, pedido de ação, redação, busca na web, criar/mudar compromisso, e-mail específico, WhatsApp.',
                             examples: ['manda oi pro Douglas', 'explica o que é RAG', 'marca reunião amanhã às 10', 'lê o e-mail do banco'] }
       }
@@ -1084,6 +1106,12 @@ function _rotaSemantica(mensagem, email, isOwner, opts) {
       criteria: { voucher: 'Voucher / alimentação / refeição.',
                   mobilidade: 'Mobilidade / transporte / combustível.',
                   ambas: 'As duas, ou ele não especificou.' }
+    },
+    nivel_volume: {
+      type: 'choice',
+      instructions: 'SUPONDO que o pedido seja MUDAR o volume do celular: para qual nível ele quer?',
+      criteria: { mudo: 'Mudo / silenciar / zerar.', baixo: 'Mais baixo / diminuir / abaixar.', medio: 'Nível médio / metade.', alto: 'Mais alto / aumentar / subir / máximo.',
+                  indefinido: 'Não dá para saber o nível pelo pedido.' }
     },
     periodo_agenda: {
       type: 'choice',
@@ -1139,13 +1167,13 @@ function _rotaSemantica(mensagem, email, isOwner, opts) {
   var pFin = (r.answers && r.answers.financas && typeof r.answers.financas.noul === 'number') ? r.answers.financas.noul : 0;
   // DIAGNÓSTICO: devolve o julgamento cru, SEM executar nenhum handler (usado por ler_debug.rotaJev para medir o acerto).
   if (opts.diag) return { intencao: intencao, conf: isFinite(conf) ? Math.round(conf * 1000) / 1000 : null, financas: Math.round(pFin * 1000) / 1000,
-                          args: { periodo_livre: arg0('periodo_livre'), periodo_venc: arg0('periodo_venc'), foco_invest: arg0('foco_invest'), dia_folga: arg0('dia_folga') } };
+                          args: { periodo_livre: arg0('periodo_livre'), periodo_venc: arg0('periodo_venc'), foco_invest: arg0('foco_invest'), dia_folga: arg0('dia_folga'), nivel_volume: arg0('nivel_volume') } };
   function arg0(id) { var x = r.answers && r.answers[id]; return (x && x.type === 'choice') ? x.choice : null; }
 
   // Interruptor das intenções novas (caderneta, folga, repetir briefing, rota): ROTA_JEV_NOVAS=nao devolve null para elas,
   // como se o JEV não as conhecesse. Serve para medir o acerto na produção (ler_debug.rotaJev) antes de ligar.
-  if (/^(cad_|repetir_briefing$|folga_ponto$|navegar$)/.test(intencao) && String(p.getProperty('ROTA_JEV_NOVAS') || 'sim').toLowerCase() === 'nao') return null;
-  var _acoes = { turno_definir: 1, folga_ponto: 1, navegar: 1, repetir_briefing: 1 };
+  if (/^(cad_|repetir_briefing$|folga_ponto$|navegar$|midia_|volume$|lanterna$|naoperturbe_)/.test(intencao) && String(p.getProperty('ROTA_JEV_NOVAS') || 'sim').toLowerCase() === 'nao') return null;
+  var _acoes = { turno_definir: 1, folga_ponto: 1, navegar: 1, repetir_briefing: 1, midia_pausar: 1, midia_tocar: 1, midia_proxima: 1, midia_anterior: 1, volume: 1, lanterna: 1, naoperturbe_ligar: 1, naoperturbe_desligar: 1 };
   var limite = _acoes[intencao] ? limA : limL;
   var _semIntencao = (intencao === 'nenhuma' || !isFinite(conf) || conf < limite);
   if (_semIntencao) {
@@ -1232,6 +1260,27 @@ function _rotaSemantica(mensagem, email, isOwner, opts) {
       var _fr = (_canc && _canc.remover) ? definirFolgaPonto({ dias: _canc.dias, remover: true })
         : definirFolgaPonto({ dias: _df === 'ambos' ? ['hoje', 'amanha'] : [_df] });
       resp = (_fr && _fr.ok) ? _fr.resumo : null;
+    } else if (/^(midia_|volume$|lanterna$|naoperturbe_)/.test(intencao)) {
+      // Controles nativos do aparelho: só por voz (no chat o dono não está com o celular na mão). Mesmos comandos e mesmas frases da regex de _ctl.
+      if (opts.canal !== 'voz' || typeof Jarvis === 'undefined' || !Jarvis.controlarDispositivo) return null;
+      var _CTL_JEV = {
+        midia_pausar:  { args: { acao: 'midia', comando: 'pausar' }, resp: 'Pausando a mídia.' },
+        midia_tocar:   { args: { acao: 'midia', comando: 'tocar' }, resp: 'Retomando a mídia.' },
+        midia_proxima: { args: { acao: 'midia', comando: 'proxima' }, resp: 'Próxima faixa.' },
+        midia_anterior: { args: { acao: 'midia', comando: 'anterior' }, resp: 'Voltando para a faixa anterior.' },
+        lanterna:      { args: { acao: 'lanterna' }, resp: 'Alternando a lanterna.' },
+        naoperturbe_ligar:    { args: { acao: 'naoperturbe', estado: 'on' }, resp: 'Não perturbe ativado.' },
+        naoperturbe_desligar: { args: { acao: 'naoperturbe', estado: 'off' }, resp: 'Não perturbe desativado.' }
+      };
+      var _cj = _CTL_JEV[intencao];
+      if (intencao === 'volume') {
+        var _nv = arg('nivel_volume', 'indefinido');
+        if (_nv === 'indefinido') return null;   // sem nível claro → o modelo pergunta
+        _cj = { args: { acao: 'volume', nivel: _nv }, resp: 'Volume ' + (_nv === 'mudo' ? 'no mudo' : _nv) + '.' };
+      }
+      if (!_cj) return null;
+      var _rcj = Jarvis.controlarDispositivo(_cj.args);
+      resp = (_rcj && _rcj.status === 'success') ? _cj.resp : ('Não consegui agora: ' + ((_rcj && _rcj.erro) || 'falha no envio ao celular') + '.');
     } else if (intencao === 'navegar') {
       if (opts.canal !== 'voz' || typeof Jarvis === 'undefined' || !Jarvis.controlarDispositivo) return null;
       var _dest = _destinoDoPedido(msg);
@@ -3108,7 +3157,7 @@ function doPost(e) {
       var _PERMITIDAS_CF = {
         FALA_PROATIVA_LOCAL: /^(sim|nao)$/, FALA_RESPOSTAS_LOCAL: /^(sim|nao)$/,
         MODO_FALA_VOZ: /^(nuvem|auto|local)$/, FALA_VOLUME_DB: /^(1[0-6]|[0-9])$/,
-        FALA_FORMATO: /^(ogg|wav)$/, FALA_ARQUIVO_UNICO: /^(sim|nao)$/, ROTA_JEV_NOVAS: /^(sim|nao)$/, FERRAMENTAS_JEV: /^(nao|adiciona|sim)$/, INJECAO_JEV: /^(sim|nao)$/, ACAO_JEV: /^(sim|nao)$/, CATEGORIA_JEV: /^(sim|nao)$/, FERRAMENTAS_JEV_ADD: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE: /^0?\.\d{1,2}$/, CONFIRMA_JEV: /^(sim|nao)$/, FIN_AVISOS_ATIVO: /^(sim|nao)$/, FIN_NOME_DONO: /^[a-zà-ÿ ]{3,80}$/, FIN_CPF_DONO: /^\d{3}\.\d{3}$/,
+        FALA_FORMATO: /^(ogg|wav)$/, FALA_ARQUIVO_UNICO: /^(sim|nao)$/, ROTA_JEV_NOVAS: /^(sim|nao)$/, FERRAMENTAS_JEV: /^(nao|adiciona|sim)$/, INJECAO_JEV: /^(sim|nao)$/, ACAO_JEV: /^(sim|nao)$/, CATEGORIA_JEV: /^(sim|nao)$/, FERRAMENTAS_JEV_ADD: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE: /^0?\.\d{1,2}$/, CONFIRMA_JEV: /^(sim|nao)$/, MONITOR_GMAIL_JEV: /^(sim|nao)$/, MONITOR_GMAIL_JEV_CORTE: /^0?\.\d{1,2}$/, FIN_AVISOS_ATIVO: /^(sim|nao)$/, FIN_NOME_DONO: /^[a-zà-ÿ ]{3,80}$/, FIN_CPF_DONO: /^\d{3}\.\d{3}$/,
         // consultor (fase 4): margem na conta (R$), taxa ao mês (decimal), reserva-alvo (meses) e pausa do rebalanceamento (data)
         CONSULTOR_MARGEM: /^\d{1,6}$/, CONSULTOR_TAXA_MES: /^0?\.\d{1,4}$/, CONSULTOR_RESERVA_ALVO: /^\d{1,2}$/, CONSULTOR_PAUSA_ATE: /^\d{4}-\d{2}-\d{2}$/, CONSULTOR_AVISO_ATIVO: /^(sim|nao)$/, CONSULTOR_AVISO_MIN: /^\d{1,6}$/
       };
@@ -4054,6 +4103,14 @@ function doPost(e) {
           saida.acaoJev = body.acaoJev.slice(0, 30).map(function (rs) {
             try { var o = Jarvis._hookAcaoSemFonte(String(rs), {}); return { resposta: String(rs).slice(0, 80), marcou: o !== String(rs) }; } catch (eAj) { return { resposta: String(rs).slice(0, 60), erro: eAj.message }; }
           });
+        }
+        // Triagem do monitor de Gmail: o que o JEV descartaria como ruído e o que avisaria, SEM chamar o Gemini nem notificar. Itens {de, assunto, trecho}. Máx. 5.
+        if (body.triagemGmail && Array.isArray(body.triagemGmail)) {
+          try {
+            var _cfgM = (typeof Monitor !== 'undefined' && Monitor.status) ? Monitor.status() : {};
+            var _trg = Monitor.triar(body.triagemGmail.slice(0, 5), _cfgM);
+            saida.triagemGmail = { objetivo: _cfgM.acao || null, avisaria: _trg.relevantes.map(function (n) { return n.assunto; }), descartaria: _trg.descartados, ms: _trg.ms };
+          } catch (eTg) { saida.triagemGmail = { erro: eTg.message }; }
         }
         // Categoria de gasto: lista de palavras primeiro, JEV só para o que ela não conhece. Máx. 30 lugares.
         if (body.categoriaJev && Array.isArray(body.categoriaJev)) {

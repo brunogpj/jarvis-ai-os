@@ -25,7 +25,7 @@ Projeto Google Apps Script gerenciado localmente via clasp.
 
 | Deployment ID | Versão | Descrição |
 |---|---|---|
-| `<DEPLOYMENT_ID>` | **@502** | **ATIVA** — "JEV: injeção, ação inventada, categoria de gasto" |
+| `<DEPLOYMENT_ID>` | **@503** | **ATIVA** — "JEV: controles do celular no roteador e triagem do monitor de Gmail" |
 | `<DEPLOYMENT_ID>` | @25 | Antiga — "TesteJobs" |
 | `<DEPLOYMENT_ID>` | @HEAD | Cabeça (muda a cada push, não é a de produção) |
 
@@ -391,7 +391,14 @@ fluxo normal. Frases de mais de 12 palavras e "desfaz" não vão ao JEV. Evento 
 nota defensiva de sempre. (b) Resultado de `lerPagina`/`lerEmail`: ganha o campo `aviso_seguranca`; o texto não é alterado. Medido: 12/12. Nunca bloqueia; evento `hook:injecao_conteudo`.
 5. **Anti-ação-inventada** (`ACAO_JEV`): pós-hook que generaliza o da agenda. Resposta curta com verbo de ação feita ("enviei", "agendei", "registrei") em turno SEM ferramenta bem-sucedida:
 o JEV confirma se ela afirma ter executado algo (≥ 0,85) e então recebe o aviso "essa ação NÃO foi executada". Medido: 10/10. Evento `hook:acao_sem_fonte`.
-Diagnósticos: `ler_debug` com `ferramentasJev`, `injecaoJev:[textos]`, `acaoJev:[respostas]`, `categoriaJev:[lugares]` (nada é executado).
+6. **Controles do celular no roteador** (mesmo interruptor `ROTA_JEV_NOVAS`): `midia_pausar`, `midia_tocar`, `midia_proxima`, `midia_anterior`, `volume` (nível numa pergunta própria: mudo/baixo/médio/alto;
+"indefinido" não age), `lanterna`, `naoperturbe_ligar`/`_desligar`. A regex de `_ctl` só pega "pausa/pula/volume" literais; "chega de música por agora", "tá alto demais", "preciso de uma luz aqui" iam ao modelo (20 a 160 s).
+Agora o JEV só diz QUAL comando e o código chama `controlarDispositivo` com os mesmos argumentos e as mesmas frases da regex. Ação: limiar 0,85, só por voz; falha do celular é dita ("Não consegui agora"), nunca afirmada.
+Medido em 33 frases: 20 de 23 positivas agiram (as 3 abaixo de 0,85 seguem para o modelo), 0 falso positivo em 10 controles ("toca Legião Urbana", "abre o spotify", "a lanterna está ligada?"). Evento `rota:jev:<intenção>`.
+7. **Triagem do monitor de Gmail** (`Monitor.triar`, `MONITOR_GMAIL_JEV`, corte `MONITOR_GMAIL_JEV_CORTE` 0,15): os e-mails novos passam por UMA requisição ao JEV ("merece avisar o dono, dado o objetivo do monitor?"). Newsletter,
+promoção e vaga genérica (JEV ≤ 0,15) não gastam o Gemini nem geram notificação; na dúvida avisa; sem chave/rede nada é descartado; o corte de tempo avança mesmo quando tudo é ruído. Medido: 4 ruídos descartados de 10
+e-mails, todos os relevantes mantidos (boleto, colega, alerta de segurança, escola, Pix). Evento `monitor:triagem`; `ler_debug` com `triagemGmail:[{de,assunto,trecho}]` mostra sem avisar.
+Diagnósticos: `ler_debug` com `ferramentasJev`, `injecaoJev:[textos]`, `acaoJev:[respostas]`, `categoriaJev:[lugares]`, `triagemGmail` (nada é executado).
 
 **Fila de falas** (`controlarDispositivo('falar')`): a fala nova espera a anterior
 acabar, **fora do lock**, em passos de 15 s, até 110 s. A duração vem do áudio (WAV

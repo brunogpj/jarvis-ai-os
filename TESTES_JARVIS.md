@@ -187,6 +187,26 @@ Sem você pedir, no tick de 15 min, em duas janelas: **manhã 9–11h** e **noit
 | 1.77 | "Paguei a fatura" (mais de uma aberta) | "Achei mais de uma… Diga o nome completo" | ⏳ | |
 | 1.78 | "Desfaz" sem nada recente | "Não há nada recente para desfazer…" (não cai no modelo) | ✅ | 14/10 |
 
+### 1f-g. 📈 Aplicação, saldo de investimento, salário, ajuste do consultor, metas e "desfaz" com log 🗣️🔑
+
+| # | Diga | Esperado | Status | Obs. |
+|---|---|---|---|---|
+| 1.79 | "Apliquei 500 no cofrinho" (mais de um cofrinho) | "Achei mais de um: … Diga qual." | ✅ | teste automático |
+| 1.80 | "Apliquei 500 no cofrinho economia" → "sim" | repete "Confirma a aplicação de R$ 500,00 em <investimento>, hoje? Isso sai do seu livre." → grava a Aplicação, diz o livre novo e avisa que o saldo do investimento não mudou | ✅ | 14/10 celular: R$ 0,01 no CDB; livre 117,18 → 117,17 |
+| 1.81 | "Resgatei 300 do CDB" | "Confirma o resgate… Isso volta para o seu livre." | ✅ | teste automático |
+| 1.82 | "Atualiza o saldo do CDB para 20.800" | "Atualizo o saldo de CDB Plus de R$ … para R$ … (mais R$ …)? Diga sim ou não." (mudança > 30% avisa); sim troca; desfaz devolve saldo e data | ✅ | 14/10 celular: proposta conferida e cancelada com "não"; ciclo completo no Worker por teste |
+| 1.83 | "Recebi o salário" (já recebido no mês) | "Salário já está marcado como recebido." | ✅ | 14/10 celular |
+| 1.84 | "Recebi o salário" (ainda não recebido) | "Marco Salário como recebido: R$ …. Isso entra no seu livre de hoje." → sim marca e diz o livre; desfaz volta | ✅ | ciclo real no mês seguinte (`pagamentoTeste`/`recebimentoTeste`): marcou, repetiu sem mudar, desmarcou |
+| 1.85 | "Muda a margem para 500" → sim | confirma "de R$ 300,00 para R$ 500,00"; grava; "quanto posso aportar" já usa a margem nova; desfaz restaura | ✅ | 14/10 celular |
+| 1.86 | "Taxa de 1% ao mês" · "reserva alvo de 8 meses" · "pausa o rebalanceamento até janeiro de 2027" · "retoma o rebalanceamento" | cada um confirma e grava; taxa fora de 0–5% é recusada | ⏳ | teste automático |
+| 1.87 | "Minha meta é viagem, 20 mil, até 2028" → sim | confirma nome, valor e ano; "como estão minhas metas" mostra o progresso | ✅ | 14/10 celular (meta de teste, apagada em seguida) |
+| 1.88 | "Muda a meta viagem para 25 mil até 2029" → sim | "Confirma mudar a meta … de R$ 20.000,00 até 2028 para R$ 25.000,00 até 2029?" — acha por nome parcial, não duplica | ✅ | 14/10 celular |
+| 1.89 | "Apaga a meta viagem" → sim | confirma e apaga; depois "você ainda não cadastrou metas"; desfaz traz de volta | ✅ | 14/10 celular |
+| 1.90 | "O que você registrou?" | lista as últimas três ações com a hora | ✅ | 14/10 celular |
+| 1.91 | "Desfaz" depois de mais de 10 minutos | "A última ação foi há X: <o que foi>. Desfaço? Diga sim ou não." — só o sim desfaz | ✅ | 14/10 celular, cadeia de 4 desfaz até limpar tudo |
+| 1.92 | "Desfaz" com o registro vazio ou com mais de 3 dias | "Não há nada para desfazer nos últimos 3 dias…" | ✅ | teste automático |
+| 1.93 | Paráfrases do consultor pelo JEV: "como anda a minha carteira", "dá pra aportar alguma coisa esse mês", "a reserva já bateu o alvo", "estou no caminho da aposentadoria" | mesma resposta da regra, sem Gemini | ✅ | `rotaJev`: 19/19 positivas, 0 falso positivo em 11 controles |
+
 ### 1g. 🔔 Notificações do celular 🗣️
 
 | # | O que conferir | Esperado | Status | Obs. |

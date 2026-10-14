@@ -9,7 +9,8 @@ var DADOS = {
   mes: '2026-10', hoje: '2026-10-14', livreHoje: 117.18, livreFim: 480.5, aPagar: 645.53,
   obrigacoes: [{ nome: 'Fatura Itaú Click', tipo: 'fatura', dia: 19, valor: 387.57, pago: false, outroPaga: false }],
   orcamentos: [], mercado: { total: 960.59, noVoucher: 960.59, outros: 0, n: 10 },
-  investimentos: { total: 31477.82, liquidezDiaria: 25259.91 }, reservaMeses: 11.48
+  investimentos: { total: 31477.82, liquidezDiaria: 25259.91, porCategoria: { 'Renda fixa': 20759.91, 'Liquidez/Reserva': 4500, 'Tesouro Direto': 3986.36, 'FIIs': 2231.55 } }, reservaMeses: 11.48,
+  metaAlocacao: { 'Renda fixa': 60, 'Tesouro Direto': 20, 'FIIs': 15, 'Liquidez/Reserva': 5 }
 };
 
 /** JEV simulado: escolhe `intencao` com `conf`; extras = respostas das perguntas de argumento; pFin = noul da rede de segurança. */
@@ -28,7 +29,7 @@ function sandbox(resposta, props) {
                           return { code: 404, body: {} };
                         } });
   s.__cmds = [];
-  loadGasFile('TypeSafe.js', s); loadGasFile('AlertasVoz.js', s); loadGasFile('Financas.js', s); loadGasFile('Code.js', s);
+  loadGasFile('TypeSafe.js', s); loadGasFile('AlertasVoz.js', s); loadGasFile('Consultor.js', s); loadGasFile('Financas.js', s); loadGasFile('Code.js', s);
   s.Utilities.formatDate = function (d, tz, p) { var x = new Date(d.getTime() - 3 * 3600e3), z = function (n) { return (n < 10 ? '0' : '') + n; };
     return String(p).replace('yyyy', x.getUTCFullYear()).replace('MM', z(x.getUTCMonth() + 1)).replace('dd', z(x.getUTCDate())).replace(/^H$/, String(x.getUTCHours())).replace(/^m$/, String(x.getUTCMinutes())).replace(/^u$/, String(x.getUTCDay() || 7)); };
   s.Jarvis.controlarDispositivo = function (a) { s.__cmds.push(a); return { status: 'success' }; };
@@ -194,4 +195,24 @@ test('definirFolgaPonto remover: tira só o dia pedido e responde de acordo', fu
   assert.strictEqual(r.ok, true); assert.strictEqual(r.folgas.join(), '2099-01-02'); assert.ok(/tirei a folga/.test(r.resumo));
   assert.strictEqual(s.PropertiesService.getScriptProperties().getProperty('PONTO_FOLGAS'), '2099-01-02');
   assert.ok(/Não havia folga/.test(s.definirFolgaPonto({ dias: ['2099-03-03'], remover: true }).resumo));
+});
+
+test('JEV → consultor: carteira, aporte, reserva contra o alvo e metas chegam ao Consultor (número do código)', function () {
+  var casos = [
+    [jev('cad_carteira', 0.92), /Sua carteira soma R\$ 31\.477,82/],
+    [jev('cad_aporte', 0.92), /Pela previsão do fim do mês/],
+    [jev('cad_reserva_alvo', 0.92), /O alvo é de 6 meses/],
+    [jev('cad_metas', 0.92), /ainda não cadastrou metas/]
+  ];
+  casos.forEach(function (c) {
+    var s = sandbox(c[0]);
+    var r = s._rotaSemantica('pergunta qualquer', DONO, true, { canal: 'voz' });
+    assert.match(String(r), c[1]);
+    assert.ok(/^cad_/.test(s._ROTA_ULTIMA), 'conta como resposta financeira (log mascarado)');
+  });
+});
+
+test('JEV → consultor: o interruptor ROTA_JEV_NOVAS=nao também desliga as intenções do consultor', function () {
+  var s = sandbox(jev('cad_carteira', 0.99), { ROTA_JEV_NOVAS: 'nao' });
+  assert.strictEqual(s._rotaSemantica('como anda a carteira', DONO, true, { canal: 'voz' }), null);
 });

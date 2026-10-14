@@ -1039,6 +1039,18 @@ function _rotaSemantica(mensagem, email, isOwner, opts) {
         cad_investido:    { what: 'Perguntar quanto ele tem INVESTIDO / de patrimônio, ou quantos meses de RESERVA de emergência tem.',
                             not_for: 'Pedir uma ideia ou conselho de investimento, ou explicar um conceito — isso é nenhuma.',
                             examples: ['quanto eu tenho investido', 'como está meu patrimônio', 'quantos meses de reserva eu tenho'] },
+        cad_carteira:     { what: 'Perguntar COMO ESTÁ a distribuição / composição da carteira de investimentos contra o alvo da estratégia, ou se está equilibrada.',
+                            not_for: 'Só o total investido ou os meses de reserva — isso é cad_investido; pedir uma ideia ou conselho de produto — isso é nenhuma.',
+                            examples: ['como está minha carteira', 'minha carteira está equilibrada', 'o que está abaixo do alvo na carteira'] },
+        cad_aporte:       { what: 'Perguntar QUANTO ele pode APORTAR / investir este mês e/ou ONDE colocar esse aporte, segundo a estratégia.',
+                            not_for: 'Quanto já tem investido — isso é cad_investido; simulação com número e prazo ("se eu aportar 500 por 5 anos") — isso é nenhuma; ideia de investimento — nenhuma.',
+                            examples: ['quanto dá pra aportar esse mês', 'onde eu coloco o aporte do mês', 'posso investir alguma coisa agora'] },
+        cad_reserva_alvo: { what: 'Perguntar se a RESERVA de emergência está SUFICIENTE contra o alvo em meses, ou quanto falta / sobra para o alvo.',
+                            not_for: 'Só quantos meses de reserva tem — isso é cad_investido.',
+                            examples: ['minha reserva está suficiente', 'quanto falta pra reserva ideal', 'a reserva já bateu o alvo'] },
+        cad_metas:        { what: 'Perguntar como estão as METAS dele (casa própria, aposentadoria): progresso, quanto falta, quanto precisa aportar.',
+                            not_for: 'Cadastrar, mudar ou apagar uma meta — isso é nenhuma.',
+                            examples: ['como estão minhas metas', 'quanto falta pra casa própria', 'estou no caminho da aposentadoria'] },
         repetir_briefing: { what: 'Pedir para REPETIR ou refazer o briefing (resumo falado do dia) que ele não ouviu, que cortou ou que parou no meio.',
                             not_for: 'Configurar, criar ou mudar o horário de um briefing — isso é nenhuma.',
                             examples: ['repete o briefing', 'não ouvi o briefing', 'o briefing cortou no meio', 'fala o resumo do dia de novo'] },
@@ -1191,6 +1203,10 @@ function _rotaSemantica(mensagem, email, isOwner, opts) {
       else if (intencao === 'cad_falta_pagar') _cq = { tipo: 'falta_pagar' };
       else if (intencao === 'cad_mercado') _cq = { tipo: 'orcamento' };
       else if (intencao === 'cad_investido') _cq = { tipo: arg('foco_invest', 'investido') === 'reserva' ? 'reserva' : 'investido' };
+      else if (intencao === 'cad_carteira') _cq = { tipo: 'carteira' };
+      else if (intencao === 'cad_aporte') _cq = { tipo: 'aporte' };
+      else if (intencao === 'cad_reserva_alvo') _cq = { tipo: 'reserva_alvo' };
+      else if (intencao === 'cad_metas') _cq = { tipo: 'metas' };
       resp = _cq ? Financas.responder(_cq) : null;
     } else if (intencao === 'repetir_briefing') {
       // Só por voz: gasta uma síntese de voz (~R$ 0,08). No chat, o dono não está ouvindo o celular.
@@ -4067,6 +4083,15 @@ function doPost(e) {
               saida.pagamentoTeste = { mes: _mesP, nome: _it.nome, marcou: _pp(true), repetiu: _pp(true), desmarcou: _pp(false), desmarcouDeNovo: _pp(false) };
             }
           } catch (ePt) { saida.pagamentoTeste = { erro: ePt.message }; }
+          // idem para uma RECEITA FIXA (salário…): marca como recebida no mês seguinte e desmarca
+          try {
+            var _rr = Financas.resumo(_mesP), _rc = _rr.ok ? (_rr.dados.receitas || []).filter(function (o) { return !o.recebido; })[0] : null;
+            if (!_rc) { saida.recebimentoTeste = { mes: _mesP, achou: false }; }
+            else {
+              var _pr = function (pago) { return Financas._postBruto('/api/jarvis/pagamento', { mes: _mesP, chave: _rc.chave, pago: pago }); };
+              saida.recebimentoTeste = { mes: _mesP, nome: _rc.nome, marcou: _pr(true), repetiu: _pr(true), desmarcou: _pr(false) };
+            }
+          } catch (eRc) { saida.recebimentoTeste = { erro: eRc.message }; }
         }
         if (body.ensaioBriefing) { try { saida.ensaioBriefing = diagBriefingTexto({ tag: String(body.ensaioBriefing) }); } catch (eEb) { saida.ensaioBriefing = { erro: eEb.message }; } }
         return ContentService.createTextOutput(JSON.stringify(saida)).setMimeType(ContentService.MimeType.JSON);

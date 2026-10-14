@@ -205,7 +205,7 @@ test('meta por voz: propõe com nome, valor e ano; o sim grava; desfaz restaura;
 
 test('"desfaz" seco sem nada recente responde que não há o que desfazer (não vai para o modelo)', function () {
   var s = sb();
-  assert.ok(/Não há nada recente para desfazer/.test(J(s.Financas.conversar('desfaz')).resp));
-  assert.ok(/Não há nada recente para desfazer/.test(J(s.Financas.conversar('desfazer')).resp));
+  assert.ok(/Não há nada para desfazer/.test(J(s.Financas.conversar('desfaz')).resp));
+  assert.ok(/Não há nada para desfazer/.test(J(s.Financas.conversar('desfazer')).resp));
   assert.strictEqual(s.Financas.conversar('desfaz aquele calendário todo que eu criei ontem'), null, 'frase longa de outro assunto segue o fluxo normal');
 });

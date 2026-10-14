@@ -18,7 +18,8 @@ function makeSandbox(o) {
       getScriptProperties: function () {
         return {
           getProperty: function (k) { return (k in props) ? props[k] : null; },
-          setProperty: function (k, v) { props[k] = String(v); }
+          setProperty: function (k, v) { props[k] = String(v); },
+          deleteProperty: function (k) { delete props[k]; }
         };
       }
     },

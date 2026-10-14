@@ -555,7 +555,45 @@ var Financas = (function () {
     return r.ok ? { ok: true, removido: Number(r.dados.removido) || 0 } : { ok: false, erro: r.erro };
   }
   /** O Code.js chama isto depois de registrar um gasto vindo de notificação, para o "desfaz" valer também para ele. */
-  function guardarDesfazer(u) { _cachePut('fin_ultima_acao', u, DESFAZ_MIN * 60); }
+  // LOG DE AÇÕES DESFAZÍVEIS (14/10). Antes o "desfaz" morria com o cache, em 10 min. Agora cada ação que grava na caderneta deixa um registro em
+  // Script Property (até 20, por 3 dias). Dentro de 10 minutos o "desfaz" é direto; depois, o Jarvis diz O QUE foi e HÁ QUANTO TEMPO e pergunta
+  // antes de desfazer (a recarga ainda pode ser desfeita no Worker por 72 h). Nada de dado financeiro além do que a própria ação precisa para desfazer.
+  var LOG_DIAS = 3, LOG_MAX = 20;
+  function _lerLog() { try { var l = JSON.parse(_p('FIN_LOG_ACOES') || '[]'); return Array.isArray(l) ? l : []; } catch (e) { return []; } }
+  function _gravarLog(l) { try { PropertiesService.getScriptProperties().setProperty('FIN_LOG_ACOES', JSON.stringify(l)); } catch (e) {} }
+  function _logRecente() { var corte = Date.now() - LOG_DIAS * 86400000; return _lerLog().filter(function (x) { return x && x.em >= corte && x.tipo; }); }
+  function _ultimaAcao() { var l = _logRecente(); return l.length ? l[l.length - 1] : null; }
+  function _tirarDoLog(em) { _gravarLog(_lerLog().filter(function (x) { return x.em !== em; })); }
+  function _quando(em) {
+    var min = Math.max(0, Math.round((Date.now() - em) / 60000));
+    if (min < 60) return 'há ' + min + (min === 1 ? ' minuto' : ' minutos');
+    var h = Math.round(min / 60);
+    if (h < 24) return 'há ' + h + (h === 1 ? ' hora' : ' horas');
+    var d = Math.round(h / 24);
+    return 'há ' + d + (d === 1 ? ' dia' : ' dias');
+  }
+  function _descAcao(u) {
+    var v = u.valor != null ? _brl(u.valor) : '';
+    switch (u.tipo) {
+      case 'gasto': return 'o gasto de ' + v + (u.descricao ? ' em ' + u.descricao : '');
+      case 'receita': return 'a receita de ' + v + (u.descricao ? ' de ' + nomeCurto(u.descricao) : '');
+      case 'recarga': return 'a recarga de ' + (u.referencia ? _mesFalado(u.referencia) : 'um mês');
+      case 'pagar': return 'o pagamento de ' + (u.nome || 'uma conta');
+      case 'receber': return 'o recebimento de ' + (u.nome || 'uma receita');
+      case 'meta': return 'a alteração da meta ' + (u.nome || '');
+      case 'aplicar': return (u.mov === 'Resgate' ? 'o resgate de ' : 'a aplicação de ') + v + (u.descricao ? ' em ' + u.descricao : '');
+      case 'saldoInvest': return 'a atualização do saldo de ' + (u.nome || 'um investimento');
+      case 'consultor': return 'o ajuste ' + (u.rotulo || 'do consultor');
+      default: return 'a última ação';
+    }
+  }
+  /** Registra uma ação desfazível (as ações novas e o Code.js, para o gasto que veio de notificação do banco). */
+  function guardarDesfazer(u) {
+    u.em = Date.now(); u.desc = _descAcao(u);
+    var l = _logRecente(); l.push(u);
+    if (l.length > LOG_MAX) l = l.slice(l.length - LOG_MAX);
+    _gravarLog(l);
+  }
 
   var _MEIOS_FALADOS = [
     // [regex, meio do app, rótulo falado, carteira]
@@ -772,42 +810,284 @@ var Financas = (function () {
   function _lerMetas() { try { var m = JSON.parse(_p('CONSULTOR_METAS') || '[]'); return Array.isArray(m) ? m : []; } catch (e) { return []; } }
   function _gravarMetas(m) { try { PropertiesService.getScriptProperties().setProperty('CONSULTOR_METAS', JSON.stringify(m)); return true; } catch (e) { return false; } }
 
+  // Criar ("minha meta é casa própria, 150 mil, até 2030"), EDITAR ("muda a meta casa para 180 mil", "a meta casa agora é até 2032") e APAGAR
+  // ("apaga a meta casa"), sempre com confirmação. A meta existente é achada pelas palavras do nome, então "casa" acha "Casa própria".
+  var _LIGA_META = { 'é': 1, e: 1, eh: 1, de: 1, da: 1, do: 1, seria: 1, para: 1, pra: 1, a: 1, o: 1, uma: 1, um: 1, em: 1, por: 1, ate: 1, 'até': 1, agora: 1, que: 1, valor: 1, prazo: 1, ano: 1, anos: 1, mil: 1, milhao: 1, milhoes: 1, 'milhão': 1, 'milhões': 1, minha: 1, meu: 1 };
+  function _acharMeta(s, metas) {
+    var depois = s.split(/\bmeta\b/).slice(1).join(' ');
+    var q = depois.replace(/[0-9.,]+/g, ' ').split(/\s+/).filter(function (t) { return t.length > 2 && !_LIGA_META[t]; });
+    return metas.filter(function (m) {
+      var ti = _norm(m.nome).split(' ').filter(function (t) { return t.length > 2; });
+      return q.some(function (qq) { return ti.some(function (t) { return _tokenCasa(qq, t); }); });
+    });
+  }
+  function _valorEAno(s) {
+    var ano = s.match(/\b(20\d{2})\b/);
+    var nums = Consultor.numerosFalados(s).filter(function (n) { return !(ano && String(n.valor) === ano[1]); });
+    var anos = s.match(/\bem (\d+) anos?\b/);
+    var valor = nums.length ? nums.slice().sort(function (a, b) { return b.valor - a.valor; })[0].valor : null;
+    var anoAlvo = ano ? ano[1] : (anos ? String(Number(Utilities.formatDate(new Date(), TZ, 'yyyy')) + Number(anos[1])) : '');
+    return { valor: valor, ano: anoAlvo };
+  }
+
   ACOES.meta = {
     propor: function (msg) {
       var s = _norm(msg);
-      if (!/\b(minha meta|nova meta|defin\w* (a |uma )?meta|cadastr\w* (a |uma )?meta|meta (e|eh|seria))\b/.test(s)) return null;
-      if (typeof Consultor === 'undefined' || /\b(quanto falta|como estou|quais)\b/.test(s)) return null;
-      var ano = s.match(/\b(20\d{2})\b/);
-      var nums = Consultor.numerosFalados(s).filter(function (n) { return !(ano && String(n.valor) === ano[1]); });
-      var anos = s.match(/\bem (\d+) anos?\b/);
-      if (!nums.length) return null;
-      var valor = nums.slice().sort(function (a, b) { return b.valor - a.valor; })[0].valor;
-      var anoAlvo = ano ? ano[1] : (anos ? String(Number(Utilities.formatDate(new Date(), TZ, 'yyyy')) + Number(anos[1])) : '');
+      if (typeof Consultor === 'undefined' || /\b(quanto falta|como estou|quais|como estao)\b/.test(s)) return null;
+      var remover = /\b(apag\w+|remov\w+|exclu\w+|delet\w+|tire|tira)\b.*\bmeta\b/.test(s);
+      var editar = !remover && /\b(muda\w*|alter\w*|ajust\w*|atualiz\w*|troc\w*|corrig\w*)\b.*\bmeta\b/.test(s);
+      var criar = !remover && !editar && /\b(minha meta|nova meta|defin\w* (a |uma )?meta|cadastr\w* (a |uma )?meta|meta (e|eh|seria))\b/.test(s);
+      if (!remover && !editar && !criar) return null;
+      var metas = _lerMetas();
+
+      if (remover || editar) {
+        var casam = _achar_meta_seguro(s, metas);
+        if (!casam.length) return { resp: metas.length ? 'Não achei essa meta. Você tem: ' + metas.map(function (m) { return m.nome; }).join(', ') + '.' : 'Você não tem metas cadastradas.' };
+        if (casam.length > 1) return { resp: 'Achei mais de uma: ' + casam.map(function (m) { return m.nome; }).join(', ') + '. Diga o nome completo.' };
+        var m0 = casam[0];
+        if (remover) return { pend: { tipo: 'meta', acao: 'remover', nome: m0.nome }, resp: 'Confirma apagar a meta ' + m0.nome + ' (' + _brl(m0.alvo) + ' até ' + m0.ate + ')? Diga sim ou não.' };
+        var ve = _valorEAno(s);
+        if ((ve.valor === null || ve.valor < 1000) && !ve.ano) return { resp: 'Diga o novo valor ou o novo ano da meta ' + m0.nome + ', por exemplo: muda a meta ' + m0.nome.toLowerCase() + ' para 180 mil até 2031.' };
+        var novoAlvo = (ve.valor !== null && ve.valor >= 1000) ? Math.round(ve.valor) : m0.alvo, novoAte = ve.ano || m0.ate;
+        if (novoAlvo > 100000000) return { resp: 'Esse valor passa de cem milhões. Diga um valor menor.' };
+        return { pend: { tipo: 'meta', acao: 'editar', nome: m0.nome, alvo: novoAlvo, ate: novoAte },
+                 resp: 'Confirma mudar a meta ' + m0.nome + ' de ' + _brl(m0.alvo) + ' até ' + m0.ate + ' para ' + _brl(novoAlvo) + ' até ' + novoAte + '? Diga sim ou não.' };
+      }
+
+      var v = _valorEAno(s);
+      if (v.valor === null) return null;
       var bruto = String(msg || '').toLowerCase().split(/\bmeta\b/).slice(1).join(' meta ').split(/\d/)[0];
       // (\b do JavaScript não enxerga "é" como letra: por isso o filtro é por palavra inteira, não por regex)
-      var _liga = { 'é': 1, e: 1, eh: 1, de: 1, da: 1, do: 1, seria: 1, para: 1, pra: 1, a: 1, o: 1, uma: 1, um: 1, em: 1, por: 1, ate: 1, 'até': 1 };
-      var nome = bruto.replace(/[,;:]/g, ' ').split(/\s+/).filter(function (t) { return t && !_liga[t]; }).join(' ');
-      if (!(valor >= 1000) || !anoAlvo || nome.length < 3) {
+      var nome = bruto.replace(/[,;:]/g, ' ').split(/\s+/).filter(function (t) { return t && !_LIGA_META[t]; }).join(' ');
+      if (!(v.valor >= 1000) || !v.ano || nome.length < 3) {
         return { resp: 'Para cadastrar uma meta, diga o nome, o valor e o ano, por exemplo: minha meta é casa própria, 150 mil, até 2030.' };
       }
-      if (valor > 100000000) return { resp: 'Esse valor passa de cem milhões. Diga um valor menor.' };
+      if (v.valor > 100000000) return { resp: 'Esse valor passa de cem milhões. Diga um valor menor.' };
       nome = nome.charAt(0).toUpperCase() + nome.slice(1);
-      var p = { tipo: 'meta', nome: nome.slice(0, 40), alvo: Math.round(valor), ate: anoAlvo };
+      var p = { tipo: 'meta', acao: 'criar', nome: nome.slice(0, 40), alvo: Math.round(v.valor), ate: v.ano };
       return { pend: p, resp: 'Confirma a meta ' + p.nome + ': ' + _brl(p.alvo) + ' até ' + p.ate + '? Diga sim ou não.' };
     },
     executar: function (p) {
-      var antes = _lerMetas();
-      var depois = antes.filter(function (m) { return _norm(m.nome) !== _norm(p.nome); });
-      depois.push({ nome: p.nome, alvo: p.alvo, ate: p.ate });
-      if (depois.length > 5) depois = depois.slice(depois.length - 5);
+      var antes = _lerMetas(), depois;
+      if (p.acao === 'remover') {
+        depois = antes.filter(function (m) { return _norm(m.nome) !== _norm(p.nome); });
+      } else {
+        depois = antes.filter(function (m) { return _norm(m.nome) !== _norm(p.nome); });
+        depois.push({ nome: p.nome, alvo: p.alvo, ate: p.ate });
+        if (depois.length > 5) depois = depois.slice(depois.length - 5);
+      }
       if (!_gravarMetas(depois)) return { resp: 'Não consegui gravar a meta agora. Não mudei nada.' };
-      return { resp: 'Cadastrei a meta ' + p.nome + ': ' + _brl(p.alvo) + ' até ' + p.ate + '. Pergunte "como estão minhas metas" quando quiser. Para desfazer, diga desfaz.',
-               desfazer: { tipo: 'meta', antes: antes, nome: p.nome } };
+      var frase = p.acao === 'remover' ? 'Apaguei a meta ' + p.nome + '.'
+        : (p.acao === 'editar' ? 'Mudei a meta ' + p.nome + ' para ' + _brl(p.alvo) + ' até ' + p.ate + '.' : 'Cadastrei a meta ' + p.nome + ': ' + _brl(p.alvo) + ' até ' + p.ate + '. Pergunte "como estão minhas metas" quando quiser.');
+      return { resp: frase + ' Para desfazer, diga desfaz.', desfazer: { tipo: 'meta', antes: antes, nome: p.nome } };
     },
     desfazer: function (u) {
       return _gravarMetas(u.antes || []) ? 'Desfeito: a meta ' + u.nome + ' voltou ao que era.' : 'Não consegui desfazer a meta.';
     }
   };
+  function _achar_meta_seguro(s, metas) { try { return _acharMeta(s, metas); } catch (e) { return []; } }
+
+  // ── RECEBI O SALÁRIO (receita fixa marcada como recebida) — com confirmação ────────────────────────────────────────
+  // Mesmo check do app ("recebido"): o valor passa a contar no livre de hoje. Só receitas fixas que EXISTEM na caderneta; "recebi 450 da Maria"
+  // (receita extra) segue o fluxo da receita extra. Ambígua pede o nome; já recebida não marca de novo.
+  ACOES.receber = {
+    propor: function (msg) {
+      var s = _norm(msg).replace(/[?]/g, '');
+      if (!/\b(recebi|caiu|cairam|entrou|chegou|recebido)\b/.test(s)) return null;
+      if (/\b(quanto|qual|quais|quando|voucher|vale|swile|mobilidade|recarga|pix|rendimento)\b/.test(s)) return null;
+      var q = _tokensConta(msg);
+      if (!q.length) return null;
+      var r = resumo();
+      if (!r.ok || !r.dados || !r.dados.receitas) return null;
+      var casam = r.dados.receitas.filter(function (o) {
+        var ti = _tokensConta(o.nome);
+        return q.some(function (qq) { return ti.some(function (t) { return _tokenCasa(qq, t); }); });
+      });
+      if (!casam.length) return null;   // não é uma receita fixa: deixa a receita extra ou o modelo
+      var abertas = casam.filter(function (o) { return !o.recebido; });
+      if (!abertas.length) return { resp: casam[0].nome + ' já está marcado como recebido.' };
+      if (abertas.length > 1) return { resp: 'Achei mais de uma: ' + abertas.slice(0, 3).map(function (o) { return o.nome; }).join(', ') + '. Diga o nome completo da que você recebeu.' };
+      var o = abertas[0];
+      var dito = _numerosSimples(msg).match(/(\d+(?:\.\d+)?)/);
+      var aviso = (dito && Number(o.valor) > 0 && Math.abs(Number(dito[1]) - Number(o.valor)) / Number(o.valor) > 0.01)
+        ? ' Você falou ' + _brl(Number(dito[1])) + ', mas na caderneta está ' + _brl(o.valor) + '.' : '';
+      var p = { tipo: 'receber', mes: r.dados.mes, chave: o.chave, nome: o.nome, valor: o.valor };
+      return { pend: p, resp: 'Marco ' + o.nome + ' como recebido: ' + _brl(o.valor) + '.' + aviso + ' Isso entra no seu livre de hoje. Diga sim ou não.' };
+    },
+    executar: function (p) {
+      var x = _post('/api/jarvis/pagamento', { mes: p.mes, chave: p.chave, pago: true });
+      if (!x.ok) return { resp: 'Não consegui marcar como recebido agora. Não mudei nada; tente de novo daqui a pouco.' };
+      if (!x.dados.mudou) return { resp: p.nome + ' já estava marcado como recebido.' };
+      var r = resumo(), livre = (r.ok && r.dados && r.dados.livreHoje != null) ? ' Seu livre hoje agora é ' + _brl(r.dados.livreHoje) + (Number(r.dados.livreHoje) < 0 ? ' negativo' : '') + '.' : '';
+      return { resp: 'Marquei ' + p.nome + ' como recebido.' + livre + ' Para desfazer, diga desfaz.', desfazer: { tipo: 'receber', mes: p.mes, chave: p.chave, nome: p.nome } };
+    },
+    desfazer: function (u) {
+      var x = _post('/api/jarvis/pagamento', { mes: u.mes, chave: u.chave, pago: false });
+      return (x.ok && x.dados.mudou) ? 'Desfeito: ' + u.nome + ' voltou a ficar como não recebido.' : 'Não consegui desfazer. Ajuste na caderneta.';
+    }
+  };
+
+  // ── APLICAÇÃO / RESGATE e SALDO DE INVESTIMENTO por voz — com confirmação ─────────────────────────────────────────
+  // "Apliquei 500 no cofrinho" lança uma Aplicação (o dinheiro sai do livre). NÃO mexe no saldo do investimento: esse ele atualiza do extrato, com
+  // "atualiza o saldo do CDB para 20.800" (outro comando, também confirmado). Assim o mesmo dinheiro nunca é contado duas vezes.
+  var _PARADAS_INV = /^(apliquei|investi|aportei|guardei|joguei|coloquei|resgatei|saquei|tirei|atualiza\w*|atualize|saldo|agora|esta|estao|para|pra|ficou|virou|eh|em|no|na|nos|nas|do|da|de|dos|das|o|a|os|as|um|uma|reais?|real|hoje|ontem|meu|minha|valor|que|e|com|por|pelo|pela|aplicacao|investimento|investimentos)$/;
+  function _acharInvestimento(msg, itens) {
+    var q = _norm(msg).replace(/[^a-z0-9 ]/g, ' ').split(' ').filter(function (t) { return t.length > 2 && !/^\d/.test(t) && !_PARADAS_INV.test(t); });
+    if (!q.length || !itens || !itens.length) return { achados: [], q: q };
+    var pont = itens.map(function (i) {
+      var ti = _norm([i.nome, i.instituicao, i.categoria].join(' ')).replace(/[^a-z0-9 ]/g, ' ').split(' ').filter(function (t) { return t.length > 2; });
+      var n = q.filter(function (qq) { return ti.some(function (t) { return _tokenCasa(qq, t); }); }).length;
+      return { i: i, n: n };
+    }).filter(function (x) { return x.n > 0; });
+    if (!pont.length) return { achados: [], q: q };
+    var max = Math.max.apply(null, pont.map(function (x) { return x.n; }));
+    return { achados: pont.filter(function (x) { return x.n === max; }).map(function (x) { return x.i; }), q: q };
+  }
+  function _valorDaFrase(msg) {
+    if (typeof Consultor === 'undefined') return null;
+    var nums = Consultor.numerosFalados(_norm(msg).replace(/(\d)\s*r\$|r\$\s*/g, '$1 '));
+    return nums.length ? nums[0].valor : null;
+  }
+
+  ACOES.aplicar = {
+    propor: function (msg) {
+      var s = _norm(msg).replace(/[?]/g, '');
+      var aplic = /\b(apliquei|investi|aportei|guardei|joguei)\b/.test(s);
+      var resg = /\b(resgatei|saquei)\b/.test(s) || (/\btirei\b/.test(s) && /\b(cofrinho|investimento|cdb|tesouro|aplicacao|fii)\b/.test(s));
+      if (!aplic && !resg) return null;
+      if (/\b(quanto|qual|quais|quando|onde)\b/.test(s)) return null;
+      var valor = _valorDaFrase(msg);
+      if (!(valor > 0)) return null;
+      if (valor > 1000000) return { resp: 'Esse valor passa de um milhão. Registre direto na caderneta.' };
+      var r = resumo();
+      var itens = (r.ok && r.dados && r.dados.investimentos && r.dados.investimentos.itens) || [];
+      var ach = _acharInvestimento(msg, itens);
+      var onde;
+      var _nomeExato = false;
+      if (ach.achados.length === 1) { onde = ach.achados[0].nome; _nomeExato = true; }
+      else if (ach.achados.length > 1) return { resp: 'Achei mais de um: ' + ach.achados.slice(0, 3).map(function (i) { return i.nome; }).join(', ') + '. Diga qual.' };
+      else {
+        // destino que não é um investimento da caderneta: fica como ele disse (com acento), sem verbos e sem número
+        onde = String(msg || '').split(/\s+/).filter(function (t) {
+          var n = _norm(t).replace(/[^a-z0-9]/g, '');
+          return n && !/^\d/.test(n) && !_PARADAS_INV.test(n);
+        }).slice(0, 4).join(' ').replace(/[.,;:!?]+$/, '');
+      }
+      if (!onde && aplic) onde = '';
+      var p = { tipo: 'aplicar', mov: resg ? 'Resgate' : 'Aplicação', valor: Math.round(valor * 100) / 100, descricao: onde ? (_nomeExato ? onde : nomeCurto(onde)) : '',
+                dias: /\bontem\b/.test(s) ? 1 : 0, id: Utilities.getUuid().replace(/-/g, '').slice(0, 12) };
+      return { pend: p, resp: (valor >= 5000 ? 'Esse valor é alto. ' : '') + 'Confirma ' + (resg ? 'o resgate' : 'a aplicação') + ' de ' + _brl(p.valor) + (p.descricao ? (resg ? ' de ' : ' em ') + p.descricao : '') +
+        ', ' + (p.dias === 1 ? 'ontem' : 'hoje') + '? ' + (resg ? 'Isso volta para o seu livre.' : 'Isso sai do seu livre.') + ' Diga sim ou não.' };
+    },
+    executar: function (p) {
+      var x = _post('/api/jarvis/aplicacao', { chave: p.id, tipo: p.mov, data: _dataGasto(p.dias || 0), valor: p.valor, descricao: p.descricao });
+      if (!x.ok) return { resp: 'Não consegui registrar agora. Não gravei nada; tente de novo daqui a pouco.' };
+      var r = resumo(), livre = (r.ok && r.dados && r.dados.livreHoje != null) ? ' Seu livre hoje agora é ' + _brl(r.dados.livreHoje) + (Number(r.dados.livreHoje) < 0 ? ' negativo' : '') + '.' : '';
+      return { resp: 'Registrei ' + (p.mov === 'Resgate' ? 'o resgate' : 'a aplicação') + ' de ' + _brl(p.valor) + (p.descricao ? (p.mov === 'Resgate' ? ' de ' : ' em ') + p.descricao : '') + '.' + livre +
+               ' O saldo do investimento não mudou; atualize com o extrato. Para desfazer, diga desfaz.',
+               desfazer: { tipo: 'aplicar', mov: p.mov, chave: p.id, valor: p.valor, descricao: p.descricao } };
+    },
+    desfazer: function (u) {
+      var x = _post('/api/jarvis/aplicacao/desfazer', { chave: u.chave });
+      return (x.ok && Number(x.dados.removido) > 0) ? 'Desfeito: tirei ' + (u.mov === 'Resgate' ? 'o resgate' : 'a aplicação') + ' de ' + _brl(u.valor) + '.' : 'Não consegui desfazer. Ajuste na caderneta.';
+    }
+  };
+
+  ACOES.saldoInvest = {
+    propor: function (msg) {
+      var s = _norm(msg).replace(/[?]/g, '');
+      if (/\b(quanto|qual|quais|quando|onde)\b/.test(s)) return null;
+      if (!(/\batualiz\w*\b/.test(s) || (/\bsaldo\b/.test(s) && /\b(agora|esta em|ficou|virou|eh de|e de|para)\b/.test(s)))) return null;
+      var valor = _valorDaFrase(msg);
+      if (!(valor >= 0) || valor === null) return null;
+      var r = resumo();
+      var itens = (r.ok && r.dados && r.dados.investimentos && r.dados.investimentos.itens) || [];
+      var ach = _acharInvestimento(msg, itens);
+      if (!ach.achados.length) return null;   // não é um investimento da caderneta ("saldo do voucher" etc. seguem as outras rotas)
+      if (ach.achados.length > 1) return { resp: 'Achei mais de um: ' + ach.achados.slice(0, 3).map(function (i) { return i.nome; }).join(', ') + '. Diga o nome completo.' };
+      var i = ach.achados[0], novo = Math.round(valor * 100) / 100, antes = Number(i.saldo) || 0, dif = novo - antes;
+      var grande = antes > 0 && Math.abs(dif) / antes > 0.3;
+      var p = { tipo: 'saldoInvest', id: i.id, nome: i.nome, antes: antes, novo: novo };
+      return { pend: p, resp: (grande ? 'A mudança é grande. ' : '') + 'Atualizo o saldo de ' + i.nome + ' de ' + _brl(antes) + ' para ' + _brl(novo) + ' (' + (dif >= 0 ? 'mais ' : 'menos ') + _brl(Math.abs(dif)) + ')? Diga sim ou não.' };
+    },
+    executar: function (p) {
+      var x = _post('/api/jarvis/investimento', { id: p.id, saldo: p.novo });
+      if (!x.ok) return { resp: 'Não consegui atualizar o saldo agora. Não mudei nada.' };
+      return { resp: 'Atualizei o saldo de ' + p.nome + ' para ' + _brl(x.dados.depois) + '. Para desfazer, diga desfaz.', desfazer: { tipo: 'saldoInvest', id: p.id, nome: p.nome, antes: x.dados.antes, atualizadoAntes: x.dados.atualizadoAntes || null, valor: x.dados.depois } };
+    },
+    desfazer: function (u) {
+      var x = _post('/api/jarvis/investimento', { id: u.id, saldo: u.antes, atualizado: u.atualizadoAntes || undefined });
+      return x.ok ? 'Desfeito: o saldo de ' + u.nome + ' voltou para ' + _brl(u.antes) + '.' : 'Não consegui desfazer. Ajuste na caderneta.';
+    }
+  };
+
+  // ── AJUSTAR O CONSULTOR por voz ("muda a margem para 500", "taxa de 1% ao mês", "retoma o rebalanceamento") — com confirmação ───────────
+  var _CFG_CONSULTOR = {
+    margem:  { chave: 'CONSULTOR_MARGEM',       rotulo: 'da margem',          padrao: '300',   fmt: function (v) { return _brl(Number(v)); } },
+    taxa:    { chave: 'CONSULTOR_TAXA_MES',     rotulo: 'da taxa mensal',     padrao: '0.008', fmt: function (v) { return String(Math.round(Number(v) * 10000) / 100).replace('.', ',') + '% ao mês'; } },
+    reserva: { chave: 'CONSULTOR_RESERVA_ALVO', rotulo: 'da reserva-alvo',    padrao: '6',     fmt: function (v) { return v + ' meses'; } },
+    pausa:   { chave: 'CONSULTOR_PAUSA_ATE',    rotulo: 'da pausa do rebalanceamento', padrao: '', fmt: function (v) { return v ? 'até ' + _mesFalado(String(v).slice(0, 7)) : 'sem pausa'; } }
+  };
+  ACOES.consultor = {
+    propor: function (msg) {
+      var s = _norm(msg).replace(/[?]/g, '');
+      if (/\b(quanto|qual|quais|como esta|esta em)\b/.test(s)) return null;
+      var campo = null, valor = null;
+      var mn = s.match(/\b(\d+(?:[.,]\d+)?)\b/);
+      if (/\b(muda\w*|alter\w*|ajust\w*|defin\w*|coloc\w*|troc\w*|use|usa)\b/.test(s) && /\bmargem\b/.test(s) && mn) { campo = 'margem'; valor = String(Math.round(Number(mn[1].replace(',', '.')))); }
+      else if (/\btaxa\b/.test(s) && /\b(muda\w*|alter\w*|ajust\w*|defin\w*|coloc\w*|troc\w*|use|usa|de)\b/.test(s) && /%|por cento/.test(s) && mn) {
+        var t = Number(mn[1].replace(',', '.')) / 100;
+        if (!(t >= 0 && t <= 0.05)) return { resp: 'A taxa mensal precisa ficar entre zero e cinco por cento.' };
+        campo = 'taxa'; valor = String(Math.round(t * 10000) / 10000);
+      }
+      else if (/\breserva\b/.test(s) && /\b(alvo|ideal|meta)\b/.test(s) && /\b(muda\w*|alter\w*|ajust\w*|defin\w*|coloc\w*|troc\w*|de|para)\b/.test(s) && mn) {
+        var mm = Number(mn[1]);
+        if (!(mm >= 1 && mm <= 36)) return { resp: 'A reserva-alvo precisa ficar entre 1 e 36 meses.' };
+        campo = 'reserva'; valor = String(Math.round(mm));
+      }
+      else if (/\b(retom\w+|reativ\w+|volt\w+|tire a pausa|tira a pausa|sem pausa)\b/.test(s) && /\brebalanc\w+\b/.test(s)) { campo = 'pausa'; valor = ''; }
+      else if (/\b(paus\w+|suspend\w+|segur\w+)\b/.test(s) && /\brebalanc\w+\b/.test(s)) {
+        var ym = null, nomes = ['janeiro', 'fevereiro', 'marco', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+        var ano = s.match(/\b(20\d{2})\b/);
+        for (var k = 0; k < 12; k++) if (new RegExp('\\b' + nomes[k] + '\\b').test(s)) ym = k + 1;
+        if (!ym || !ano) return { resp: 'Diga até quando, por exemplo: pausa o rebalanceamento até janeiro de 2027.' };
+        campo = 'pausa'; valor = ano[1] + '-' + (ym < 10 ? '0' : '') + ym + '-01';
+      }
+      if (!campo) return null;
+      var def = _CFG_CONSULTOR[campo], atual = _p(def.chave);
+      if (atual === null || atual === undefined || atual === '') atual = def.padrao;
+      var p = { tipo: 'consultor', campo: campo, valor: valor, antes: _p(def.chave) };
+      return { pend: p, resp: 'Confirma mudar o valor ' + def.rotulo + ' do consultor de ' + def.fmt(atual) + ' para ' + def.fmt(valor === '' ? '' : valor) + '? Diga sim ou não.' };
+    },
+    executar: function (p) {
+      var def = _CFG_CONSULTOR[p.campo];
+      try {
+        var sp = PropertiesService.getScriptProperties();
+        if (p.valor === '') sp.deleteProperty(def.chave); else sp.setProperty(def.chave, p.valor);
+      } catch (e) { return { resp: 'Não consegui gravar o ajuste agora. Não mudei nada.' }; }
+      return { resp: 'Ajustei o valor ' + def.rotulo + ': ' + def.fmt(p.valor === '' ? '' : p.valor) + '. Para desfazer, diga desfaz.', desfazer: { tipo: 'consultor', campo: p.campo, antes: p.antes, rotulo: def.rotulo } };
+    },
+    desfazer: function (u) {
+      var def = _CFG_CONSULTOR[u.campo];
+      try {
+        var sp = PropertiesService.getScriptProperties();
+        if (u.antes === null || u.antes === undefined || u.antes === '') sp.deleteProperty(def.chave); else sp.setProperty(def.chave, u.antes);
+      } catch (e) { return 'Não consegui desfazer o ajuste.'; }
+      return 'Desfeito: o valor ' + def.rotulo + ' voltou ao que era.';
+    }
+  };
+
+  // "Desfaz" depois dos 10 minutos: o Jarvis disse o que foi e há quanto tempo; o "sim" executa por aqui.
+  ACOES.desfazer_antigo = {
+    propor: function () { return null; },
+    executar: function (p) {
+      var e = _lerLog().filter(function (x) { return x.em === p.em; })[0];
+      if (!e || !ACOES[e.tipo]) return { resp: 'Essa ação já não está mais no registro. Ajuste na caderneta.' };
+      _tirarDoLog(e.em);
+      return { resp: ACOES[e.tipo].desfazer(e) };
+    }
+  };
+  var ORDEM_ACOES = ['recarga', 'receber', 'gasto', 'receita', 'pagar', 'aplicar', 'saldoInvest', 'consultor', 'meta'];
 
   var _SIM = /^(sim|isso|isso mesmo|confirmo|confirma|confirmado|pode|pode registrar|pode confirmar|pode gravar|esta certo|ta certo|certo|correto|exato|positivo|com certeza|claro)\b/;
   var _NAO = /^(nao|negativo|cancela|cancelar|cancelado|deixa|deixa pra la|esquece|errado|nao precisa|para|pare)\b/;
@@ -846,7 +1126,7 @@ var Financas = (function () {
           var acao = ACOES[pend.tipo];
           if (!acao) return null;
           var out = acao.executar(pend);
-          if (out.desfazer) _cachePut('fin_ultima_acao', out.desfazer, DESFAZ_MIN * 60);
+          if (out.desfazer) guardarDesfazer(out.desfazer);
           return { resp: out.resp };
         }
         if (_NAO.test(s)) { _cacheDel('fin_pendente'); return { resp: 'Certo, não registrei nada.' }; }
@@ -859,18 +1139,29 @@ var Financas = (function () {
           _cacheDel('fin_pend_entrada');
           if (catR) pe.categoria = catR;
           var outR = ACOES.receita.executar(pe);
-          if (outR.desfazer) _cachePut('fin_ultima_acao', outR.desfazer, DESFAZ_MIN * 60);
+          if (outR.desfazer) guardarDesfazer(outR.desfazer);
           return { resp: outR.resp };
         }
         if (_NAO.test(s)) { _cacheDel('fin_pend_entrada'); return { resp: 'Certo, não registrei a receita.' }; }
       }
-      var ult = _cacheGet('fin_ultima_acao');
-      if (/^(desfaz|desfazer|desfaca|volta atras|(cancela|apaga|tira|remove) (a recarga|o gasto|esse gasto|o ultimo gasto|a receita))\b/.test(s)) {
-        if (ult && ACOES[ult.tipo]) { _cacheDel('fin_ultima_acao'); return { resp: ACOES[ult.tipo].desfazer(ult) }; }
-        if (/recarga|gasto|receita|meta|pagamento/.test(s) || s.split(' ').length <= 2) return { resp: 'Não há nada recente para desfazer. Passou dos ' + DESFAZ_MIN + ' minutos, ajuste na caderneta.' };
+      var ult = _ultimaAcao();
+      if (/^(desfaz|desfazer|desfaca|volta atras|(cancela|apaga|tira|remove) (a recarga|o gasto|esse gasto|o ultimo gasto|a receita|o pagamento|a aplicacao))\b/.test(s)) {
+        if (ult && ACOES[ult.tipo]) {
+          // dentro de 10 min o desfaz é direto; depois, diz o que foi e há quanto tempo e pergunta antes
+          if (Date.now() - ult.em <= DESFAZ_MIN * 60000) { _tirarDoLog(ult.em); return { resp: ACOES[ult.tipo].desfazer(ult) }; }
+          _cachePut('fin_pendente', { tipo: 'desfazer_antigo', em: ult.em }, PEND_S);
+          return { resp: 'A última ação foi ' + _quando(ult.em) + ': ' + (ult.desc || 'uma ação') + '. Desfaço? Diga sim ou não.' };
+        }
+        if (/recarga|gasto|receita|meta|pagamento|aplicacao/.test(s) || s.split(' ').length <= 2) return { resp: 'Não há nada para desfazer nos últimos ' + LOG_DIAS + ' dias. Ajuste direto na caderneta.' };
         return null;   // (um "desfaz" seco NÃO pode cair no modelo: em 14/10 ele respondeu "ação cancelada, não registrei nada" sem saber de que ação falava)
       }
-      var tipos = Object.keys(ACOES);
+      // "o que você registrou?" — as últimas ações, com a hora
+      if (/\b(ultimas? acoes?|ultimos? (lancamentos?|registros?)|o que (voce )?(registrou|lancou|anotou|gravou))\b/.test(s) && !/\b(desfaz\w*|apag\w*)\b/.test(s)) {
+        var rec = _logRecente().slice(-3).reverse();
+        if (!rec.length) return { resp: 'Não registrei nada na caderneta nos últimos ' + LOG_DIAS + ' dias.' };
+        return { resp: 'Das últimas ações: ' + rec.map(function (x) { return x.desc + ', ' + _quando(x.em); }).join('; ') + '.' };
+      }
+      var tipos = ORDEM_ACOES.filter(function (k) { return ACOES[k] && ACOES[k].propor; });
       for (var i = 0; i < tipos.length; i++) {
         var pr = ACOES[tipos[i]].propor(msg);
         if (!pr) continue;

@@ -25,7 +25,7 @@ Projeto Google Apps Script gerenciado localmente via clasp.
 
 | Deployment ID | Versão | Descrição |
 |---|---|---|
-| `<DEPLOYMENT_ID>` | **@487** | **ATIVA** — "consultor (fase 4), conta paga por voz, meta por voz" |
+| `<DEPLOYMENT_ID>` | **@488** | **ATIVA** — "salário recebido, aplicação e saldo de investimento, ajuste do consultor, metas editar/apagar, consultor via JEV, desfaz com log de 3 dias" |
 | `<DEPLOYMENT_ID>` | @25 | Antiga — "TesteJobs" |
 | `<DEPLOYMENT_ID>` | @HEAD | Cabeça (muda a cada push, não é a de produção) |
 
@@ -315,6 +315,28 @@ mexer no mês atual: `ler_debug` com `pagamentoTeste:true` (marca/desmarca no m�
 
 **"Desfaz" seco nunca vai para o modelo** (ele respondeu "ação cancelada" sem saber de quê): sem nada recente, diz que não há o que desfazer.
 
+**Mais ações por voz na caderneta (14/10), todas no molde propor → "sim" → "desfaz"** (`ORDEM_ACOES` em `Financas.js`):
+- **Salário recebido** ("recebi o salário", "caiu o salário"): marca a receita fixa como recebida (`resumo.receitas[].chave` = `r:<id>`, mesmo check do app,
+  entra no livre de hoje) por `POST /api/jarvis/pagamento` (que agora aceita `r:` para receitas que existem). Já recebida não marca; "recebi 450 da Maria"
+  segue como receita extra.
+- **Aplicação e resgate** ("apliquei 500 no cofrinho", "resgatei 300 do CDB"): acha o investimento pelo nome (`resumo.investimentos.itens`), ambíguo pede qual,
+  e lança uma Aplicação/Resgate do mês (`POST /api/jarvis/aplicacao`, id `ap_`; o dinheiro sai ou volta para o livre). **Não mexe no saldo do investimento**
+  (ele atualiza do extrato), para o mesmo dinheiro não ser contado duas vezes. Destino fora da lista fica como ele disse.
+- **Saldo de investimento** ("atualiza o saldo do CDB para 20.800"): mostra antes → depois (e avisa se a mudança passa de 30%), o sim troca o saldo de UM
+  investimento que existe (`POST /api/jarvis/investimento`, `src/movimentos.js`); o desfaz devolve saldo E data de atualização de antes.
+- **Ajustar o consultor** ("muda a margem para 500", "taxa de 1% ao mês", "reserva alvo de 8 meses", "pausa o rebalanceamento até janeiro de 2027", "retoma o
+  rebalanceamento"): grava as `CONSULTOR_*` com confirmação; desfaz restaura.
+- **Metas**: criar, **editar** ("muda a meta casa para 180 mil até 2031", acha por nome parcial) e **apagar** ("apaga a meta casa"), com confirmação.
+
+**"Desfaz" com log de 3 dias.** Cada ação que grava deixa um registro em `FIN_LOG_ACOES` (até 20, 3 dias, com a descrição). Dentro de 10 min "desfaz" é direto;
+depois, o Jarvis diz o que foi e há quanto tempo ("A última ação foi há 2 horas: a aplicação de R$ 500,00 em CDB Plus. Desfaço?") e só o "sim" desfaz.
+"O que você registrou" lista as últimas três. O Worker deixa desfazer recarga por 72 h (antes 1 h). Sem nada no registro: "Não há nada para desfazer nos últimos 3 dias".
+
+**Consultor via JEV (14/10).** `cad_carteira`, `cad_aporte`, `cad_reserva_alvo` e `cad_metas` entram no roteador semântico (limiar de leitura 0,70, mesmo interruptor
+`ROTA_JEV_NOVAS`, resposta mascarada no log). Simulação e "em quanto tempo chego a X" ficam só nos padrões (precisam de número). Medido com `rotaJev` em 30
+frases: as 19 positivas (paráfrases de carteira, aporte, reserva, metas e as perguntas de sempre) acertaram; nenhum dos controles ("me dá uma ideia de
+investimento", "devo comprar fundo imobiliário", "qual o melhor investimento pra mim", "minha meta é viajar 20 mil", simulação…) acionou intenção de consultor.
+
 **Fila de falas** (`controlarDispositivo('falar')`): a fala nova espera a anterior
 acabar, **fora do lock**, em passos de 15 s, até 110 s. A duração vem do áudio (WAV
 do Gemini = bytes/48 ms; OGG ≈ 14 caracteres/s; teto 150 s). Antes dormia no
@@ -413,7 +435,7 @@ o histórico. Então:
   genérico no teste do lembrete relativo).
 - O `README.md` é o que um recrutador lê primeiro. O projeto Jarvis no
   LinkedIn e o README do perfil do GitHub citam "147 testes automatizados"
-  (o repo tem 292 desde 14/10 — a frase segue verdadeira como piso);
+  (o repo tem 305 desde 14/10 — a frase segue verdadeira como piso);
   se a contagem mudar muito, avise o dono para atualizar lá também.
 - Nada sobre o empregador nem sobre sistemas internos de trabalho entra aqui.
 
@@ -462,7 +484,7 @@ público").
 cd tests-local && node --test
 ```
 
-292 testes offline (sem cota, sem rede) sobre a lógica determinística: MODO
+305 testes offline (sem cota, sem rede) sobre a lógica determinística: MODO
 DIRETO, gate sem-cota, hooks, parsing de turno/briefing, validação de prefs,
 ordenação dos cards, cadeia da voz, lembrete relativo e alertas de uma vez só,
 `_urlParaMacro`, `lerBiblia`, briefing com dados reais e trava de agenda
@@ -471,7 +493,7 @@ caracteres da voz no briefing e autodiagnóstico sem alarme de app raro
 (`tests-local/dia-0110.test.js`). `tests-local/gas-shims.js` simula as
 APIs do GAS (`formatDate` é fixo: teste que depende de horário injeta o seu).
 `tests-local/jev-caderneta.test.js` cobre o roteador semântico novo (JEV simulado, interruptor, máscara de log).
-Estado em 14/10/2026: **292/292 passando**.
+Estado em 14/10/2026: **305/305 passando** (mais 26 do Worker da caderneta, `npm test` na pasta `app`).
 
 Contra o sistema vivo, pelo terminal: `ler_debug` (POST com `VOICE_API_TOKEN`,
 `n` até 200, `alertas:true`, `notificacoes:N`, `ensaioBriefing:'<tag>'`, `gatilhos:true`,

@@ -72,7 +72,7 @@ test('fluxo completo: propõe repetindo o valor, só o "sim" grava, e dá para d
   var d = J(s.Financas.conversar('desfaz'));
   assert.ok(/Desfeito/.test(d.resp), d.resp);
   assert.strictEqual(s._posts.filter(function (x) { return /desfazer/.test(x.url); }).length, 2);
-  assert.ok(/Não há nada recente/.test(J(s.Financas.conversar('desfaz a recarga')).resp));
+  assert.ok(/Não há nada para desfazer/.test(J(s.Financas.conversar('desfaz a recarga')).resp));
 });
 
 test('"não" descarta sem gravar; frase alheia deixa a proposta quieta; sem proposta, "sim" não é com a caderneta', function () {
@@ -82,7 +82,7 @@ test('"não" descarta sem gravar; frase alheia deixa a proposta quieta; sem prop
   assert.ok(/não registrei nada/.test(J(s.Financas.conversar('não')).resp));
   assert.strictEqual(s._posts.length, 0);
   assert.strictEqual(J(s.Financas.conversar('sim')), null);
-  assert.ok(/Não há nada recente/.test(J(s.Financas.conversar('desfaz')).resp), '"desfaz" seco não cai no modelo');
+  assert.ok(/Não há nada para desfazer/.test(J(s.Financas.conversar('desfaz')).resp), '"desfaz" seco não cai no modelo');
 });
 
 test('proposta expirada (3 min) não grava; ok com "ok sim pode registrar"', function () {
@@ -100,7 +100,7 @@ test('recarga que já existe no mês: não altera e diz o valor que está lá; r
   s.Financas.conversar('caiu 1000 no voucher');
   var r = J(s.Financas.conversar('sim'));
   assert.ok(/Já existe recarga de outubro de R\$ 1\.002,50 no voucher, então não mudei/.test(r.resp), r.resp);
-  assert.ok(/Não há nada recente/.test(J(s.Financas.conversar('desfaz')).resp), 'nada foi criado, nada a desfazer');
+  assert.ok(/Não há nada para desfazer/.test(J(s.Financas.conversar('desfaz')).resp), 'nada foi criado, nada a desfazer');
   var off = sb({ rede: true });
   off.Financas.conversar('caiu 1000 no voucher');
   var f = J(off.Financas.conversar('sim'));

@@ -582,6 +582,7 @@ var Financas = (function () {
       case 'receber': return 'o recebimento de ' + (u.nome || 'uma receita');
       case 'meta': return 'a alteração da meta ' + (u.nome || '');
       case 'aplicar': return (u.mov === 'Resgate' ? 'o resgate de ' : 'a aplicação de ') + v + (u.descricao ? ' em ' + u.descricao : '');
+      case 'aporte': return 'o aporte de ' + v;
       case 'saldoInvest': return 'a atualização do saldo de ' + (u.nome || 'um investimento');
       case 'consultor': return 'o ajuste ' + (u.rotulo || 'do consultor');
       default: return 'a última ação';
@@ -1087,7 +1088,65 @@ var Financas = (function () {
       return { resp: ACOES[e.tipo].desfazer(e) };
     }
   };
-  var ORDEM_ACOES = ['recarga', 'receber', 'gasto', 'receita', 'pagar', 'aplicar', 'saldoInvest', 'consultor', 'meta'];
+  // ── REGISTRAR O APORTE SUGERIDO ("aportei", "fiz o aporte") — com confirmação ─────────────────────────────────────────
+  // O aviso mensal do consultor deixa a sugestão (quanto e onde, por categoria da estratégia). Quando ele diz que aportou, o Jarvis repete a divisão e,
+  // no "sim", lança uma Aplicação por destino. Se ele disser um valor ("aportei 800"), a divisão é refeita na mesma proporção. Sem sugestão guardada,
+  // calcula o plano de agora; se também não sobra nada, pede o valor e o destino. "Aportei 500 no tesouro" (com destino) é a aplicação normal.
+  ACOES.aporte = {
+    propor: function (msg) {
+      var s = _norm(msg).replace(/[?]/g, '');
+      if (!/\b(aportei|fiz (o )?aporte|apliquei o aporte|registr\w+ o aporte|ja aportei|aporte feito)\b/.test(s)) return null;
+      if (/\b(cdb|tesouro|fii|fiis|cofrinho|renda fixa|acoes|poupanca|mercado pago|itau|bolsa|cripto)\b/.test(s)) return null;
+      if (typeof Consultor === 'undefined') return null;
+      var sug = Consultor.sugestaoAporte();
+      if (!sug) {
+        var r = resumo();
+        if (r.ok && r.dados) {
+          var pl = Consultor.plano(r.dados, Consultor.cfg(), r.dados.hoje);
+          if (pl.ok && pl.partes.length) sug = { valor: pl.pode, partes: pl.partes, calculado: true };
+        }
+      }
+      if (!sug) {
+        if (_valorDaFrase(msg)) return null;   // "aportei 500" sem sugestão: é uma aplicação comum, quem trata é a ação de aplicar
+        return { resp: 'Não tenho um aporte sugerido agora. Diga o valor e onde, por exemplo: apliquei 800 no tesouro.' };
+      }
+      var total = sug.partes.reduce(function (t, x) { return t + x.valor; }, 0), dito = _valorDaFrase(msg), partes = sug.partes;
+      if (dito && dito > 0 && Math.abs(dito - total) > 0.01) {
+        var f = dito / total, acum = 0;
+        partes = sug.partes.map(function (x, i) {
+          var v = (i === sug.partes.length - 1) ? Math.round((dito - acum) * 100) / 100 : Math.round(x.valor * f * 100) / 100;
+          acum += v; return { cat: x.cat, valor: v };
+        }).filter(function (x) { return x.valor >= 0.01; });
+        total = dito;
+      }
+      if (total > 1000000) return { resp: 'Esse valor passa de um milhão. Registre direto na caderneta.' };
+      var p = { tipo: 'aporte', partes: partes, total: Math.round(total * 100) / 100, teste: !!sug.teste, id: Utilities.getUuid().replace(/-/g, '').slice(0, 10) };
+      return { pend: p, resp: 'Confirma registrar o aporte de ' + _brl(p.total) + ': ' + partes.map(function (x) { return _brl(x.valor) + ' em ' + (x.cat === 'FIIs' ? 'fundos imobiliários' : String(x.cat).replace(/\s*\/\s*(.)/g, function (m, c) { return ' e ' + c.toLowerCase(); })); }).join(', ') +
+                              ', hoje? Isso sai do seu livre. Diga sim ou não.' };
+    },
+    executar: function (p) {
+      if (p.teste) return { resp: 'Isso foi só o aviso de teste do consultor, então não registrei nada.' };
+      var feitos = [], falhou = false;
+      p.partes.forEach(function (x, i) {
+        var chave = p.id + '_' + i;
+        var r = _post('/api/jarvis/aplicacao', { chave: chave, tipo: 'Aplicação', data: _dataGasto(0), valor: x.valor, descricao: String(x.cat).replace(/\s*\/\s*/g, ' e ') });
+        if (r.ok) feitos.push({ chave: chave, valor: x.valor }); else falhou = true;
+      });
+      if (!feitos.length) return { resp: 'Não consegui registrar o aporte agora. Não gravei nada; tente de novo daqui a pouco.' };
+      try { Consultor.limparSugestao(); } catch (e) {}
+      var r2 = resumo(), livre = (r2.ok && r2.dados && r2.dados.livreHoje != null) ? ' Seu livre hoje agora é ' + _brl(r2.dados.livreHoje) + (Number(r2.dados.livreHoje) < 0 ? ' negativo' : '') + '.' : '';
+      return { resp: (falhou ? 'Registrei só parte do aporte (' + feitos.length + ' de ' + p.partes.length + '); o resto não foi gravado.' : 'Registrei o aporte de ' + _brl(p.total) + ' em ' + feitos.length + (feitos.length === 1 ? ' destino' : ' destinos') + '.') +
+                      livre + ' O saldo dos investimentos não mudou; atualize com o extrato. Para desfazer, diga desfaz.',
+               desfazer: { tipo: 'aporte', chaves: feitos.map(function (x) { return x.chave; }), valor: p.total } };
+    },
+    desfazer: function (u) {
+      var tirados = 0;
+      (u.chaves || []).forEach(function (ch) { var r = _post('/api/jarvis/aplicacao/desfazer', { chave: ch }); if (r.ok && Number(r.dados.removido) > 0) tirados++; });
+      return tirados ? 'Desfeito: tirei o aporte de ' + _brl(u.valor) + ' (' + tirados + (tirados === 1 ? ' lançamento' : ' lançamentos') + ').' : 'Não consegui desfazer. Ajuste na caderneta.';
+    }
+  };
+
+  var ORDEM_ACOES = ['recarga', 'receber', 'gasto', 'receita', 'pagar', 'aporte', 'aplicar', 'saldoInvest', 'consultor', 'meta'];
 
   var _SIM = /^(sim|isso|isso mesmo|confirmo|confirma|confirmado|pode|pode registrar|pode confirmar|pode gravar|esta certo|ta certo|certo|correto|exato|positivo|com certeza|claro)\b/;
   var _NAO = /^(nao|negativo|cancela|cancelar|cancelado|deixa|deixa pra la|esquece|errado|nao precisa|para|pare)\b/;

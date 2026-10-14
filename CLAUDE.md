@@ -25,7 +25,7 @@ Projeto Google Apps Script gerenciado localmente via clasp.
 
 | Deployment ID | Versão | Descrição |
 |---|---|---|
-| `<DEPLOYMENT_ID>` | **@488** | **ATIVA** — "salário recebido, aplicação e saldo de investimento, ajuste do consultor, metas editar/apagar, consultor via JEV, desfaz com log de 3 dias" |
+| `<DEPLOYMENT_ID>` | **@489** | **ATIVA** — "aviso mensal do consultor e registrar o aporte por voz" |
 | `<DEPLOYMENT_ID>` | @25 | Antiga — "TesteJobs" |
 | `<DEPLOYMENT_ID>` | @HEAD | Cabeça (muda a cada push, não é a de produção) |
 
@@ -337,6 +337,15 @@ depois, o Jarvis diz o que foi e há quanto tempo ("A última ação foi há 2 h
 frases: as 19 positivas (paráfrases de carteira, aporte, reserva, metas e as perguntas de sempre) acertaram; nenhum dos controles ("me dá uma ideia de
 investimento", "devo comprar fundo imobiliário", "qual o melhor investimento pra mim", "minha meta é viajar 20 mil", simulação…) acionou intenção de consultor.
 
+**Aviso mensal do consultor e "aportei" (14/10).** `Consultor.verificarAporte`, no tick de 15 min, das 9h às 20h: quando o livre PREVISTO para o fim do mês
+passa da margem (e de `CONSULTOR_AVISO_MIN`, R$ 100), o Jarvis notifica E fala o mesmo texto — quanto dá para aportar e onde, pelo alvo e sem vender nada —
+**uma vez por mês** (`CONSULTOR_AVISO_MES`, gravado ANTES de enviar). Só avisa depois que as receitas fixas do mês foram marcadas como recebidas (a previsão
+conta um salário que ainda não caiu) ou a partir do dia 20. Guarda a sugestão em `FIN_APORTE_SUGERIDO` (3 dias). Quando ele diz **"aportei"** / "fiz o aporte",
+o Jarvis repete a divisão e, no "sim", lança uma Aplicação por destino (`ap_<id>_<n>`); "aportei 800" refaz a divisão na mesma proporção; "aportei 500 no tesouro"
+(com destino) é a aplicação comum; sem sugestão guardada calcula o plano de agora; "desfaz" tira todos os lançamentos do aporte. Interruptor
+`CONSULTOR_AVISO_ATIVO=nao`; `ler_debug` com `consultorAviso:'ensaio'` mostra o que avisaria agora (sem enviar nem gravar) e `'teste'` envia de verdade um aviso
+com números inventados (o "aportei" que se segue não grava nada).
+
 **Fila de falas** (`controlarDispositivo('falar')`): a fala nova espera a anterior
 acabar, **fora do lock**, em passos de 15 s, até 110 s. A duração vem do áudio (WAV
 do Gemini = bytes/48 ms; OGG ≈ 14 caracteres/s; teto 150 s). Antes dormia no
@@ -435,7 +444,7 @@ o histórico. Então:
   genérico no teste do lembrete relativo).
 - O `README.md` é o que um recrutador lê primeiro. O projeto Jarvis no
   LinkedIn e o README do perfil do GitHub citam "147 testes automatizados"
-  (o repo tem 305 desde 14/10 — a frase segue verdadeira como piso);
+  (o repo tem 314 desde 14/10 — a frase segue verdadeira como piso);
   se a contagem mudar muito, avise o dono para atualizar lá também.
 - Nada sobre o empregador nem sobre sistemas internos de trabalho entra aqui.
 
@@ -484,7 +493,7 @@ público").
 cd tests-local && node --test
 ```
 
-305 testes offline (sem cota, sem rede) sobre a lógica determinística: MODO
+314 testes offline (sem cota, sem rede) sobre a lógica determinística: MODO
 DIRETO, gate sem-cota, hooks, parsing de turno/briefing, validação de prefs,
 ordenação dos cards, cadeia da voz, lembrete relativo e alertas de uma vez só,
 `_urlParaMacro`, `lerBiblia`, briefing com dados reais e trava de agenda
@@ -493,7 +502,7 @@ caracteres da voz no briefing e autodiagnóstico sem alarme de app raro
 (`tests-local/dia-0110.test.js`). `tests-local/gas-shims.js` simula as
 APIs do GAS (`formatDate` é fixo: teste que depende de horário injeta o seu).
 `tests-local/jev-caderneta.test.js` cobre o roteador semântico novo (JEV simulado, interruptor, máscara de log).
-Estado em 14/10/2026: **305/305 passando** (mais 26 do Worker da caderneta, `npm test` na pasta `app`).
+Estado em 14/10/2026: **314/314 passando** (mais 26 do Worker da caderneta, `npm test` na pasta `app`).
 
 Contra o sistema vivo, pelo terminal: `ler_debug` (POST com `VOICE_API_TOKEN`,
 `n` até 200, `alertas:true`, `notificacoes:N`, `ensaioBriefing:'<tag>'`, `gatilhos:true`,

@@ -207,6 +207,19 @@ Sem você pedir, no tick de 15 min, em duas janelas: **manhã 9–11h** e **noit
 | 1.92 | "Desfaz" com o registro vazio ou com mais de 3 dias | "Não há nada para desfazer nos últimos 3 dias…" | ✅ | teste automático |
 | 1.93 | Paráfrases do consultor pelo JEV: "como anda a minha carteira", "dá pra aportar alguma coisa esse mês", "a reserva já bateu o alvo", "estou no caminho da aposentadoria" | mesma resposta da regra, sem Gemini | ✅ | `rotaJev`: 19/19 positivas, 0 falso positivo em 11 controles |
 
+### 1f-h. 💡 Aviso mensal do consultor e registrar o aporte 🗣️🔑
+
+| # | O que conferir | Esperado | Status | Obs. |
+|---|---|---|---|---|
+| 1.94 | Livre previsto do fim do mês passa da margem (e do mínimo de R$ 100), com as receitas fixas recebidas | notificação "Consultor: dá para aportar" **e** a mesma frase falada: quanto dá e onde (pelo alvo, sem vender), terminando em "Quando aportar, diga: aportei." | ✅ | 14/10: entrega de teste ok (`consultorAviso:'teste'`); o aviso real aguarda sobrar dinheiro (hoje o livre é R$ 117) |
+| 1.95 | Mesmo mês, depois do primeiro aviso | **não repete** (uma vez por mês); no mês seguinte avisa de novo | ⏳ | teste automático |
+| 1.96 | Salário ainda não marcado como recebido (antes do dia 20) | não avisa (a previsão contaria um salário que não caiu) | ⏳ | teste automático |
+| 1.97 | Preview sem enviar | `ler_debug` com `consultorAviso:'ensaio'` mostra o que avisaria agora | ✅ | 14/10: "não sobra o suficiente" |
+| 1.98 | Diga "Aportei" depois do aviso | "Confirma registrar o aporte de R$ X: R$ … em fundos imobiliários, R$ … em Tesouro Direto, hoje? Isso sai do seu livre." — nada gravado | ✅ | 14/10 celular (com o aviso de teste) |
+| 1.99 | Responder "sim" | uma Aplicação por destino, diz o livre novo; "desfaz" tira todas | ⏳ | teste automático; o aviso de teste não grava nada |
+| 1.100 | "Aportei 800" (valor diferente do sugerido) | refaz a divisão na mesma proporção, soma exata | ⏳ | teste automático |
+| 1.101 | `config_fala` com `CONSULTOR_AVISO_ATIVO=nao` | desliga o aviso mensal | ⏳ | |
+
 ### 1g. 🔔 Notificações do celular 🗣️
 
 | # | O que conferir | Esperado | Status | Obs. |

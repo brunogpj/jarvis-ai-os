@@ -135,27 +135,97 @@ var Consultor = (function () {
     return t;
   }
 
-  function aporte(d, c, hojeISO) {
-    var livreFim = Number(d.livreFim), aPagar = Number(d.aPagar) || 0;
-    if (!isFinite(livreFim)) return 'Não consegui ler a previsão do fim do mês na caderneta.';
+  /**
+   * O plano de aporte do mês: quanto dá (livre previsto − margem) e como dividir pelo alvo sem vender nada.
+   * → {ok, livreFim, aPagar, pode, partes:[{cat, valor}] (maior primeiro), texto} ; `ok:false` + `texto` quando não dá / não leu. PURA.
+   */
+  function plano(d, c, hojeISO) {
+    var livreFim = Number(d && d.livreFim), aPagar = Number(d && d.aPagar) || 0;
+    if (!isFinite(livreFim)) return { ok: false, texto: 'Não consegui ler a previsão do fim do mês na caderneta.' };
     var pode = Math.floor((livreFim - c.margem) * 100) / 100;
     if (!(pode > 0)) {
-      return 'Pela previsão do fim do mês você fica com ' + (livreFim < 0 ? 'negativo em ' : '') + brl(livreFim) + ', e eu deixo ' + brl(c.margem) + ' de margem na conta. Este mês não sobra para aportar.';
+      return { ok: false, livreFim: livreFim, pode: 0, partes: [],
+               texto: 'Pela previsão do fim do mês você fica com ' + (livreFim < 0 ? 'negativo em ' : '') + brl(livreFim) + ', e eu deixo ' + brl(c.margem) + ' de margem na conta. Este mês não sobra para aportar.' };
     }
     var t = 'Pela previsão do fim do mês você terá ' + brl(livreFim) + ' livres' + (aPagar > 0 ? ', já descontando o que falta pagar' : '') +
             '. Deixando ' + brl(c.margem) + ' de margem, dá para aportar até ' + brl(pode) + '.';
-    var alvo = _alvo(d), por = _inv(d).porCategoria || {};
+    var alvo = _alvo(d), por = _inv(d).porCategoria || {}, partes = [];
     if (alvo) {
       var parte = dividirAporte(por, alvo, pode);
-      var itens = Object.keys(parte).filter(function (k) { return parte[k] >= 0.01; }).sort(function (a, b) { return parte[b] - parte[a]; })
-        .map(function (k) { return brl(parte[k]) + ' em ' + nomeCat(k); });
+      partes = Object.keys(parte).filter(function (k) { return parte[k] >= 0.01; }).sort(function (a, b) { return parte[b] - parte[a]; })
+        .map(function (k) { return { cat: k, valor: parte[k] }; });
+      var itens = partes.map(function (x) { return brl(x.valor) + ' em ' + nomeCat(x.cat); });
       if (itens.length) {
         t += _pausado(c, hojeISO)
           ? ' O rebalanceamento está pausado até ' + _mesFalado(c.pausaAte.slice(0, 7)) + '; seguindo o alvo, o aporte iria assim, sem vender nada: ' + itens.join(', ') + '.'
           : ' Para chegar ao alvo sem vender nada: ' + itens.join(', ') + '.';
       }
     }
-    return t;
+    return { ok: true, livreFim: livreFim, aPagar: aPagar, pode: pode, partes: partes, texto: t };
+  }
+  function aporte(d, c, hojeISO) { return plano(d, c, hojeISO).texto; }
+
+  // ── AVISO PROATIVO DO CONSULTOR (uma vez por mês) ─────────────────────────────────────
+  // Quando o livre PREVISTO para o fim do mês passa da margem (e do mínimo), o Jarvis notifica E fala quanto dá para aportar e onde, e deixa a
+  // sugestão guardada (FIN_APORTE_SUGERIDO, 3 dias) para o "aportei" registrar com confirmação. Só avisa depois que as receitas fixas do mês foram
+  // marcadas como recebidas (antes disso a previsão conta um salário que ainda não caiu) ou a partir do dia 20. Roda no tick de 15 min, das 9h às 20h.
+  // A marca do mês é gravada ANTES de enviar: no máximo um aviso por mês. Desliga com CONSULTOR_AVISO_ATIVO=nao. Mínimo: CONSULTOR_AVISO_MIN (R$, padrão 100).
+  var AVISO_HORAS = [9, 20];
+
+  function _salvarSugestao(s) { try { PropertiesService.getScriptProperties().setProperty('FIN_APORTE_SUGERIDO', JSON.stringify(s)); } catch (e) {} }
+  /** A sugestão de aporte guardada (até 3 dias) ou null. */
+  function sugestaoAporte() {
+    try {
+      var s = JSON.parse(_p('FIN_APORTE_SUGERIDO') || 'null');
+      return (s && s.partes && s.partes.length && Date.now() - s.em <= 3 * 86400000) ? s : null;
+    } catch (e) { return null; }
+  }
+  function limparSugestao() { try { PropertiesService.getScriptProperties().deleteProperty('FIN_APORTE_SUGERIDO'); } catch (e) {} }
+
+  /**
+   * opts.ensaio = só devolve o que avisaria (não envia, não grava); opts.teste = envia um aviso de TESTE com números inventados (não grava a marca do
+   * mês; a sugestão fica marcada `teste` e o "aportei" não registra nada). Nunca lança.
+   */
+  function verificarAporte(opts) {
+    opts = opts || {};
+    try {
+      var sp = PropertiesService.getScriptProperties();
+      var agora = new Date(), hojeISO = Utilities.formatDate(agora, TZ, 'yyyy-MM-dd'), mes = hojeISO.slice(0, 7);
+      var c = cfg();
+      if (opts.teste) {
+        var dt = { hoje: hojeISO, livreFim: c.margem + 2000, aPagar: 300, metaAlocacao: { 'Renda fixa': 60, 'Tesouro Direto': 20, 'FIIs': 15, 'Liquidez/Reserva': 5 },
+                   investimentos: { total: 10000, porCategoria: { 'Renda fixa': 7000, 'Tesouro Direto': 1500, 'FIIs': 500, 'Liquidez/Reserva': 1000 } } };
+        var pt = plano(dt, c, hojeISO), tx = 'Teste do aviso do consultor. ' + pt.texto + ' Quando aportar, diga: aportei.';
+        _salvarSugestao({ em: Date.now(), mes: mes, valor: pt.pode, partes: pt.partes, teste: true });
+        var rt = (typeof _avisarDono === 'function')
+          ? _avisarDono({ origem: 'consultor', titulo: 'Consultor (teste)', texto: tx, falar: tx, falarLocal: true, logResumo: 'consultor: aviso de TESTE [valores não registrados]' }) : { ok: false };
+        return { ok: !!(rt && rt.ok), teste: true, texto: tx, plano: pt };
+      }
+      if (!opts.ensaio && String(sp.getProperty('CONSULTOR_AVISO_ATIVO') || 'sim').toLowerCase() === 'nao') return { ok: true, pulou: 'desligado' };
+      if (typeof Financas === 'undefined' || !Financas.configurado()) return { ok: true, pulou: 'não configurado' };
+      var h = Number(Utilities.formatDate(agora, TZ, 'H'));
+      if (!opts.ensaio && (h < AVISO_HORAS[0] || h > AVISO_HORAS[1])) return { ok: true, pulou: 'fora da janela' };
+      if (!opts.ensaio && sp.getProperty('CONSULTOR_AVISO_MES') === mes) return { ok: true, pulou: 'já avisou este mês' };
+      var r = Financas.resumo();
+      if (!r.ok) return { ok: false, erro: r.erro };
+      var d = r.dados, dia = Number(hojeISO.slice(8, 10));
+      var pendentes = (d.receitas || []).filter(function (x) { return !x.recebido && Number(x.valor) > 0; });
+      if (pendentes.length && dia < 20) return { ok: true, pulou: 'receita fixa ainda não recebida (' + pendentes.length + ')', ensaio: !!opts.ensaio };
+      var minimo = _num('CONSULTOR_AVISO_MIN', 100, 0, 1000000);
+      var pl = plano(d, c, hojeISO);
+      if (!pl.ok || pl.pode < minimo) return { ok: true, pulou: 'não sobra o suficiente', pode: pl.pode || 0, minimo: minimo };
+      var texto = pl.texto + ' Quando aportar, diga: aportei.';
+      if (opts.ensaio) return { ok: true, avisaria: true, texto: texto, plano: pl };
+      sp.setProperty('CONSULTOR_AVISO_MES', mes);   // ANTES de enviar: no máximo um aviso por mês
+      _salvarSugestao({ em: Date.now(), mes: mes, valor: pl.pode, partes: pl.partes });
+      if (typeof _avisarDono === 'function') {
+        _avisarDono({ origem: 'consultor', titulo: 'Consultor: dá para aportar', texto: texto, falar: texto, falarLocal: true, logResumo: 'consultor: aviso de aporte do mês [valores não registrados]' });
+      }
+      return { ok: true, avisou: true, mes: mes };
+    } catch (e) {
+      try { Logger.log('[Consultor.avisos] ' + e.message); } catch (e2) {}
+      return { ok: false, erro: e.message };
+    }
   }
 
   function simular(d, c, q) {
@@ -267,5 +337,6 @@ var Consultor = (function () {
   }
 
   return { cfg: cfg, valorFuturo: valorFuturo, mesesAteAlvo: mesesAteAlvo, aporteNecessario: aporteNecessario, dividirAporte: dividirAporte,
-           falar: falar, interpretar: interpretar, numerosFalados: numerosFalados, brl: brl };
+           falar: falar, interpretar: interpretar, numerosFalados: numerosFalados, brl: brl,
+           plano: plano, verificarAporte: verificarAporte, sugestaoAporte: sugestaoAporte, limparSugestao: limparSugestao };
 })();

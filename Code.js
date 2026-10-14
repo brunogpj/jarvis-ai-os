@@ -3097,7 +3097,7 @@ function doPost(e) {
         MODO_FALA_VOZ: /^(nuvem|auto|local)$/, FALA_VOLUME_DB: /^(1[0-6]|[0-9])$/,
         FALA_FORMATO: /^(ogg|wav)$/, FALA_ARQUIVO_UNICO: /^(sim|nao)$/, ROTA_JEV_NOVAS: /^(sim|nao)$/, FIN_AVISOS_ATIVO: /^(sim|nao)$/, FIN_NOME_DONO: /^[a-zà-ÿ ]{3,80}$/,
         // consultor (fase 4): margem na conta (R$), taxa ao mês (decimal), reserva-alvo (meses) e pausa do rebalanceamento (data)
-        CONSULTOR_MARGEM: /^\d{1,6}$/, CONSULTOR_TAXA_MES: /^0?\.\d{1,4}$/, CONSULTOR_RESERVA_ALVO: /^\d{1,2}$/, CONSULTOR_PAUSA_ATE: /^\d{4}-\d{2}-\d{2}$/
+        CONSULTOR_MARGEM: /^\d{1,6}$/, CONSULTOR_TAXA_MES: /^0?\.\d{1,4}$/, CONSULTOR_RESERVA_ALVO: /^\d{1,2}$/, CONSULTOR_PAUSA_ATE: /^\d{4}-\d{2}-\d{2}$/, CONSULTOR_AVISO_ATIVO: /^(sim|nao)$/, CONSULTOR_AVISO_MIN: /^\d{1,6}$/
       };
       var spCf = PropertiesService.getScriptProperties(), mudCf = {}, errCf = [];
       Object.keys(body.valores || {}).forEach(function (k) {
@@ -4092,6 +4092,10 @@ function doPost(e) {
               saida.recebimentoTeste = { mes: _mesP, nome: _rc.nome, marcou: _pr(true), repetiu: _pr(true), desmarcou: _pr(false) };
             }
           } catch (eRc) { saida.recebimentoTeste = { erro: eRc.message }; }
+        }
+        // Aviso mensal do consultor: 'ensaio' mostra o que avisaria agora (sem enviar nem gravar); 'teste' envia de VERDADE um aviso de teste com números inventados.
+        if (body.consultorAviso) {
+          try { saida.consultorAviso = Consultor.verificarAporte(body.consultorAviso === 'teste' ? { teste: true } : { ensaio: true }); } catch (eCo) { saida.consultorAviso = { erro: eCo.message }; }
         }
         if (body.ensaioBriefing) { try { saida.ensaioBriefing = diagBriefingTexto({ tag: String(body.ensaioBriefing) }); } catch (eEb) { saida.ensaioBriefing = { erro: eEb.message }; } }
         return ContentService.createTextOutput(JSON.stringify(saida)).setMimeType(ContentService.MimeType.JSON);

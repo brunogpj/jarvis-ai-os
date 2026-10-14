@@ -25,7 +25,7 @@ Projeto Google Apps Script gerenciado localmente via clasp.
 
 | Deployment ID | Versão | Descrição |
 |---|---|---|
-| `<DEPLOYMENT_ID>` | **@479** | **ATIVA** — "ponto: lembrete cede se o Sisponto já registrou; supermercado; teste de aviso". É esta que o celular e os scripts de diagnóstico usam. |
+| `<DEPLOYMENT_ID>` | **@480** | **ATIVA** — "Swile -> caderneta: gasto no voucher e saldo da caderneta". É esta que o celular e os scripts de diagnóstico usam. |
 | `<DEPLOYMENT_ID>` | @25 | Antiga — "TesteJobs" |
 | `<DEPLOYMENT_ID>` | @HEAD | Cabeça (muda a cada push, não é a de produção) |
 
@@ -234,6 +234,20 @@ desliga só as intenções novas. **Medir antes de ligar**: `ler_debug` com `rot
 devolve regex × JEV por frase sem executar nada (medido em 14/10: 24/24 positivos certos, 0 falso
 positivo acima do limiar em 16 controles).
 
+**Swile na caderneta (desde 14/10).** A compra aprovada do Swile ("Compra aprovada de R$ X na carteira … no estabelecimento Y")
+é interpretada por `_finParse` e vira um **gasto no voucher/mobilidade da caderneta** (`_finParaCaderneta` →
+`Financas.registrarGastoSwile` → `POST /api/jarvis/gasto-voucher`). É a **única escrita** do Jarvis na caderneta, e estreita:
+só cria uma Despesa paga com voucher (id `sw_<chave>`; a chave é o id do lançamento do Firestore, então reenvio não duplica),
+valor até R$ 5.000, data de hoje ±45 dias, no máximo 60 por 24 h; `/desfazer` só apaga o que o próprio Jarvis criou (`sw_`).
+Categoria "Alimentação" (voucher) ou "Transporte" (mobilidade), descrição = estabelecimento. Caderneta fora do ar → o doc
+fica `caderneta:'pendente'` e o tick de 15 min reenvia (3 dias); 4xx → `recusado`; estorno → só avisa (`estorno_manual`).
+O saldo do Swile falado passa a vir da caderneta (`resumo.vouchers` = recarga informada − gastos do mês); o saldo antigo do
+Firestore fica de reserva (`SWILE_FONTE=firestore` volta a ele). A **recarga** continua sendo informada por ele na caderneta
+(voz no futuro): a notificação de recarga só avisa para registrar. Interruptores: `SWILE_PARA_CADERNETA=nao`,
+`SWILE_AVISO_REGISTRO=nao` (notificação "Registrei R$ X em Y"). Teste vivo sem sujar a caderneta: `ler_debug` com
+`swileCadernetaTeste:true` (cria R$ 0,01, repete, desfaz) e `swileCaderneta:{titulo,texto}` (mostra o que enviaria). O extrato
+("onde gastei") ainda sai do Firestore (só compras com notificação). Código do Worker em `src/swile.js` do app da caderneta.
+
 **Fila de falas** (`controlarDispositivo('falar')`): a fala nova espera a anterior
 acabar, **fora do lock**, em passos de 15 s, até 110 s. A duração vem do áudio (WAV
 do Gemini = bytes/48 ms; OGG ≈ 14 caracteres/s; teto 150 s). Antes dormia no
@@ -332,7 +346,7 @@ o histórico. Então:
   genérico no teste do lembrete relativo).
 - O `README.md` é o que um recrutador lê primeiro. O projeto Jarvis no
   LinkedIn e o README do perfil do GitHub citam "147 testes automatizados"
-  (o repo tem 240 desde 14/10 — a frase segue verdadeira como piso);
+  (o repo tem 251 desde 14/10 — a frase segue verdadeira como piso);
   se a contagem mudar muito, avise o dono para atualizar lá também.
 - Nada sobre o empregador nem sobre sistemas internos de trabalho entra aqui.
 
@@ -381,7 +395,7 @@ público").
 cd tests-local && node --test
 ```
 
-240 testes offline (sem cota, sem rede) sobre a lógica determinística: MODO
+251 testes offline (sem cota, sem rede) sobre a lógica determinística: MODO
 DIRETO, gate sem-cota, hooks, parsing de turno/briefing, validação de prefs,
 ordenação dos cards, cadeia da voz, lembrete relativo e alertas de uma vez só,
 `_urlParaMacro`, `lerBiblia`, briefing com dados reais e trava de agenda
@@ -390,7 +404,7 @@ caracteres da voz no briefing e autodiagnóstico sem alarme de app raro
 (`tests-local/dia-0110.test.js`). `tests-local/gas-shims.js` simula as
 APIs do GAS (`formatDate` é fixo: teste que depende de horário injeta o seu).
 `tests-local/jev-caderneta.test.js` cobre o roteador semântico novo (JEV simulado, interruptor, máscara de log).
-Estado em 14/10/2026: **240/240 passando**.
+Estado em 14/10/2026: **251/251 passando**.
 
 Contra o sistema vivo, pelo terminal: `ler_debug` (POST com `VOICE_API_TOKEN`,
 `n` até 200, `alertas:true`, `notificacoes:N`, `ensaioBriefing:'<tag>'`, `gatilhos:true`,

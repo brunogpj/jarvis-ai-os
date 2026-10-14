@@ -339,8 +339,68 @@ var Financas = (function () {
     }
   }
 
+  // ── SWILE NA CADERNETA (14/10): a compra aprovada do Swile vira um gasto no voucher da caderneta ─────────────
+  // A ÚNICA escrita do Jarvis na caderneta: criar (ou desfazer) uma Despesa paga com voucher/mobilidade. Idempotente
+  // pela chave (o id do lançamento do Firestore). A recarga continua sendo informada por ele (app ou, no futuro, voz).
+
+  /** POST autenticado no Worker. → {ok, dados} | {ok:false, erro, codigo}. Nunca lança. */
+  function _post(caminho, corpo) {
+    var url = String(_p('FIN_API_URL') || '').replace(/\/+$/, ''), token = _p('FIN_API_TOKEN');
+    if (!url || !token) return { ok: false, erro: 'não configurado', codigo: 'nao_configurado' };
+    var res;
+    try {
+      res = UrlFetchApp.fetch(url + caminho, { method: 'post', contentType: 'application/json', payload: JSON.stringify(corpo),
+        headers: { Authorization: 'Bearer ' + token }, muteHttpExceptions: true });
+    } catch (e) { return { ok: false, erro: 'sem conexão', codigo: 'rede' }; }
+    var code = res.getResponseCode(), dados = null;
+    try { dados = JSON.parse(res.getContentText()); } catch (eJ) {}
+    if (code !== 200) return { ok: false, erro: (dados && dados.erro) || ('HTTP ' + code), codigo: code };
+    try { CacheService.getScriptCache().remove('fin_resumo_atual'); } catch (eC) {}   // o saldo mudou: a próxima pergunta não pode ler o cache
+    return { ok: true, dados: dados };
+  }
+
+  /** g = {chave, data, carteira:'voucher'|'mobilidade', valor, estabelecimento}. → {ok, criado} | {ok:false, erro, definitivo}. */
+  function registrarGastoSwile(g) {
+    var r = _post('/api/jarvis/gasto-voucher', { chave: g.chave, data: g.data, carteira: g.carteira, valor: g.valor, estabelecimento: g.estabelecimento || '' });
+    if (r.ok) return { ok: true, criado: r.dados.criado !== false };
+    // 4xx (menos 429) = a caderneta recusou o conteúdo: tentar de novo não adianta. Rede/5xx/429 = vale tentar depois.
+    var c = Number(r.codigo);
+    return { ok: false, erro: r.erro, definitivo: c >= 400 && c < 500 && c !== 429 && c !== 401 };
+  }
+
+  /** Desfaz um gasto que o próprio Jarvis criou (só id sw_). */
+  function desfazerGastoSwile(chave) {
+    var r = _post('/api/jarvis/gasto-voucher/desfazer', { chave: chave });
+    return r.ok ? { ok: true, removido: Number(r.dados.removido) || 0 } : { ok: false, erro: r.erro };
+  }
+
+  var _MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+  var _CART = { voucher: { em: 'no voucher', o: 'o voucher', neg: 'negativo', nome: 'voucher' }, mobilidade: { em: 'na mobilidade', o: 'a mobilidade', neg: 'negativa', nome: 'mobilidade' } };
+
+  /** Frase do saldo do Swile, lida da caderneta (a fonte única). `carteira` = 'voucher' | 'mobilidade' | null (as duas). null se não deu. */
+  function falarSaldoSwile(carteira) {
+    if (!configurado()) return null;
+    var r = resumo();
+    if (!r.ok || !r.dados || !r.dados.vouchers) return null;
+    var mes = _MESES[Number(String(r.dados.mes).slice(5, 7)) - 1] || r.dados.mes;
+    var lista = r.dados.vouchers.filter(function (v) { return !carteira || v.carteira === carteira; });
+    if (!lista.length) return null;
+    var partes = [], semRecarga = [];
+    lista.forEach(function (v) {
+      if (!(Number(v.recebido) > 0)) { semRecarga.push(_CART[v.carteira].nome); return; }
+      var k = _CART[v.carteira];
+      partes.push(v.saldo < 0 ? k.o + ' está ' + k.neg + ' em ' + _brl(v.saldo) : _brl(v.saldo) + ' ' + k.em);
+    });
+    var t = partes.length ? 'Saldo do Swile: ' + partes.join('; e ') + '.' : '';
+    if (semRecarga.length) {
+      t += (t ? ' ' : '') + 'Ainda não há recarga de ' + mes + ' registrada na caderneta para ' + semRecarga.join(' e ') + ', então não consigo dizer o saldo.';
+    }
+    return t;
+  }
+
   return { configurado: configurado, resumo: resumo, falar: falar, interpretar: interpretar, responder: responder, AJUDA: AJUDA,
-           avisos: avisos, verificarAvisos: verificarAvisos };
+           avisos: avisos, verificarAvisos: verificarAvisos,
+           registrarGastoSwile: registrarGastoSwile, desfazerGastoSwile: desfazerGastoSwile, falarSaldoSwile: falarSaldoSwile };
 })();
 
 /** Diagnóstico no editor: mostra se está conectado e o que ele responderia, sem falar no celular. */

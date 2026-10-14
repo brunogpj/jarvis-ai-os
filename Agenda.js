@@ -93,6 +93,7 @@ function executarTarefasAgendadas() {
   try { if (typeof Monitor !== 'undefined') Monitor.verificar(); } catch (e) { Logger.log('[tick] Monitor: ' + e.message); }
   try { if (typeof WhatsApp !== 'undefined') WhatsApp.enviarAgendadasDevidas(); } catch (e) { Logger.log('[tick] MsgsAgendadas: ' + e.message); }
   try { if (typeof Web !== 'undefined') Web.verificarMudancas(); } catch (e) { Logger.log('[tick] WebMonitor: ' + e.message); }
+  try { if (typeof _finReenviarPendentes === 'function') _finReenviarPendentes(); } catch (e) { Logger.log('[tick] SwilePendentes: ' + e.message); }
   try { if (typeof Financas !== 'undefined') Financas.verificarAvisos(); } catch (e) { Logger.log('[tick] AvisosCaderneta: ' + e.message); }
   try { if (typeof Autorizacoes !== 'undefined') { Autorizacoes.acompanharPendentes(8); Autorizacoes.limparExpiradas(180); } } catch (e) { Logger.log('[tick] Autorizacoes: ' + e.message); }
   try { if (typeof Secretaria !== 'undefined') Secretaria.limparExpiradas(30); } catch (e) { Logger.log('[tick] Secretaria: ' + e.message); }

@@ -125,6 +125,19 @@ Sem você pedir, no tick de 15 min, em duas janelas: **manhã 9–11h** e **noit
 
 | 1.36 | Bata o ponto (Sisponto) um pouco antes do horário do lembrete | o lembrete de ponto **não fala** (evento `alertaVoz:suprimido` "Sisponto já registrou") | ⏳ | corrigido 14/10 após o lembrete das 14:00 sair às 14:01 com o ponto já batido |
 
+### 1f-c. 🛒 Swile → caderneta (compra vira gasto no voucher) 🗣️🔑
+
+| # | O que conferir | Esperado | Status | Obs. |
+|---|---|---|---|---|
+| 1.37 | Faça uma compra com o cartão Swile (voucher) | notificação "Swile → caderneta: Registrei R$ X em Y no voucher"; o gasto aparece na caderneta (Despesa, meio "Voucher refeição e alimentação", categoria Alimentação) | ⏳ | não registre a mesma compra à mão: duplica |
+| 1.38 | Compra na carteira **mobilidade** | idem, meio "Voucher mobilidade", categoria Transporte | ⏳ | |
+| 1.39 | "Qual o saldo do voucher?" · "Saldo da mobilidade" · "Quanto tenho no Swile?" | saldo = recarga do mês informada na caderneta − gastos no voucher | ✅ | 14/10: R$ 41,91 no voucher e R$ 7,98 na mobilidade |
+| 1.40 | Mês novo sem a recarga informada | "Ainda não há recarga de <mês> registrada na caderneta…" (não inventa saldo) | ⏳ | |
+| 1.41 | Recarga cai no Swile | notificação "Registre a recarga do voucher e da mobilidade na caderneta" | ⏳ | a recarga é informada por você |
+| 1.42 | Estorno no Swile | só avisa para ajustar na caderneta | ⏳ | |
+| 1.43 | Caderneta fora do ar durante uma compra | fica pendente e é reenviada no tick de 15 min | ⏳ | coberto por teste automático |
+| 1.44 | `ler_debug` com `swileCadernetaTeste:true` | cria R$ 0,01, repete (não duplica), desfaz | ✅ | 14/10: criou, repetiu sem duplicar, desfez, nada ficou no banco |
+
 ### 1g. 🔔 Notificações do celular 🗣️
 
 | # | O que conferir | Esperado | Status | Obs. |

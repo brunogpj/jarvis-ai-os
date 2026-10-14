@@ -3996,6 +3996,24 @@ function doPost(e) {
         if (body.cadernetaAvisos) { try { saida.cadernetaAvisos = Financas.verificarAvisos({ ensaio: true, janela: String(body.cadernetaAvisos) === 'noite' ? 'noite' : 'manha' }); } catch (eCa) { saida.cadernetaAvisos = { erro: eCa.message }; } }
         // Entrega REAL de um aviso de teste (notificação + fala no celular), com dados inventados e rotulado como teste.
         if (body.cadernetaAvisosTeste) { try { saida.cadernetaAvisosTeste = Financas.verificarAvisos({ teste: true }); } catch (eCt) { saida.cadernetaAvisosTeste = { erro: eCt.message }; } }
+        // Swile → caderneta. {titulo,texto}: só mostra como interpretaria e o que mandaria (nada é enviado).
+        // swileCadernetaTeste:true: ciclo REAL de R$ 0,01 (cria o gasto na caderneta e desfaz em seguida) para provar a ligação.
+        if (body.swileCaderneta) {
+          try {
+            var _sc = body.swileCaderneta, _spc = _finParse(_sc.titulo, _sc.texto);
+            saida.swileCaderneta = { interpretado: _spc, enviaria: !!(_spc && _spc.completo && _spc.tipo === 'compra'), ativo: _swileParaCadernetaAtivo(), fonte: _swileFonte() };
+          } catch (eSc) { saida.swileCaderneta = { erro: eSc.message }; }
+        }
+        if (body.swileCadernetaTeste) {
+          try {
+            var _ch = 'teste' + Date.now().toString(36), _hj = Utilities.formatDate(new Date(), 'America/Sao_Paulo', 'yyyy-MM-dd');
+            var _r1 = Financas.registrarGastoSwile({ chave: _ch, data: _hj, carteira: 'voucher', valor: 0.01, estabelecimento: 'TESTE JARVIS' });
+            var _r2 = Financas.registrarGastoSwile({ chave: _ch, data: _hj, carteira: 'voucher', valor: 0.01, estabelecimento: 'TESTE JARVIS' });
+            var _r3 = Financas.desfazerGastoSwile(_ch);
+            var _r4 = Financas.desfazerGastoSwile(_ch);
+            saida.swileCadernetaTeste = { criou: _r1, repetiu: _r2, desfez: _r3, desfezDeNovo: _r4 };
+          } catch (eSt) { saida.swileCadernetaTeste = { erro: eSt.message }; }
+        }
         if (body.ensaioBriefing) { try { saida.ensaioBriefing = diagBriefingTexto({ tag: String(body.ensaioBriefing) }); } catch (eEb) { saida.ensaioBriefing = { erro: eEb.message }; } }
         return ContentService.createTextOutput(JSON.stringify(saida)).setMimeType(ContentService.MimeType.JSON);
       } catch (errDb) {
@@ -5462,6 +5480,10 @@ function _finGuardarBruto(d) {
       var _ap = _finAplicarSaldo(_p2);
       doc.aplicado = _ap.aplicado === true;
       doc.saldoDepois = _ap.para !== undefined ? _ap.para : null;
+      // CADERNETA (14/10): a compra aprovada vira um gasto no voucher/mobilidade da caderneta, a fonte única do saldo.
+      // O id do lançamento do Firestore é a chave de idempotência: reenvio não duplica.
+      var _cd = _finParaCaderneta(doc, _p2, idFin);
+      if (_cd) { doc.caderneta = _cd.status; if (_cd.erro) doc.cadernetaErro = _cd.erro; }
     }
   } catch (e2) {}
 
@@ -5469,6 +5491,60 @@ function _finGuardarBruto(d) {
     Firestore.setDoc(_FIN_COL, idFin, doc);
     return { ok: true, dia: doc.dia, id: idFin };
   } catch (e) { return { ok: false, erro: e.message }; }
+}
+
+/** Desliga com SWILE_PARA_CADERNETA=nao. */
+function _swileParaCadernetaAtivo() {
+  return String(PropertiesService.getScriptProperties().getProperty('SWILE_PARA_CADERNETA') || 'sim').toLowerCase() !== 'nao';
+}
+/** De onde vem o saldo do Swile: 'caderneta' (padrão) ou 'firestore' (o saldo que ele informava, mantido como reserva). */
+function _swileFonte() {
+  return String(PropertiesService.getScriptProperties().getProperty('SWILE_FONTE') || 'caderneta').toLowerCase() === 'firestore' ? 'firestore' : 'caderneta';
+}
+
+/** Manda a compra interpretada para a caderneta. → {status:'registrado'|'duplicado'|'pendente'|'recusado'|'estorno_manual'|'ignorado', erro?} ou null. */
+function _finParaCaderneta(doc, p, idFin) {
+  try {
+    if (!_swileParaCadernetaAtivo() || typeof Financas === 'undefined' || !Financas.configurado()) return null;
+    if (!p || !p.completo) return null;
+    if (p.tipo === 'estorno') {
+      // A caderneta não tem "estorno" (e apagar um gasto é decisão dele): avisa para ele ajustar na mão.
+      _finAvisarCaderneta('Estorno no Swile', 'Estorno de ' + _fmtBRL(p.valor) + ' em ' + (p.estabelecimento || 'um estabelecimento') + ' (' + p.carteira + '). Ajuste o gasto na caderneta.', 'estorno');
+      return { status: 'estorno_manual' };
+    }
+    if (p.tipo !== 'compra') return null;
+    var r = Financas.registrarGastoSwile({ chave: idFin, data: doc.dia, carteira: p.carteira, valor: p.valor, estabelecimento: p.estabelecimento });
+    if (!r.ok) return { status: r.definitivo ? 'recusado' : 'pendente', erro: String(r.erro || '').substring(0, 120) };
+    if (r.criado) _finAvisarCaderneta('Swile → caderneta', 'Registrei ' + _fmtBRL(p.valor) + (p.estabelecimento ? ' em ' + p.estabelecimento : '') + ' no ' + p.carteira + '.', 'registro');
+    return { status: r.criado ? 'registrado' : 'duplicado' };
+  } catch (e) { return { status: 'pendente', erro: String(e.message).substring(0, 120) }; }
+}
+function _fmtBRL(v) { return 'R$ ' + Number(v).toFixed(2).replace('.', ','); }
+
+/** Aviso silencioso (só notificação, sem fala; o log guarda a contagem, nunca o valor). SWILE_AVISO_REGISTRO=nao desliga. */
+function _finAvisarCaderneta(titulo, texto, origem) {
+  try {
+    if (origem === 'registro' && String(PropertiesService.getScriptProperties().getProperty('SWILE_AVISO_REGISTRO') || 'sim').toLowerCase() === 'nao') return;
+    if (typeof _avisarDono === 'function') _avisarDono({ origem: 'swile_' + origem, titulo: titulo, texto: texto, logResumo: 'swile→caderneta: ' + origem + ' [valor não registrado]' });
+  } catch (e) {}
+}
+
+/** Reenvia à caderneta as compras que ficaram 'pendente' (rede/Worker fora). No tick de 15 min; só olha os últimos 3 dias. */
+function _finReenviarPendentes() {
+  var feitos = 0, falhas = 0;
+  try {
+    if (!_swileParaCadernetaAtivo() || typeof Financas === 'undefined' || !Financas.configurado()) return { ok: true, pulou: true };
+    var desde = Date.now() - 3 * 86400000;
+    _finLer(120).forEach(function (it) {
+      var d = it.d;
+      if (d.caderneta !== 'pendente' || Number(d.em || 0) < desde || d.tipo !== 'compra' || !d.valor || !d.carteira) return;
+      var r = Financas.registrarGastoSwile({ chave: it.id, data: d.dia, carteira: d.carteira, valor: d.valor, estabelecimento: d.estabelecimento });
+      var patch = r.ok ? { caderneta: r.criado ? 'registrado' : 'duplicado', cadernetaErro: null } : (r.definitivo ? { caderneta: 'recusado', cadernetaErro: String(r.erro || '').substring(0, 120) } : null);
+      if (patch) { try { Firestore.updateDoc(_FIN_COL, it.id, patch); } catch (e) {} }
+      if (r.ok) feitos++; else falhas++;
+    });
+  } catch (e) { Logger.log('[swile→caderneta] ' + e.message); }
+  return { ok: true, reenviados: feitos, falhas: falhas };
 }
 
 /** Lê os lançamentos brutos, mais recentes primeiro. SEM poda: aqui nada expira. */
@@ -5611,6 +5687,13 @@ function diagParserFinanceiro(args) {
  *  carteira e, no follow-up, repetiu o valor da mobilidade como se fosse o do voucher. Número
  *  não se parafraseia. args {carteira} limita a resposta a uma carteira. */
 function _finFalarSaldo(carteira) {
+  // FONTE ÚNICA (14/10): o saldo é o da caderneta (recarga informada − gastos no voucher). O saldo que ele dizia ao Jarvis
+  // (Firestore) vira reserva: só entra se a caderneta não responder.
+  if (_swileFonte() === 'caderneta') {
+    var viaCad = null;
+    try { viaCad = (typeof Financas !== 'undefined') ? Financas.falarSaldoSwile(carteira) : null; } catch (eCad) { viaCad = null; }
+    if (viaCad) return viaCad;
+  }
   var sd = obterSaldoFinanceiro();
   function br(v) { return 'R$ ' + Number(v).toFixed(2).replace('.', ','); }
   if (sd.voucher === null && sd.mobilidade === null) {
@@ -6101,6 +6184,14 @@ function _finLerSaldoDeTexto(txt) {
 /** Pede os saldos por notificação interativa. Chamado pela regra ao ver a recarga. */
 function _finPedirSaldo() {
   if (typeof Jarvis === 'undefined' || !Jarvis.controlarDispositivo) return { ok: false, erro: 'Jarvis indisponível' };
+  // O saldo agora é o da caderneta: o que falta é ele REGISTRAR a recarga lá (voucher e mobilidade). Sem pedir número aqui.
+  if (_swileFonte() === 'caderneta') {
+    try {
+      var rn = Jarvis.controlarDispositivo({ acao: 'notificar', titulo: 'Recarga do Swile caiu',
+        texto: 'Registre a recarga do voucher e da mobilidade na caderneta para o saldo ficar certo.' });
+      return { ok: !!(rn && rn.status === 'success'), resposta: rn, via: 'caderneta' };
+    } catch (eN) { return { ok: false, erro: eN.message }; }
+  }
   try {
     var r = Jarvis.controlarDispositivo({
       acao: 'notificacao_interativa',

@@ -126,3 +126,11 @@ test('resumo do mês: não compara com um mês sem dados na caderneta', function
   var t = responder(s, 'como foi setembro');
   assert.ok(/^O mês de setembro está fechado/.test(t) && !/Frente a/.test(t), t);
 });
+
+test('resumo do mês: antes do início da caderneta (config saldo_inicio) não há resumo nem comparação', function () {
+  var s = sb({ porMes: { '2026-10': dados({ inicio: '2026-09' }), '2026-09': dados({ mes: '2026-09', inicio: '2026-09', sobra: 2800, receita: 6700, saidas: 3900, aplicado: 2500, fechado: true }),
+                          '2026-08': dados({ mes: '2026-08', inicio: '2026-09', sobra: 2000, receita: 3800, saidas: 1800 }) } });
+  var set = responder(s, 'como foi setembro');
+  assert.ok(/^O mês de setembro está fechado/.test(set) && !/Frente a/.test(set), 'setembro é o primeiro mês: sem comparar com agosto: ' + set);
+  assert.strictEqual(responder(s, 'como foi agosto'), 'A caderneta só começa em setembro de 2026, então não tenho o resumo de agosto.');
+});

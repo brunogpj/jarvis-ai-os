@@ -357,12 +357,14 @@ var Consultor = (function () {
   function mes(d, ant) {
     if (!d || d.receita == null) return 'Não consegui ler o resumo do mês na caderneta.';
     var nome = _mesFalado(d.mes).replace(/ de \d{4}$/, '');
+    // antes do primeiro mês da caderneta não há dado de verdade (as receitas fixas somariam, mas nada foi lançado)
+    if (d.inicio && d.mes < d.inicio) return 'A caderneta só começa em ' + _mesFalado(d.inicio) + ', então não tenho o resumo de ' + nome + '.';
     var t = (d.fechado ? 'O mês de ' + nome + ' está fechado: ' : 'Em ' + nome + ' até agora: ') +
             'renda ' + brl(d.receita) + ', saídas ' + brl(d.saidas) + ', sobra de ' + (Number(d.sobra) < 0 ? 'menos ' : '') + brl(d.sobra) + ' antes de aplicar' +
             (Number(d.aplicado) ? ', e ' + (d.aplicado > 0 ? 'aplicado ' : 'resgatado ') + brl(d.aplicado) : '') + '.';
     if (!d.fechado && d.livreFim != null) t += ' A previsão para o fim do mês é de ' + (Number(d.livreFim) < 0 ? 'menos ' : '') + brl(d.livreFim) + ' livres.';
     // só compara com um mês que tem dados (agosto de 2026 nem existia na caderneta: "sobra R$ 845 maior" seria comparar com zero)
-    if (ant && ant.sobra != null && ant.mes && (Number(ant.receita) > 0 || ant.fechado)) {
+    if (ant && ant.sobra != null && ant.mes && (Number(ant.receita) > 0 || ant.fechado) && !(d.inicio && ant.mes < d.inicio)) {
       var dif = Number(d.sobra) - Number(ant.sobra), nomeAnt = _mesFalado(ant.mes).replace(/ de \d{4}$/, '');
       if (Math.abs(dif) >= 1) t += ' Frente a ' + nomeAnt + ', a sobra está ' + brl(Math.abs(dif)) + (dif > 0 ? ' maior' : ' menor') + '.';
     }

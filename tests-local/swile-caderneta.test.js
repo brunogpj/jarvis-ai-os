@@ -63,7 +63,8 @@ test('caderneta fora do ar → "pendente" e a retentativa do tick registra depoi
   var s = sb({ rede: true });
   var r = J(s._finGuardarBruto(NOTIF));
   assert.strictEqual(s._docs[r.id].caderneta, 'pendente');
-  assert.strictEqual(s._avisos.length, 0, 'sem aviso de registro quando não registrou');
+  assert.strictEqual(s._avisos.length, 1, 'avisa (e fala) que não conseguiu falar com a caderneta');
+  assert.ok(/Não consegui falar com a caderneta agora/.test(s._avisos[0].falar));
   s.UrlFetchApp.fetch = function (url, opt) {
     s._posts.push({ corpo: JSON.parse(opt.payload) });
     return { getResponseCode: function () { return 200; }, getContentText: function () { return '{"ok":true,"criado":true}'; } };
@@ -122,14 +123,15 @@ test('SWILE_FONTE=firestore volta ao saldo antigo; caderneta fora → cai no sal
   assert.ok(/R\$ 5,00/.test(off._finFalarSaldo(null)), 'fallback');
 });
 
-test('recarga: com a caderneta como fonte, só notifica para ele registrar (sem pedir número)', function () {
+test('recarga: com a caderneta como fonte, notifica E fala pedindo os valores (sem pedir número por notificação)', function () {
   var s = sb();
-  var chamadas = [];
-  s.Jarvis.controlarDispositivo = function (a) { chamadas.push(a); return { status: 'success' }; };
+  s.Jarvis.controlarDispositivo = function () { return { status: 'success' }; };
   var r = J(s._finPedirSaldo());
   assert.strictEqual(r.via, 'caderneta');
-  assert.strictEqual(chamadas[0].acao, 'notificar');
-  assert.ok(/caderneta/.test(chamadas[0].texto));
+  assert.strictEqual(s._avisos.length, 1);
+  assert.ok(/caiu 1000 no voucher e 70 na mobilidade/.test(s._avisos[0].falar));
+  assert.strictEqual(s._avisos[0].falar, s._avisos[0].texto);
+  assert.strictEqual(s._avisos[0].falarLocal, true);
 });
 
 test('o token vai no cabeçalho; sem configuração não tenta', function () {

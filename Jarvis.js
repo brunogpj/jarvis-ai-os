@@ -2711,8 +2711,9 @@ var Jarvis = (function () {
            * /exec?action=fala_texto e fala com o TTS do celular, que passa pelo mixer. Id por fala: duas
            * falas seguidas não se sobrescrevem (era o motivo das esperas de até 75 s abaixo), e o TTS da
            * macro enfileira. FALA_PROATIVA_LOCAL=nao volta ao arquivo de áudio sem deploy. */
-          var _falaLocal = (acao === 'falar') &&
-            String(PropertiesService.getScriptProperties().getProperty('FALA_PROATIVA_LOCAL') || 'sim').toLowerCase() !== 'nao';
+          // a.local === true força a voz do celular (aviso financeiro: o valor falado não vira arquivo de áudio no Drive, e sai na hora)
+          var _falaLocal = (acao === 'falar') && (a.local === true ||
+            String(PropertiesService.getScriptProperties().getProperty('FALA_PROATIVA_LOCAL') || 'sim').toLowerCase() !== 'nao');
           if (_falaLocal) {
             var _txtF = String(args.texto || '')
               .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').replace(/https?:\/\/\S+/g, '')   // link → só o texto

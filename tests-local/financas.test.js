@@ -56,7 +56,7 @@ test('Financas.interpretar: NÃO rouba frases do Swile, de ações nem de outros
   ['qual o meu saldo no voucher', 'quanto tenho no cartão alimentação', 'quanto eu gastei essa semana', 'saldo da mobilidade', 'quanto sobrou no vale',
    'quanto eu tenho', 'que horas são', 'o que eu tenho na agenda hoje', 'tenho uma ideia sobre investimento', 'me dá uma ideia de investimento',
    'gastei 35 reais no mercado', 'paguei o aluguel', 'registra um gasto de 20 reais', 'cria um alerta para pagar a conta', 'cancela o que vence hoje',
-   'abre o app do mercado', 'recebi 450 da Luciana', 'apliquei 500 no cofrinho'].forEach(function (f) {
+   'abre o app do mercado', 'recebi 450 da Maria', 'apliquei 500 no cofrinho'].forEach(function (f) {
     assert.strictEqual(F.interpretar(f), null, f);
   });
 });

@@ -48,9 +48,14 @@ test('_bancoParse: os formatos reais do Mercado Pago e do Bradesco', function ()
   assert.deepStrictEqual([d.valor, d.auto], [80, false]);
 });
 
-test('_bancoParse: o que NÃO é gasto não vira gasto (Pix recebido, saque, extrato, promoção)', function () {
+test('_bancoParse: Pix recebido é ENTRADA (nunca gasto nem automática)', function () {
+  var e = J(sb()._bancoParse('Bradesco', 'BRADESCO', 'Você recebeu um Pix de R$ 63,00 de Iago, da Instituição BANCO PAN'));
+  assert.deepStrictEqual([e.entrada, e.auto, e.valor, e.remetente, e.instituicao], [true, false, 63, 'Iago', 'BANCO PAN']);
+});
+
+test('_bancoParse: o que NÃO é gasto não vira gasto (saque, extrato, promoção, Swile)', function () {
   var s = sb();
-  [['Bradesco', 'BRADESCO', 'Você recebeu um Pix de R$ 63,00 de Iago, da Instituição BANCO PAN'], ['Bradesco', 'BRADESCO', 'Você fez um saque com o cartão de débito final 2102 de R$ 500,00 no caixa eletrônico 0009156.'],
+  [['Bradesco', 'BRADESCO', 'Você fez um saque com o cartão de débito final 2102 de R$ 500,00 no caixa eletrônico 0009156.'],
    ['Mercado Pago', 'Seu extrato de conta em pdf está pronto', 'Baixe e confira quais foram suas transações.'], ['Bradesco', 'Já pensou nisso?', ''], ['Swile BR', 'Compra aprovada de R$ 5,00', 'x']]
     .forEach(function (n) { assert.strictEqual(s._bancoParse(n[0], n[1], n[2]), null, n[2] || n[1]); });
 });
@@ -172,4 +177,84 @@ test('caderneta fora do ar: a voz diz que não gravou', function () {
   var s = sb({ rede: true });
   s.Financas.conversar('gastei 35 reais no mercado no débito');
   assert.ok(/Não consegui registrar o gasto agora\. Não gravei nada/.test(J(s.Financas.conversar('sim')).resp));
+});
+
+// ── aviso falado = aviso notificado; entradas (Pix recebido) com confirmação ───────────────────────────────────
+var PIX = { app: 'Bradesco', pacote: '', titulo: 'BRADESCO', texto: 'Você recebeu um Pix de R$ 63,00 de Iago Iglesias Gonçalves Oliveira, da Instituição BANCO PAN' };
+var PIX_PROPRIO = { app: 'Bradesco', pacote: '', titulo: 'BRADESCO', texto: 'Você recebeu um Pix de R$ 500,00 de Fulano de Tal Silva, da Instituição MERCADO PAGO IP LTDA.' };
+
+test('todo aviso financeiro sai notificado E falado com o MESMO texto, pela voz do celular', function () {
+  var s = sb();
+  s._bancoParaCaderneta(MP);
+  var a = s._avisos[0];
+  assert.strictEqual(a.falar, a.texto); assert.strictEqual(a.falarLocal, true);
+  assert.ok(/Registrei R\$ 30,00 em Google CLOUD T7VH4R \(no crédito, Trabalho\)\. Diga desfaz para tirar\./.test(a.texto), a.texto);
+  var off = sb({ rede: true });
+  off._bancoParaCaderneta(MP);
+  assert.ok(/Não consegui falar com a caderneta agora/.test(off._avisos[0].falar), 'falha também fala');
+  var sw = sb();
+  sw._finGuardarBruto({ app: 'Swile', titulo: 'Compra aprovada', texto: 'Compra aprovada de R$ 12,50 na carteira Refeição e Alimentação, no estabelecimento PADARIA MIRAGO.' });
+  assert.strictEqual(sw._avisos[0].falar, sw._avisos[0].texto);
+  sw._avisos.length = 0;
+  sw.Jarvis.controlarDispositivo = function () { return { status: 'success' }; };
+  sw._finPedirSaldo();
+  assert.ok(/Caiu a recarga do Swile\. Diga os valores/.test(sw._avisos[0].falar) && sw._avisos[0].falarLocal === true);
+});
+
+test('Pix recebido: pergunta "registro como receita extra?" (notifica e fala), e só o sim grava a receita', function () {
+  var s = sb();
+  var r = J(s._bancoParaCaderneta(PIX));
+  assert.strictEqual(r.status, 'aguarda_confirmacao'); assert.strictEqual(s._posts.length, 0, 'nada gravado antes do sim');
+  assert.strictEqual(s._avisos[0].falar, 'Você recebeu um Pix de R$ 63,00 de Iago Iglesias Gonçalves Oliveira. Registro como receita extra? Diga sim ou não.');
+  var ok = J(s.Financas.conversar('sim'));
+  assert.ok(/Registrei a receita extra de R\$ 63,00 de Iago Iglesias Gonçalves Oliveira \(Outros\)\. Para desfazer, diga desfaz\./.test(ok.resp), ok.resp);
+  var c = s._posts[0].corpo;
+  assert.deepStrictEqual([s._posts[0].url, c.origem, c.valor, c.categoria], ['/receita', 'bd', 63, 'Outros']);
+  assert.ok(/Desfeito: tirei a receita de R\$ 63,00/.test(J(s.Financas.conversar('desfaz')).resp));
+  assert.strictEqual(s._posts[1].url, '/receita/desfazer');
+});
+
+test('Pix recebido: "sim, é reembolso" define a categoria; "não" descarta; sem resposta nada é gravado', function () {
+  var s = sb();
+  s._bancoParaCaderneta(PIX);
+  s.Financas.conversar('sim, é reembolso');
+  assert.strictEqual(s._posts[0].corpo.categoria, 'Reembolso');
+  var n = sb();
+  n._bancoParaCaderneta(PIX);
+  assert.ok(/não registrei a receita/.test(J(n.Financas.conversar('não')).resp));
+  assert.strictEqual(n._posts.length, 0);
+  var q = sb();
+  q._bancoParaCaderneta(PIX);
+  q.CacheService.getScriptCache().remove('fin_pend_entrada');   // passaram os 15 min
+  assert.strictEqual(J(q.Financas.conversar('sim')), null); assert.strictEqual(q._posts.length, 0);
+});
+
+test('Pix de você mesmo (FIN_NOME_DONO) é transferência entre contas: avisa e NÃO propõe receita', function () {
+  var s = sb({ props: { FIN_NOME_DONO: 'fulano de tal silva' } });
+  var r = J(s._bancoParaCaderneta(PIX_PROPRIO));
+  assert.strictEqual(r.status, 'transferencia_propria'); assert.strictEqual(s._posts.length, 0);
+  assert.ok(/transferência entre as suas contas, não registrei como receita/.test(s._avisos[0].falar));
+  assert.strictEqual(J(s.Financas.conversar('sim')), null, 'não ficou nada esperando o sim');
+  // sem o nome configurado, pergunta (na dúvida, quem decide é ele)
+  assert.strictEqual(J(sb()._bancoParaCaderneta(PIX_PROPRIO)).status, 'aguarda_confirmacao');
+});
+
+test('receita por voz: "recebi 450 da Maria no pix" propõe, sim grava; salário e rendimento não entram', function () {
+  var s = sb();
+  var p = J(s.Financas.conversar('recebi 450 da Maria no pix'));
+  assert.ok(/^Confirma a receita extra de R\$ 450,00 de Maria, hoje\? Diga sim ou não\.$/.test(p.resp), p.resp);
+  s.Financas.conversar('sim');
+  assert.deepStrictEqual([s._posts[0].url, s._posts[0].corpo.origem, s._posts[0].corpo.valor, s._posts[0].corpo.descricao], ['/receita', 'vz', 450, 'maria']);
+  ['recebi o salário de 3800', 'quanto recebi esse mês', 'recebi o rendimento de 12'].forEach(function (f) {
+    assert.strictEqual(sb().Financas.conversar(f), null, f);
+  });
+});
+
+test('repetir o gasto inteiro enquanto espera a forma de pagar REFAZ a proposta (não cai no modelo)', function () {
+  var s = sb();
+  s.Financas.conversar('gastei 35 reais no mercado');
+  var r = J(s.Financas.conversar('gastei 35 reais no mercado'));
+  assert.ok(r && /Foi no débito, no crédito, no pix, em dinheiro ou no voucher\?/.test(r.resp), 'continua perguntando, sem LLM');
+  var c = J(s.Financas.conversar('gastei 35 reais no mercado no débito'));
+  assert.ok(/^Confirma o gasto de R\$ 35,00 em mercado, no débito/.test(c.resp), c.resp);
 });

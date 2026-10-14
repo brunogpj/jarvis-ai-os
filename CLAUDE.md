@@ -25,7 +25,7 @@ Projeto Google Apps Script gerenciado localmente via clasp.
 
 | Deployment ID | Versão | Descrição |
 |---|---|---|
-| `<DEPLOYMENT_ID>` | **@483** | **ATIVA** — "gastos avulsos por voz e gasto de banco → caderneta" |
+| `<DEPLOYMENT_ID>` | **@484** | **ATIVA** — "avisos financeiros com voz, entradas (Pix recebido) com confirmação, receita por voz" |
 | `<DEPLOYMENT_ID>` | @25 | Antiga — "TesteJobs" |
 | `<DEPLOYMENT_ID>` | @HEAD | Cabeça (muda a cada push, não é a de produção) |
 
@@ -121,7 +121,7 @@ tráfego interno; inclui `NOTIF` da fila de notificações) → rate limit globa
 `janela_notificacoes` / `fala_direta` / `config_fala` / `config_financas` / `config_gemini` / `ler_debug` (todas com
 `VOICE_API_TOKEN`) → diag (`DIAG_TOKEN`). `config_fala` troca, por HTTP, só uma
 lista fechada de chaves da entrega da fala (`FALA_PROATIVA_LOCAL`,
-`FALA_RESPOSTAS_LOCAL`, `MODO_FALA_VOZ`, `FALA_VOLUME_DB` 0–16, `FALA_FORMATO`, `FALA_ARQUIVO_UNICO`, `ROTA_JEV_NOVAS` sim|nao, `FIN_AVISOS_ATIVO` sim|nao).
+`FALA_RESPOSTAS_LOCAL`, `MODO_FALA_VOZ`, `FALA_VOLUME_DB` 0–16, `FALA_FORMATO`, `FALA_ARQUIVO_UNICO`, `ROTA_JEV_NOVAS` sim|nao, `FIN_AVISOS_ATIVO` sim|nao, `FIN_NOME_DONO`).
 
 ## Voz no Android (estado em 28/09/2026)
 
@@ -277,6 +277,24 @@ ids `mp_`/`bd_`/`vz_` + chave; até R$ 20.000, 60 por dia; `/desfazer` só apaga
   Swile. Não pega pergunta ("quanto gastei"), nem fatura, aluguel, luz, água, internet, dízimo (têm previsão própria; lançar de novo contaria
   duas vezes). O "desfaz" vale também para o gasto que veio de notificação.
 
+**Aviso financeiro = notificação do MacroDroid + o MESMO texto falado (14/10).** Todo aviso de gasto/entrada/recarga/falha
+sai por `_finAvisarCaderneta` → `_avisarDono({falar: texto, falarLocal: true})`: a notificação e a fala são a mesma frase, a fala
+vai pela voz do celular (`a.local` em `controlarDispositivo('falar')`; nunca vira arquivo no Drive) e fica só a notificação na janela de
+silêncio (22:30–07:00). Cobre: registro de gasto (banco e Swile, com "Diga desfaz para tirar"), estorno, Pix de você mesmo, Pix
+recebido (pergunta), recarga do Swile ("Diga os valores…") e falha ao falar com a caderneta (fica pendente e reenvia no tick).
+
+**Entradas (Pix recebido) e receita por voz — sempre com confirmação.** `Pix recebido` do Bradesco/Mercado Pago NUNCA vira receita
+sozinho (pode ser transferência entre as contas dele, reembolso, venda): o Jarvis avisa "Você recebeu um Pix de R$ X de Y. Registro como
+receita extra? Diga sim ou não." e a proposta espera 15 min (`fin_pend_entrada`). "Sim" grava (`POST /api/jarvis/receita`, tipo
+Receita, id `rc_`, categorias do formulário "Receita extra"; "sim, é reembolso" escolhe a categoria; dedup contra receita digitada
+igual); "não" descarta. Se o remetente é ele mesmo (`FIN_NOME_DONO`, Script Property com 2+ palavras do nome; não vai ao repositório),
+avisa que é transferência entre contas e não pergunta. Por voz: "recebi 450 da Maria no pix" propõe do mesmo jeito (salário,
+rendimento, recarga e aluguel têm previsão própria e ficam de fora). "Desfaz" vale para a receita.
+
+**O modelo não grava na caderneta.** Se uma frase de gasto/receita/recarga chegar ao LLM e ele responder "registrei/anotei…", a
+resposta é trocada por "Não registrei nada" (14/10: ele disse "Anotado! Registrei o gasto de 35 reais" sem registrar). Repetir o gasto
+inteiro enquanto o Jarvis espera a forma de pagar (o `/exec` perde respostas e o app repete) refaz a proposta em vez de cair no modelo.
+
 **Fila de falas** (`controlarDispositivo('falar')`): a fala nova espera a anterior
 acabar, **fora do lock**, em passos de 15 s, até 110 s. A duração vem do áudio (WAV
 do Gemini = bytes/48 ms; OGG ≈ 14 caracteres/s; teto 150 s). Antes dormia no
@@ -375,7 +393,7 @@ o histórico. Então:
   genérico no teste do lembrete relativo).
 - O `README.md` é o que um recrutador lê primeiro. O projeto Jarvis no
   LinkedIn e o README do perfil do GitHub citam "147 testes automatizados"
-  (o repo tem 272 desde 14/10 — a frase segue verdadeira como piso);
+  (o repo tem 279 desde 14/10 — a frase segue verdadeira como piso);
   se a contagem mudar muito, avise o dono para atualizar lá também.
 - Nada sobre o empregador nem sobre sistemas internos de trabalho entra aqui.
 
@@ -424,7 +442,7 @@ público").
 cd tests-local && node --test
 ```
 
-272 testes offline (sem cota, sem rede) sobre a lógica determinística: MODO
+279 testes offline (sem cota, sem rede) sobre a lógica determinística: MODO
 DIRETO, gate sem-cota, hooks, parsing de turno/briefing, validação de prefs,
 ordenação dos cards, cadeia da voz, lembrete relativo e alertas de uma vez só,
 `_urlParaMacro`, `lerBiblia`, briefing com dados reais e trava de agenda
@@ -433,7 +451,7 @@ caracteres da voz no briefing e autodiagnóstico sem alarme de app raro
 (`tests-local/dia-0110.test.js`). `tests-local/gas-shims.js` simula as
 APIs do GAS (`formatDate` é fixo: teste que depende de horário injeta o seu).
 `tests-local/jev-caderneta.test.js` cobre o roteador semântico novo (JEV simulado, interruptor, máscara de log).
-Estado em 14/10/2026: **272/272 passando**.
+Estado em 14/10/2026: **279/279 passando**.
 
 Contra o sistema vivo, pelo terminal: `ler_debug` (POST com `VOICE_API_TOKEN`,
 `n` até 200, `alertas:true`, `notificacoes:N`, `ensaioBriefing:'<tag>'`, `gatilhos:true`,

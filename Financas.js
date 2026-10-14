@@ -629,6 +629,80 @@ var Financas = (function () {
     }
   };
 
+  // ── ENTRADAS: receita extra (Pix recebido, "recebi 450 da Maria") — SEMPRE com confirmação ──────────────────────
+  // Dinheiro que entra mexe no livre e pode nem ser renda (transferência entre as contas dele, reembolso). Por isso nunca é automático:
+  // a notificação do banco vira uma pergunta falada ("Registro como receita extra?") que fica 15 min esperando o sim.
+  var _CATS_RECEITA = [
+    ['Reembolso', /\b(reembols\w*|devolu\w*|estorno)\b/],
+    ['Venda', /\b(vend\w*)\b/],
+    ['Presente ou doação recebida', /\b(presente|doacao|doei|ganhei)\b/],
+    ['Ajuda da esposa nas despesas', /\b(ajuda|esposa|esposo)\b/],
+    ['Serviço extra', /\b(servico|freela\w*|trabalho extra|bico)\b/]
+  ];
+  function _categoriaReceita(s) {
+    var n = _norm(s);
+    for (var i = 0; i < _CATS_RECEITA.length; i++) if (_CATS_RECEITA[i][1].test(n)) return _CATS_RECEITA[i][0];
+    return null;
+  }
+
+  /** O remetente é o próprio dono? Compara com FIN_NOME_DONO (Script Property; o nome não vai para o repositório): 2+ palavras em comum. */
+  function ehDoDono(nome) {
+    var dono = _norm(_p('FIN_NOME_DONO') || '').split(' ').filter(function (t) { return t.length > 2; });
+    if (dono.length < 2) return false;
+    var n = ' ' + _norm(nome) + ' ';
+    return dono.filter(function (t) { return n.indexOf(' ' + t + ' ') !== -1; }).length >= 2;
+  }
+
+  function registrarReceita(r) {
+    var x = _post('/api/jarvis/receita', r);
+    if (x.ok) return { ok: true, criado: x.dados.criado !== false, motivo: x.dados.motivo || null };
+    var c = Number(x.codigo);
+    return { ok: false, erro: x.erro, definitivo: c >= 400 && c < 500 && c !== 429 && c !== 401 };
+  }
+  function desfazerReceita(chave) {
+    var x = _post('/api/jarvis/receita/desfazer', { chave: chave });
+    return x.ok ? { ok: true, removido: Number(x.dados.removido) || 0 } : { ok: false, erro: x.erro };
+  }
+
+  /** Notificação de Pix recebido → guarda a proposta (15 min) e devolve a frase que o Code.js notifica E fala. */
+  function proporEntrada(e) {
+    _cachePut('fin_pend_entrada', { tipo: 'receita', valor: e.valor, descricao: e.remetente, chave: e.chave, data: e.data, origem: e.origem, categoria: null }, 900);
+    return 'Você recebeu um Pix de ' + _brl(e.valor) + ' de ' + nomeCurto(e.remetente) + '. Registro como receita extra? Diga sim ou não.';
+  }
+  function nomeCurto(n) { return String(n || '').toLowerCase().replace(/(^|\s)([a-zà-ÿ])/g, function (m, a, b) { return a + b.toUpperCase(); }).replace(/\bD([aeo]s?)\b/g, 'd$1'); }
+
+  function _fraseReceita(p) { return _brl(p.valor) + ' de ' + nomeCurto(p.descricao) + (p.categoria ? ' (' + p.categoria + ')' : ''); }
+
+  ACOES.receita = {
+    // por voz: "recebi 450 da Maria no pix" → propõe. Salário e rendimento têm previsão própria na caderneta: ficam de fora.
+    propor: function (msg) {
+      var s = _norm(msg).replace(/[?]/g, '');
+      if (!/\b(recebi|ganhei)\b/.test(s)) return null;
+      if (/\b(quanto|qual|quais|quando|salario|rendimento|rendimentos|recarga|voucher|swile|vale|mobilidade|dividendo\w*|aluguel)\b/.test(s)) return null;
+      var mv = _numerosSimples(msg).match(/(\d+(?:\.\d+)?)/);
+      if (!mv) return null;
+      var valor = Math.round(Number(mv[1]) * 100) / 100;
+      if (!(valor > 0)) return null;
+      if (valor > 20000) return { resp: 'Esse valor passa de vinte mil reais, o limite do Jarvis. Registre direto na caderneta.' };
+      var md = _norm(_numerosSimples(msg)).match(/\b(?:de|do|da|dos|das)\s+([a-z ]{2,40}?)(?:\s+(?:no|na|em|por|via|pelo|pela)\b|$)/);
+      var quem = md ? md[1].trim() : '';
+      var p = { tipo: 'receita', valor: valor, descricao: quem || 'Receita extra', categoria: _categoriaReceita(s), origem: 'vz', data: _dataGasto(/\bontem\b/.test(s) ? 1 : 0),
+                chave: Utilities.getUuid().replace(/-/g, '').slice(0, 12) };
+      return { pend: p, resp: (valor >= 500 ? 'Esse valor é alto. ' : '') + 'Confirma a receita extra de ' + _fraseReceita(p) + ', ' + (/\bontem\b/.test(s) ? 'ontem' : 'hoje') + '? Diga sim ou não.' };
+    },
+    executar: function (p) {
+      var r = registrarReceita({ origem: p.origem, chave: p.chave, data: p.data, valor: p.valor, categoria: p.categoria || 'Outros', descricao: p.descricao });
+      if (!r.ok) return { resp: 'Não consegui registrar a receita agora. Não gravei nada; tente de novo daqui a pouco.' };
+      if (!r.criado) return { resp: r.motivo === 'ja_existe' ? 'Já havia uma receita igual na caderneta, então não dupliquei.' : 'Essa receita já estava registrada.' };
+      return { resp: 'Registrei a receita extra de ' + _fraseReceita(Object.assign({}, p, { categoria: p.categoria || 'Outros' })) + '. Para desfazer, diga desfaz.',
+               desfazer: { tipo: 'receita', chave: p.chave, valor: p.valor, descricao: p.descricao } };
+    },
+    desfazer: function (u) {
+      var r = desfazerReceita(u.chave);
+      return (r.ok && r.removido > 0) ? 'Desfeito: tirei a receita de ' + _brl(u.valor) + ' de ' + nomeCurto(u.descricao) + '.' : 'Não consegui desfazer. Ajuste na caderneta.';
+    }
+  };
+
   var _SIM = /^(sim|isso|isso mesmo|confirmo|confirma|confirmado|pode|pode registrar|pode confirmar|pode gravar|esta certo|ta certo|certo|correto|exato|positivo|com certeza|claro)\b/;
   var _NAO = /^(nao|negativo|cancela|cancelar|cancelado|deixa|deixa pra la|esquece|errado|nao precisa|para|pare)\b/;
   var _FILLER = /^(ok|okay|beleza|entao|bom|ta bom|ta|e ai|eai|pois|bem|enfim|ah|hum|uhum)[,.\s]+/;
@@ -647,6 +721,13 @@ var Financas = (function () {
       if (pend && pend.aguarda === 'meio') {
         // falta só a forma de pagamento: a próxima frase responde isso (ou cancela)
         if (_NAO.test(s)) { _cacheDel('fin_pendente'); return { resp: 'Certo, não registrei nada.' }; }
+        // ele repetiu o gasto inteiro em vez de só dizer como pagou (a resposta do /exec se perde às vezes e o app tenta de novo):
+        // refaz a proposta em vez de deixar a frase cair no modelo, que já inventou "registrei o gasto" (14/10).
+        var refeito = interpretarGasto(msg);
+        if (refeito && !refeito.erro) {
+          var np = ACOES.gasto.propor(msg);
+          if (np && np.pend) { _cachePut('fin_pendente', np.pend, PEND_S); return { resp: np.resp }; }
+        }
         var mm = _meioDe(s);
         if (!mm) return null;
         pend.meio = mm.meio; pend.rotulo = mm.rotulo; pend.carteira = mm.carteira; pend.aguarda = null;
@@ -664,8 +745,21 @@ var Financas = (function () {
         }
         if (_NAO.test(s)) { _cacheDel('fin_pendente'); return { resp: 'Certo, não registrei nada.' }; }
       }
+      // Pix recebido esperando o sim (a notificação do banco perguntou "registro como receita extra?"). Só vale sem outra proposta aberta.
+      var pe = pend ? null : _cacheGet('fin_pend_entrada');
+      if (pe) {
+        var catR = _categoriaReceita(s);
+        if (_SIM.test(s) || (catR && !_NAO.test(s) && s.split(' ').length <= 4)) {
+          _cacheDel('fin_pend_entrada');
+          if (catR) pe.categoria = catR;
+          var outR = ACOES.receita.executar(pe);
+          if (outR.desfazer) _cachePut('fin_ultima_acao', outR.desfazer, DESFAZ_MIN * 60);
+          return { resp: outR.resp };
+        }
+        if (_NAO.test(s)) { _cacheDel('fin_pend_entrada'); return { resp: 'Certo, não registrei a receita.' }; }
+      }
       var ult = _cacheGet('fin_ultima_acao');
-      if (/^(desfaz|desfazer|desfaca|volta atras|(cancela|apaga|tira|remove) (a recarga|o gasto|esse gasto|o ultimo gasto))\b/.test(s)) {
+      if (/^(desfaz|desfazer|desfaca|volta atras|(cancela|apaga|tira|remove) (a recarga|o gasto|esse gasto|o ultimo gasto|a receita))\b/.test(s)) {
         if (ult && ACOES[ult.tipo]) { _cacheDel('fin_ultima_acao'); return { resp: ACOES[ult.tipo].desfazer(ult) }; }
         if (/recarga|gasto/.test(s)) return { resp: 'Não há nada recente para desfazer. Passou dos ' + DESFAZ_MIN + ' minutos, ajuste na caderneta.' };
         return null;
@@ -688,7 +782,8 @@ var Financas = (function () {
            avisos: avisos, verificarAvisos: verificarAvisos,
            registrarGastoSwile: registrarGastoSwile, desfazerGastoSwile: desfazerGastoSwile, falarSaldoSwile: falarSaldoSwile,
            interpretarRecarga: interpretarRecarga, conversar: conversar, registrarRecarga: registrarRecarga, desfazerRecarga: desfazerRecarga,
-           interpretarGasto: interpretarGasto, categoriaDe: categoriaDe, registrarGasto: registrarGasto, desfazerGasto: desfazerGasto, guardarDesfazer: guardarDesfazer };
+           interpretarGasto: interpretarGasto, categoriaDe: categoriaDe, registrarGasto: registrarGasto, desfazerGasto: desfazerGasto, guardarDesfazer: guardarDesfazer,
+           ehDoDono: ehDoDono, proporEntrada: proporEntrada, registrarReceita: registrarReceita, desfazerReceita: desfazerReceita };
 })();
 
 /** Diagnóstico no editor: mostra se está conectado e o que ele responderia, sem falar no celular. */

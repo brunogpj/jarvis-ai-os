@@ -160,6 +160,19 @@ Sem você pedir, no tick de 15 min, em duas janelas: **manhã 9–11h** e **noit
 | 1.60 | "Gastei 18 no lanche no voucher ontem" | vai para o voucher, com a data de ontem | ⏳ | |
 | 1.61 | "Paguei o aluguel de 700" · "Quanto gastei no mercado?" | **não** vira gasto (conta fixa / pergunta) | ✅ | testes automáticos |
 
+### 1f-e. 🔊 Avisos financeiros falados e entradas (Pix recebido) 🗣️🔑
+
+| # | O que conferir | Esperado | Status | Obs. |
+|---|---|---|---|---|
+| 1.62 | Qualquer gasto registrado sozinho (banco ou Swile) | notificação do MacroDroid **e** o Jarvis fala **a mesma frase** ("Registrei R$ X em Y (no crédito, Trabalho). Diga desfaz para tirar.") | ✅ | 14/10: confirmado no logcat (TTS do celular falou nos dois avisos de teste) |
+| 1.63 | Recarga do Swile cai | notifica e fala "Caiu a recarga do Swile. Diga os valores, por exemplo…" | ⏳ | |
+| 1.64 | Pix de você mesmo (entre suas contas) | avisa e fala "…transferência entre as suas contas, não registrei como receita." | ✅ | 14/10 (reprocesso do Pix de 08/10) |
+| 1.65 | Pix de outra pessoa | fala "Você recebeu um Pix de R$ X de Y. Registro como receita extra? Diga sim ou não." — nada gravado | ⏳ | espera 15 min |
+| 1.66 | Responder "sim" (ou "sim, é reembolso") | "Registrei a receita extra de R$ X de Y (categoria)…"; entra como Receita; desfaz por 10 min | ⏳ | coberto por teste automático |
+| 1.67 | "Recebi 450 da Maria no pix" | "Confirma a receita extra de R$ 450,00 de Maria, hoje?" → sim grava | ⏳ | salário/rendimento não entram |
+| 1.68 | Caderneta fora do ar numa compra | notifica e fala "Não consegui falar com a caderneta agora. Registro … assim que ela voltar." | ⏳ | |
+| 1.69 | Repetir "gastei 35 reais no mercado" enquanto ele pergunta como pagou | continua perguntando; **não** diz "registrei" | ⏳ | pegou um caso real em 14/10 |
+
 ### 1g. 🔔 Notificações do celular 🗣️
 
 | # | O que conferir | Esperado | Status | Obs. |

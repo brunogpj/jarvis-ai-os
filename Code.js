@@ -3079,7 +3079,7 @@ function doPost(e) {
       var _PERMITIDAS_CF = {
         FALA_PROATIVA_LOCAL: /^(sim|nao)$/, FALA_RESPOSTAS_LOCAL: /^(sim|nao)$/,
         MODO_FALA_VOZ: /^(nuvem|auto|local)$/, FALA_VOLUME_DB: /^(1[0-6]|[0-9])$/,
-        FALA_FORMATO: /^(ogg|wav)$/, FALA_ARQUIVO_UNICO: /^(sim|nao)$/, ROTA_JEV_NOVAS: /^(sim|nao)$/, FIN_AVISOS_ATIVO: /^(sim|nao)$/
+        FALA_FORMATO: /^(ogg|wav)$/, FALA_ARQUIVO_UNICO: /^(sim|nao)$/, ROTA_JEV_NOVAS: /^(sim|nao)$/, FIN_AVISOS_ATIVO: /^(sim|nao)$/, FIN_NOME_DONO: /^[a-zà-ÿ ]{3,80}$/
       };
       var spCf = PropertiesService.getScriptProperties(), mudCf = {}, errCf = [];
       Object.keys(body.valores || {}).forEach(function (k) {
@@ -3727,6 +3727,14 @@ function doPost(e) {
           try { _sem = _rotaSemantica(msgVoz, emailUser, true, { canal: 'voz' }); } catch (eSem) { _sem = null; }
           _viaJev = !!_sem;
           respVoz = _sem || Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false, canal: 'voz' });
+          // O modelo NÃO grava na caderneta. Se uma frase de gasto/receita chegou até ele (a cadeia não a tratou) e ele diz "registrei",
+          // é invenção: em 14/10 respondeu "Anotado! Registrei o gasto de 35 reais" sem registrar nada.
+          try {
+            if (!_sem && typeof Financas !== 'undefined' && /\b(registrei|anotei|lancei|adicionei|salvei|gravei|anotado|registrado)\b/i.test(String(respVoz)) &&
+                (Financas.interpretarGasto(msgVoz) || /\b(recebi|ganhei)\b/i.test(msgVoz) || Financas.interpretarRecarga(msgVoz))) {
+              respVoz = 'Não registrei nada. Diga o gasto de novo, por exemplo: gastei 35 reais no mercado no débito.';
+            }
+          } catch (eFab) {}
         }
         // QUAL ROTA ATENDEU. Sem isto não dá para saber, depois, se um pedido caiu num atalho
         // determinístico ou no LLM — que é exatamente a pergunta que apareceu em toda investigação
@@ -5534,9 +5542,17 @@ function _bancoParse(app, titulo, texto) {
   var junto = (t + ' ' + x).trim(), m;
   if (/mercado ?pago/.test(a)) {
     m = t.match(/voc[eê] pagou R\$\s*([\d.,]*\d)\s+a\s+(.+?)\.?$/i);
-    if (!m) return null;
-    var credito = /fatura/i.test(x);
-    return { origem: 'mp', valor: _finNum(m[1]), estabelecimento: m[2].trim(), meio: credito ? 'Cartão de crédito' : 'Pix / débito', auto: credito };
+    if (m) {
+      var credito = /fatura/i.test(x);
+      return { origem: 'mp', valor: _finNum(m[1]), estabelecimento: m[2].trim(), meio: credito ? 'Cartão de crédito' : 'Pix / débito', auto: credito };
+    }
+  }
+  // ENTRADA: Pix/transferência recebida. Nunca vira receita sozinha (pode ser transferência entre as contas dele, reembolso, venda…):
+  // o Jarvis conta e pergunta "registro como receita extra?", e só o "sim" grava.
+  m = junto.match(/voc[eê] recebeu um pix de R\$\s*([\d.,]*\d)\s+de\s+(.+?),\s*da institui[cç][aã]o\s+(.+?)\.?$/i)
+   || junto.match(/voc[eê] recebeu (?:um )?(?:pix|pagamento|dinheiro|transfer[eê]ncia)?\s*(?:de )?R\$\s*([\d.,]*\d)\s+de\s+(.+?)\.?$/i);
+  if (m && /bradesco|mercado ?pago/.test(a)) {
+    return { entrada: true, origem: /bradesco/.test(a) ? 'bd' : 'mp', valor: _finNum(m[1]), remetente: m[2].trim(), instituicao: (m[3] || '').trim(), auto: false };
   }
   if (/bradesco/.test(a)) {
     m = junto.match(/compra com (?:seu )?cart[aã]o de (d[eé]bito|cr[eé]dito) final \d+,?\s*de R\$\s*([\d.,]*\d),?\s*em:?\s*(.+?)\.?$/i);
@@ -5560,6 +5576,20 @@ function _bancoParaCaderneta(d, opts) {
     var existente = null;
     try { existente = Firestore.getDoc(_FIN_COL, idFin); } catch (eG) {}
     if (existente) return { regra: 'gasto_banco', acao: 'gasto_banco', jaRegistrado: true };
+    if (p.entrada) {
+      var docE = { app: d.app || '', pacote: d.pacote || '', titulo: d.titulo || '', texto: d.texto || '', bruto: ((d.titulo || '') + ' | ' + (d.texto || '')).trim(),
+                   em: em, dia: dia, tipo: 'entrada_banco', valor: p.valor, remetente: p.remetente, origem: p.origem, parseado: true, versaoParser: 1 };
+      if (Financas.ehDoDono(p.remetente)) {
+        docE.caderneta = 'transferencia_propria';
+        _finAvisarCaderneta('Pix recebido', 'Pix de ' + _fmtBRL(p.valor) + ' de você mesmo' + (p.instituicao ? ' (' + p.instituicao + ')' : '') + '. É transferência entre as suas contas, não registrei como receita.', 'entrada');
+      } else {
+        docE.caderneta = 'aguarda_confirmacao';
+        var frase = Financas.proporEntrada({ valor: p.valor, remetente: p.remetente, chave: idFin, data: dia, origem: p.origem });
+        _finAvisarCaderneta('Pix recebido', frase, 'entrada');
+      }
+      if (!opts.simular) Firestore.setDoc(_FIN_COL, idFin, docE);
+      return { regra: 'gasto_banco', acao: 'entrada_banco', status: docE.caderneta };
+    }
     var cat = Financas.categoriaDe(p.estabelecimento);
     var doc = { app: d.app || '', pacote: d.pacote || '', titulo: d.titulo || '', texto: d.texto || '', bruto: ((d.titulo || '') + ' | ' + (d.texto || '')).trim(),
                 em: em, dia: dia, tipo: 'gasto_banco', valor: p.valor, estabelecimento: p.estabelecimento, meio: p.meio, categoria: cat, origem: p.origem, parseado: true, versaoParser: 1 };
@@ -5569,7 +5599,12 @@ function _bancoParaCaderneta(d, opts) {
       _finAvisarCaderneta('Gasto no banco', _fmtBRL(p.valor) + ' em ' + p.estabelecimento + ' (' + rotulo + '). Não registrei sozinho; diga o gasto por voz para eu lançar.', 'validacao');
     } else {
       var r = Financas.registrarGasto({ origem: p.origem, chave: idFin, data: dia, valor: p.valor, meio: p.meio, categoria: cat, descricao: p.estabelecimento });
-      if (!r.ok) { doc.caderneta = r.definitivo ? 'recusado' : 'pendente'; doc.cadernetaErro = String(r.erro || '').substring(0, 120); }
+      if (!r.ok) {
+        doc.caderneta = r.definitivo ? 'recusado' : 'pendente'; doc.cadernetaErro = String(r.erro || '').substring(0, 120);
+        _finAvisarCaderneta('Gasto no banco', r.definitivo
+          ? 'A caderneta recusou o gasto de ' + _fmtBRL(p.valor) + ' em ' + p.estabelecimento + '. Registre à mão.'
+          : 'Não consegui falar com a caderneta agora. Registro o gasto de ' + _fmtBRL(p.valor) + ' em ' + p.estabelecimento + ' assim que ela voltar.', 'falha');
+      }
       else if (r.criado) {
         doc.caderneta = 'registrado';
         try { Financas.guardarDesfazer({ tipo: 'gasto', via: p.origem, chave: idFin, valor: p.valor, descricao: p.estabelecimento }); } catch (eU) {}
@@ -5605,18 +5640,25 @@ function _finParaCaderneta(doc, p, idFin) {
     }
     if (p.tipo !== 'compra') return null;
     var r = Financas.registrarGastoSwile({ chave: idFin, data: doc.dia, carteira: p.carteira, valor: p.valor, estabelecimento: p.estabelecimento });
-    if (!r.ok) return { status: r.definitivo ? 'recusado' : 'pendente', erro: String(r.erro || '').substring(0, 120) };
+    if (!r.ok) {
+      _finAvisarCaderneta('Swile → caderneta', r.definitivo
+        ? 'A caderneta recusou a compra de ' + _fmtBRL(p.valor) + (p.estabelecimento ? ' em ' + p.estabelecimento : '') + '. Registre à mão.'
+        : 'Não consegui falar com a caderneta agora. Registro a compra de ' + _fmtBRL(p.valor) + (p.estabelecimento ? ' em ' + p.estabelecimento : '') + ' assim que ela voltar.', 'falha');
+      return { status: r.definitivo ? 'recusado' : 'pendente', erro: String(r.erro || '').substring(0, 120) };
+    }
     if (r.criado) _finAvisarCaderneta('Swile → caderneta', 'Registrei ' + _fmtBRL(p.valor) + (p.estabelecimento ? ' em ' + p.estabelecimento : '') + ' no ' + p.carteira + '.', 'registro');
     return { status: r.criado ? 'registrado' : 'duplicado' };
   } catch (e) { return { status: 'pendente', erro: String(e.message).substring(0, 120) }; }
 }
 function _fmtBRL(v) { return 'R$ ' + Number(v).toFixed(2).replace('.', ','); }
 
-/** Aviso silencioso (só notificação, sem fala; o log guarda a contagem, nunca o valor). SWILE_AVISO_REGISTRO=nao desliga. */
+/** Aviso financeiro: notificação do MacroDroid E o MESMO texto falado pela voz do celular (14/10: ele recebeu o aviso e o Jarvis não falou).
+ *  Fora da janela de silêncio (22:30–07:00) fica só a notificação. A fala sai pelo TTS do aparelho, nunca vira arquivo no Drive.
+ *  O log guarda a contagem, nunca o valor. SWILE_AVISO_REGISTRO=nao cala só os avisos de registro. */
 function _finAvisarCaderneta(titulo, texto, origem) {
   try {
     if (origem === 'registro' && String(PropertiesService.getScriptProperties().getProperty('SWILE_AVISO_REGISTRO') || 'sim').toLowerCase() === 'nao') return;
-    if (typeof _avisarDono === 'function') _avisarDono({ origem: 'swile_' + origem, titulo: titulo, texto: texto, logResumo: 'swile→caderneta: ' + origem + ' [valor não registrado]' });
+    if (typeof _avisarDono === 'function') _avisarDono({ origem: 'swile_' + origem, titulo: titulo, texto: texto, falar: texto, falarLocal: true, logResumo: 'swile→caderneta: ' + origem + ' [valor não registrado]' });
   } catch (e) {}
 }
 
@@ -6285,9 +6327,10 @@ function _finPedirSaldo() {
   // O saldo agora é o da caderneta: o que falta é ele REGISTRAR a recarga lá (voucher e mobilidade). Sem pedir número aqui.
   if (_swileFonte() === 'caderneta') {
     try {
-      var rn = Jarvis.controlarDispositivo({ acao: 'notificar', titulo: 'Recarga do Swile caiu',
-        texto: 'Registre a recarga do voucher e da mobilidade na caderneta para o saldo ficar certo.' });
-      return { ok: !!(rn && rn.status === 'success'), resposta: rn, via: 'caderneta' };
+      // notificação + a MESMA frase falada; ele responde por voz ("caiu 1.000 no voucher e 70 na mobilidade") e o Jarvis pede o "sim"
+      var txR = 'Caiu a recarga do Swile. Diga os valores, por exemplo: caiu 1000 no voucher e 70 na mobilidade.';
+      var rn = _avisarDono({ origem: 'swile_recarga', titulo: 'Recarga do Swile caiu', texto: txR, falar: txR, falarLocal: true, logResumo: 'swile→caderneta: recarga [sem valor]' });
+      return { ok: !!(rn && rn.ok), resposta: rn, via: 'caderneta' };
     } catch (eN) { return { ok: false, erro: eN.message }; }
   }
   try {
@@ -7475,7 +7518,7 @@ function _avisarDono(o) {
   if (typeof Jarvis === 'undefined' || !Jarvis.controlarDispositivo) return r;
   try { r.notificacao = Jarvis.controlarDispositivo({ acao: 'notificar', titulo: titulo, texto: texto }); } catch (eN) { r.notificacao = { status: 'error', erro: eN.message }; }
   if (o.falar && !_dentroDoSilencio()) {
-    try { r.fala = Jarvis.controlarDispositivo({ acao: 'falar', texto: String(o.falar) }); } catch (eF) { r.fala = { status: 'error', erro: eF.message }; }
+    try { r.fala = Jarvis.controlarDispositivo({ acao: 'falar', texto: String(o.falar), local: o.falarLocal === true }); } catch (eF) { r.fala = { status: 'error', erro: eF.message }; }
   }
   r.ok = !!(r.notificacao && r.notificacao.status === 'success');
   // Rastro no mesmo log das ferramentas: aviso que nao chega precisa ser visivel em algum lugar.

@@ -1027,7 +1027,8 @@ var Financas = (function () {
     margem:  { chave: 'CONSULTOR_MARGEM',       rotulo: 'da margem',          padrao: '300',   fmt: function (v) { return _brl(Number(v)); } },
     taxa:    { chave: 'CONSULTOR_TAXA_MES',     rotulo: 'da taxa mensal',     padrao: '0.008', fmt: function (v) { return String(Math.round(Number(v) * 10000) / 100).replace('.', ',') + '% ao mês'; } },
     reserva: { chave: 'CONSULTOR_RESERVA_ALVO', rotulo: 'da reserva-alvo',    padrao: '6',     fmt: function (v) { return v + ' meses'; } },
-    pausa:   { chave: 'CONSULTOR_PAUSA_ATE',    rotulo: 'da pausa do rebalanceamento', padrao: '', fmt: function (v) { return v ? 'até ' + _mesFalado(String(v).slice(0, 7)) : 'sem pausa'; } }
+    pausa:   { chave: 'CONSULTOR_PAUSA_ATE',    rotulo: 'da pausa do rebalanceamento', padrao: '', fmt: function (v) { return v ? 'até ' + _mesFalado(String(v).slice(0, 7)) : 'sem pausa'; } },
+    destino: { chave: 'CONSULTOR_DESTINO_PAUSA', rotulo: 'do destino da pausa', padrao: '', fmt: function (v) { try { return v ? JSON.parse(v).rotulo : 'nenhum destino'; } catch (e) { return 'nenhum destino'; } } }
   };
   ACOES.consultor = {
     propor: function (msg) {
@@ -1035,7 +1036,24 @@ var Financas = (function () {
       if (/\b(quanto|qual|quais|como esta|esta em)\b/.test(s)) return null;
       var campo = null, valor = null;
       var mn = s.match(/\b(\d+(?:[.,]\d+)?)\b/);
-      if (/\b(muda\w*|alter\w*|ajust\w*|defin\w*|coloc\w*|troc\w*|use|usa)\b/.test(s) && /\bmargem\b/.test(s) && mn) { campo = 'margem'; valor = String(Math.round(Number(mn[1].replace(',', '.')))); }
+      if (/\bdestino\b/.test(s) && /\bpausa\b/.test(s)) {
+        // "o destino da pausa é o cofrinho do Mercado Pago" · "tira o destino da pausa"
+        if (/\b(tire|tira|remov\w+|limp\w+|apag\w+|sem destino)\b/.test(s)) { campo = 'destino'; valor = ''; }
+        else {
+          var depoisTxt = String(msg || '').split(/destino da pausa/i)[1];
+          if (depoisTxt === undefined) depoisTxt = String(msg || '').split(/\bpausa\b/i).slice(1).join(' ');
+          var _CONEC = { 'é': 1, e: 1, eh: 1, para: 1, pra: 1, seja: 1, seria: 1, como: 1, vai: 1, ser: 1, 'será': 1, agora: 1, de: 1 };
+          var toks = depoisTxt.replace(/[,;:.!?]/g, ' ').split(/\s+/).filter(function (t) { return t; });
+          while (toks.length && _CONEC[toks[0].toLowerCase()]) toks.shift();
+          var art = null, _ART = { o: 'no', a: 'na', os: 'nos', as: 'nas', um: 'em um', uma: 'em uma' };
+          if (toks.length && _ART[toks[0].toLowerCase()]) art = _ART[toks.shift().toLowerCase()];
+          var resto = toks.join(' ').trim();
+          if (resto.length < 3 || resto.length > 60) return { resp: 'Diga qual é o destino, por exemplo: o destino da pausa é o cofrinho do Mercado Pago.' };
+          campo = 'destino';
+          valor = JSON.stringify({ rotulo: (art || 'em') + ' ' + resto, descricao: resto.charAt(0).toUpperCase() + resto.slice(1) });
+        }
+      }
+      else if (/\b(muda\w*|alter\w*|ajust\w*|defin\w*|coloc\w*|troc\w*|use|usa)\b/.test(s) && /\bmargem\b/.test(s) && mn) { campo = 'margem'; valor = String(Math.round(Number(mn[1].replace(',', '.')))); }
       else if (/\btaxa\b/.test(s) && /\b(muda\w*|alter\w*|ajust\w*|defin\w*|coloc\w*|troc\w*|use|usa|de)\b/.test(s) && /%|por cento/.test(s) && mn) {
         var t = Number(mn[1].replace(',', '.')) / 100;
         if (!(t >= 0 && t <= 0.05)) return { resp: 'A taxa mensal precisa ficar entre zero e cinco por cento.' };
@@ -1058,6 +1076,10 @@ var Financas = (function () {
       var def = _CFG_CONSULTOR[campo], atual = _p(def.chave);
       if (atual === null || atual === undefined || atual === '') atual = def.padrao;
       var p = { tipo: 'consultor', campo: campo, valor: valor, antes: _p(def.chave) };
+      if (campo === 'destino') {
+        return { pend: p, resp: valor === '' ? 'Confirma tirar o destino da pausa? Durante a pausa o aporte volta a ser dividido pelo alvo. Diga sim ou não.'
+                                              : 'Confirma: durante a pausa do rebalanceamento, o aporte inteiro vai ' + def.fmt(valor) + '? Diga sim ou não.' };
+      }
       return { pend: p, resp: 'Confirma mudar o valor ' + def.rotulo + ' do consultor de ' + def.fmt(atual) + ' para ' + def.fmt(valor === '' ? '' : valor) + '? Diga sim ou não.' };
     },
     executar: function (p) {
@@ -1066,6 +1088,10 @@ var Financas = (function () {
         var sp = PropertiesService.getScriptProperties();
         if (p.valor === '') sp.deleteProperty(def.chave); else sp.setProperty(def.chave, p.valor);
       } catch (e) { return { resp: 'Não consegui gravar o ajuste agora. Não mudei nada.' }; }
+      if (p.campo === 'destino') {
+        return { resp: (p.valor === '' ? 'Tirei o destino da pausa.' : 'Pronto: durante a pausa do rebalanceamento, o aporte inteiro vai ' + def.fmt(p.valor) + '.') + ' Para desfazer, diga desfaz.',
+                 desfazer: { tipo: 'consultor', campo: p.campo, antes: p.antes, rotulo: def.rotulo } };
+      }
       return { resp: 'Ajustei o valor ' + def.rotulo + ': ' + def.fmt(p.valor === '' ? '' : p.valor) + '. Para desfazer, diga desfaz.', desfazer: { tipo: 'consultor', campo: p.campo, antes: p.antes, rotulo: def.rotulo } };
     },
     desfazer: function (u) {
@@ -1115,13 +1141,18 @@ var Financas = (function () {
         var f = dito / total, acum = 0;
         partes = sug.partes.map(function (x, i) {
           var v = (i === sug.partes.length - 1) ? Math.round((dito - acum) * 100) / 100 : Math.round(x.valor * f * 100) / 100;
-          acum += v; return { cat: x.cat, valor: v };
+          acum += v; return { cat: x.cat, valor: v, destino: x.destino };
         }).filter(function (x) { return x.valor >= 0.01; });
         total = dito;
       }
       if (total > 1000000) return { resp: 'Esse valor passa de um milhão. Registre direto na caderneta.' };
       var p = { tipo: 'aporte', partes: partes, total: Math.round(total * 100) / 100, teste: !!sug.teste, id: Utilities.getUuid().replace(/-/g, '').slice(0, 10) };
-      return { pend: p, resp: 'Confirma registrar o aporte de ' + _brl(p.total) + ': ' + partes.map(function (x) { return _brl(x.valor) + ' em ' + (x.cat === 'FIIs' ? 'fundos imobiliários' : String(x.cat).replace(/\s*\/\s*(.)/g, function (m, c) { return ' e ' + c.toLowerCase(); })); }).join(', ') +
+      var _fp = function (x) { return _brl(x.valor) + ' ' + (x.destino ? x.destino.rotulo : 'em ' + (x.cat === 'FIIs' ? 'fundos imobiliários' : String(x.cat).replace(/\s*\/\s*(.)/g, function (m, c) { return ' e ' + c.toLowerCase(); }))); };
+      if (partes.length === 1) {
+        // um destino só (ex.: durante a pausa do rebalanceamento): não repete o valor
+        return { pend: p, resp: 'Confirma registrar o aporte ' + _fp(partes[0]).replace(/^R\$ [\d.]+,\d{2} /, 'de ' + _brl(partes[0].valor) + ' ') + ', hoje? Isso sai do seu livre. Diga sim ou não.' };
+      }
+      return { pend: p, resp: 'Confirma registrar o aporte de ' + _brl(p.total) + ': ' + partes.map(function (x) { return _brl(x.valor) + ' ' + (x.destino ? x.destino.rotulo : 'em ' + (x.cat === 'FIIs' ? 'fundos imobiliários' : String(x.cat).replace(/\s*\/\s*(.)/g, function (m, c) { return ' e ' + c.toLowerCase(); }))); }).join(', ') +
                               ', hoje? Isso sai do seu livre. Diga sim ou não.' };
     },
     executar: function (p) {
@@ -1129,7 +1160,7 @@ var Financas = (function () {
       var feitos = [], falhou = false;
       p.partes.forEach(function (x, i) {
         var chave = p.id + '_' + i;
-        var r = _post('/api/jarvis/aplicacao', { chave: chave, tipo: 'Aplicação', data: _dataGasto(0), valor: x.valor, descricao: String(x.cat).replace(/\s*\/\s*/g, ' e ') });
+        var r = _post('/api/jarvis/aplicacao', { chave: chave, tipo: 'Aplicação', data: _dataGasto(0), valor: x.valor, descricao: x.destino ? x.destino.descricao : String(x.cat).replace(/\s*\/\s*/g, ' e ') });
         if (r.ok) feitos.push({ chave: chave, valor: x.valor }); else falhou = true;
       });
       if (!feitos.length) return { resp: 'Não consegui registrar o aporte agora. Não gravei nada; tente de novo daqui a pouco.' };

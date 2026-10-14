@@ -25,7 +25,7 @@ Projeto Google Apps Script gerenciado localmente via clasp.
 
 | Deployment ID | Versão | Descrição |
 |---|---|---|
-| `<DEPLOYMENT_ID>` | **@489** | **ATIVA** — "aviso mensal do consultor e registrar o aporte por voz" |
+| `<DEPLOYMENT_ID>` | **@491** | **ATIVA** — "destino do aporte durante a pausa do rebalanceamento" |
 | `<DEPLOYMENT_ID>` | @25 | Antiga — "TesteJobs" |
 | `<DEPLOYMENT_ID>` | @HEAD | Cabeça (muda a cada push, não é a de produção) |
 
@@ -346,6 +346,8 @@ o Jarvis repete a divisão e, no "sim", lança uma Aplicação por destino (`ap_
 `CONSULTOR_AVISO_ATIVO=nao`; `ler_debug` com `consultorAviso:'ensaio'` mostra o que avisaria agora (sem enviar nem gravar) e `'teste'` envia de verdade um aviso
 com números inventados (o "aportei" que se segue não grava nada).
 
+**Destino do aporte durante a pausa do rebalanceamento (14/10).** Com `CONSULTOR_PAUSA_ATE` no futuro e `CONSULTOR_DESTINO_PAUSA` configurado, o plano de aporte (aviso mensal e "aportei") manda o aporte INTEIRO para esse destino em vez de dividir pelo alvo: "…O rebalanceamento está pausado até janeiro de 2027, então o aporte inteiro vai no cofrinho do Mercado Pago." O "aportei" confirma um destino só e lança UMA Aplicação com o nome dele. Passada a pausa (ou sem destino configurado) volta a dividir pelo alvo. O destino é `{rotulo, descricao}` e se configura por voz, com confirmação e desfaz: "o destino da pausa é o cofrinho do Mercado Pago" (o rótulo vira "no cofrinho do Mercado Pago"); "tira o destino da pausa" remove. Estado em 14/10: destino = cofrinho do Mercado Pago, pausa até 01/01/2027.
+
 **Fila de falas** (`controlarDispositivo('falar')`): a fala nova espera a anterior
 acabar, **fora do lock**, em passos de 15 s, até 110 s. A duração vem do áudio (WAV
 do Gemini = bytes/48 ms; OGG ≈ 14 caracteres/s; teto 150 s). Antes dormia no
@@ -444,7 +446,7 @@ o histórico. Então:
   genérico no teste do lembrete relativo).
 - O `README.md` é o que um recrutador lê primeiro. O projeto Jarvis no
   LinkedIn e o README do perfil do GitHub citam "147 testes automatizados"
-  (o repo tem 314 desde 14/10 — a frase segue verdadeira como piso);
+  (o repo tem 317 desde 14/10 — a frase segue verdadeira como piso);
   se a contagem mudar muito, avise o dono para atualizar lá também.
 - Nada sobre o empregador nem sobre sistemas internos de trabalho entra aqui.
 
@@ -493,7 +495,7 @@ público").
 cd tests-local && node --test
 ```
 
-314 testes offline (sem cota, sem rede) sobre a lógica determinística: MODO
+317 testes offline (sem cota, sem rede) sobre a lógica determinística: MODO
 DIRETO, gate sem-cota, hooks, parsing de turno/briefing, validação de prefs,
 ordenação dos cards, cadeia da voz, lembrete relativo e alertas de uma vez só,
 `_urlParaMacro`, `lerBiblia`, briefing com dados reais e trava de agenda
@@ -502,7 +504,7 @@ caracteres da voz no briefing e autodiagnóstico sem alarme de app raro
 (`tests-local/dia-0110.test.js`). `tests-local/gas-shims.js` simula as
 APIs do GAS (`formatDate` é fixo: teste que depende de horário injeta o seu).
 `tests-local/jev-caderneta.test.js` cobre o roteador semântico novo (JEV simulado, interruptor, máscara de log).
-Estado em 14/10/2026: **314/314 passando** (mais 26 do Worker da caderneta, `npm test` na pasta `app`).
+Estado em 14/10/2026: **317/317 passando** (mais 26 do Worker da caderneta, `npm test` na pasta `app`).
 
 Contra o sistema vivo, pelo terminal: `ler_debug` (POST com `VOICE_API_TOKEN`,
 `n` até 200, `alertas:true`, `notificacoes:N`, `ensaioBriefing:'<tag>'`, `gatilhos:true`,

@@ -32,6 +32,13 @@ var Consultor = (function () {
       taxaMes: _num('CONSULTOR_TAXA_MES', 0.008, 0, 0.05),
       reservaAlvo: _num('CONSULTOR_RESERVA_ALVO', 6, 1, 36),
       pausaAte: /^\d{4}-\d{2}-\d{2}$/.test(String(_p('CONSULTOR_PAUSA_ATE') || '')) ? String(_p('CONSULTOR_PAUSA_ATE')) : '',
+      // para onde vai o aporte INTEIRO enquanto o rebalanceamento está pausado: {rotulo:'no cofrinho do Mercado Pago', descricao:'Cofrinho do Mercado Pago'} ou null
+      destinoPausa: (function () {
+        try {
+          var x = JSON.parse(_p('CONSULTOR_DESTINO_PAUSA') || 'null');
+          return (x && typeof x.rotulo === 'string' && x.rotulo && typeof x.descricao === 'string' && x.descricao) ? { rotulo: x.rotulo.slice(0, 80), descricao: x.descricao.slice(0, 60) } : null;
+        } catch (e) { return null; }
+      })(),
       metas: Array.isArray(metas) ? metas : []
     };
   }
@@ -149,6 +156,12 @@ var Consultor = (function () {
     }
     var t = 'Pela previsão do fim do mês você terá ' + brl(livreFim) + ' livres' + (aPagar > 0 ? ', já descontando o que falta pagar' : '') +
             '. Deixando ' + brl(c.margem) + ' de margem, dá para aportar até ' + brl(pode) + '.';
+    // PAUSA DO REBALANCEAMENTO com destino configurado: o aporte INTEIRO vai para ele (a decisão dele), não para o alvo. Passada a pausa, volta a dividir pelo alvo.
+    if (_pausado(c, hojeISO) && c.destinoPausa) {
+      return { ok: true, livreFim: livreFim, aPagar: aPagar, pode: pode, pausa: true,
+               partes: [{ cat: 'Liquidez/Reserva', valor: pode, destino: c.destinoPausa }],
+               texto: t + ' O rebalanceamento está pausado até ' + _mesFalado(c.pausaAte.slice(0, 7)) + ', então o aporte inteiro vai ' + c.destinoPausa.rotulo + '.' };
+    }
     var alvo = _alvo(d), por = _inv(d).porCategoria || {}, partes = [];
     if (alvo) {
       var parte = dividirAporte(por, alvo, pode);

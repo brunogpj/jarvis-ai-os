@@ -219,6 +219,10 @@ Sem você pedir, no tick de 15 min, em duas janelas: **manhã 9–11h** e **noit
 | 1.99 | Responder "sim" | uma Aplicação por destino, diz o livre novo; "desfaz" tira todas | ⏳ | teste automático; o aviso de teste não grava nada |
 | 1.100 | "Aportei 800" (valor diferente do sugerido) | refaz a divisão na mesma proporção, soma exata | ⏳ | teste automático |
 | 1.101 | `config_fala` com `CONSULTOR_AVISO_ATIVO=nao` | desliga o aviso mensal | ⏳ | |
+| 1.102 | "O destino da pausa é o cofrinho do Mercado Pago" → "sim" | "Confirma: durante a pausa do rebalanceamento, o aporte inteiro vai no cofrinho do Mercado Pago?" → grava; "desfaz" restaura; "tira o destino da pausa" remove | ✅ | 14/10 celular: configurado de verdade |
+| 1.103 | Aviso mensal durante a pausa | a frase diz "…O rebalanceamento está pausado até janeiro de 2027, então o aporte inteiro vai no cofrinho do Mercado Pago." (um destino só, sem divisão pelo alvo) | ✅ | 14/10: aviso de teste falou e notificou |
+| 1.104 | "Aportei" durante a pausa | "Confirma registrar o aporte de R$ X no cofrinho do Mercado Pago, hoje? Isso sai do seu livre." → sim lança UMA Aplicação com o nome do destino | ✅ | 14/10 celular até a confirmação (teste não grava); lançamento coberto por teste automático |
+| 1.105 | Depois de janeiro de 2027 (pausa vencida) | volta a dividir o aporte pelo alvo | ⏳ | teste automático |
 
 ### 1g. 🔔 Notificações do celular 🗣️
 

@@ -146,3 +146,59 @@ test('caderneta fora do ar: o aporte não grava e diz isso', function () {
   s.UrlFetchApp.fetch = function () { throw new Error('rede caiu'); };
   assert.ok(/Não consegui registrar o aporte agora\. Não gravei nada/.test(J(s.Financas.conversar('sim')).resp));
 });
+
+// ── destino do aporte durante a pausa do rebalanceamento ─────────────────────────────────────────────────────
+var DEST = JSON.stringify({ rotulo: 'no cofrinho do Mercado Pago', descricao: 'Cofrinho do Mercado Pago' });
+var PAUSA = { CONSULTOR_PAUSA_ATE: '2027-01-01', CONSULTOR_DESTINO_PAUSA: DEST };
+
+test('pausa com destino: o plano manda o aporte INTEIRO para o destino; sem pausa (ou pausa vencida) volta a dividir pelo alvo', function () {
+  var s = sb({ props: PAUSA });
+  var p = J(s.Consultor.plano(dados(), s.Consultor.cfg(), '2026-10-14'));
+  assert.strictEqual(p.pausa, true); assert.strictEqual(p.partes.length, 1);
+  assert.deepStrictEqual([p.partes[0].valor, p.partes[0].destino.rotulo], [1200, 'no cofrinho do Mercado Pago']);
+  assert.ok(/O rebalanceamento está pausado até janeiro de 2027, então o aporte inteiro vai no cofrinho do Mercado Pago\.$/.test(p.texto), p.texto);
+  assert.ok(!/Para chegar ao alvo|seguindo o alvo/.test(p.texto));
+  var vencida = sb({ props: { CONSULTOR_PAUSA_ATE: '2026-09-01', CONSULTOR_DESTINO_PAUSA: DEST } });
+  var v = J(vencida.Consultor.plano(dados(), vencida.Consultor.cfg(), '2026-10-14'));
+  assert.ok(!v.pausa && v.partes.length > 1 && /Para chegar ao alvo sem vender nada/.test(v.texto), 'pausa vencida: pelo alvo');
+  var semDest = sb({ props: { CONSULTOR_PAUSA_ATE: '2027-01-01' } });
+  var sd = J(semDest.Consultor.plano(dados(), semDest.Consultor.cfg(), '2026-10-14'));
+  assert.ok(!sd.pausa && /seguindo o alvo, o aporte iria assim/.test(sd.texto), 'pausa sem destino configurado: comportamento de antes');
+  var ruim = sb({ props: { CONSULTOR_PAUSA_ATE: '2027-01-01', CONSULTOR_DESTINO_PAUSA: 'isto nao e json' } });
+  assert.strictEqual(ruim.Consultor.cfg().destinoPausa, null, 'valor corrompido é ignorado');
+});
+
+test('aviso mensal durante a pausa fala o destino; "aportei" confirma UM destino e o sim lança uma Aplicação com o nome do destino', function () {
+  var s = sb({ props: PAUSA });
+  s.Consultor.verificarAporte();
+  var a = s._avisos[0];
+  assert.ok(/dá para aportar até R\$ 1\.200,00/.test(a.texto) && /o aporte inteiro vai no cofrinho do Mercado Pago/.test(a.texto) && a.falar === a.texto, a.texto);
+  var p = J(s.Financas.conversar('aportei'));
+  assert.strictEqual(p.resp, 'Confirma registrar o aporte de R$ 1.200,00 no cofrinho do Mercado Pago, hoje? Isso sai do seu livre. Diga sim ou não.');
+  var ok = J(s.Financas.conversar('sim'));
+  var aps = s._posts.filter(function (x) { return x.url === '/aplicacao'; });
+  assert.strictEqual(aps.length, 1);
+  assert.deepStrictEqual([aps[0].corpo.valor, aps[0].corpo.descricao, aps[0].corpo.tipo], [1200, 'Cofrinho do Mercado Pago', 'Aplicação']);
+  assert.ok(/^Registrei o aporte de R\$ 1\.200,00 em 1 destino\./.test(ok.resp), ok.resp);
+  var v = sb({ props: PAUSA });
+  v.Consultor.verificarAporte();
+  var p8 = J(v.Financas.conversar('aportei 800'));
+  assert.ok(/^Confirma registrar o aporte de R\$ 800,00 no cofrinho do Mercado Pago, hoje\?/.test(p8.resp), p8.resp);
+});
+
+test('configurar o destino da pausa por voz: confirma, grava com rótulo e descrição, desfaz; remover; frase incompleta pede o destino', function () {
+  var s = sb();
+  var p = J(s.Financas.conversar('o destino da pausa é o cofrinho do Mercado Pago'));
+  assert.strictEqual(p.resp, 'Confirma: durante a pausa do rebalanceamento, o aporte inteiro vai no cofrinho do Mercado Pago? Diga sim ou não.');
+  assert.strictEqual(prop(s, 'CONSULTOR_DESTINO_PAUSA'), null, 'nada gravado antes do sim');
+  var ok = J(s.Financas.conversar('sim'));
+  assert.ok(/^Pronto: durante a pausa do rebalanceamento, o aporte inteiro vai no cofrinho do Mercado Pago\./.test(ok.resp), ok.resp);
+  assert.deepStrictEqual(JSON.parse(prop(s, 'CONSULTOR_DESTINO_PAUSA')), { rotulo: 'no cofrinho do Mercado Pago', descricao: 'Cofrinho do Mercado Pago' });
+  assert.ok(/Desfeito: o valor do destino da pausa voltou/.test(J(s.Financas.conversar('desfaz')).resp));
+  assert.strictEqual(prop(s, 'CONSULTOR_DESTINO_PAUSA'), null);
+  s.Financas.conversar('defina o destino da pausa para a reserva do Itaú'); s.Financas.conversar('sim');
+  assert.strictEqual(JSON.parse(prop(s, 'CONSULTOR_DESTINO_PAUSA')).rotulo, 'na reserva do Itaú');
+  assert.ok(/Confirma tirar o destino da pausa/.test(J(s.Financas.conversar('tira o destino da pausa')).resp));
+  s.Financas.conversar('sim'); assert.strictEqual(prop(s, 'CONSULTOR_DESTINO_PAUSA'), null);
+  assert.ok(/Diga qual é o destino/.test(J(s.Financas.conversar('o destino da pausa é')).resp));
+});

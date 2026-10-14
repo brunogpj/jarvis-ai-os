@@ -145,6 +145,21 @@ Sem você pedir, no tick de 15 min, em duas janelas: **manhã 9–11h** e **noit
 | 1.43 | Caderneta fora do ar durante uma compra | fica pendente e é reenviada no tick de 15 min | ⏳ | coberto por teste automático |
 | 1.44 | `ler_debug` com `swileCadernetaTeste:true` | cria R$ 0,01, repete (não duplica), desfaz | ✅ | 14/10: criou, repetiu sem duplicar, desfez, nada ficou no banco |
 
+### 1f-d. 💳 Gastos avulsos e bancos → caderneta 🗣️🔑
+
+| # | O que conferir | Esperado | Status | Obs. |
+|---|---|---|---|---|
+| 1.52 | Compra no crédito do Mercado Pago (notificação "Você pagou R$ X a Y") | gasto registrado (Cartão de crédito, categoria pelo lugar) + notificação "Registrei…"; o livre **não muda** | ✅ | 14/10: Google Cloud R$ 30 (Trabalho); livre seguiu R$ 117,18 |
+| 1.53 | Compra no débito do Bradesco ("compra com seu cartão de débito final…") | gasto em Pix / débito, desconta do livre | ⏳ | formato visto em 11/10 (Sam's Club R$ 5,90 → Mercado) |
+| 1.54 | Gasto que você já digitou na caderneta e depois chega a notificação | "Já havia um gasto igual na caderneta… Não dupliquei" | ⏳ | coberto por teste automático |
+| 1.55 | Pix enviado / pagamento do MP sem linha da fatura | avisa que não registrou sozinho (você diz por voz) | ⏳ | |
+| 1.56 | Diga "desfaz" até 10 min depois de um registro automático | "Desfeito: tirei o gasto de R$ X em Y." | ⏳ | |
+| 1.57 | "Gastei 35 reais no mercado no débito" | repete: "Confirma o gasto de R$ 35,00 em mercado, no débito, categoria Mercado, hoje?" — nada gravado ainda | ✅ | 14/10 (teste de R$ 0,01 no crédito) |
+| 1.58 | Responder "sim" | "Registrei o gasto…"; aparece na caderneta | ✅ | 14/10 |
+| 1.59 | "Gastei 35 no mercado" (sem dizer como pagou) | "Foi no débito, no crédito, no pix, em dinheiro ou no voucher?" → "no pix" → confirma | ✅ | 14/10 |
+| 1.60 | "Gastei 18 no lanche no voucher ontem" | vai para o voucher, com a data de ontem | ⏳ | |
+| 1.61 | "Paguei o aluguel de 700" · "Quanto gastei no mercado?" | **não** vira gasto (conta fixa / pergunta) | ✅ | testes automáticos |
+
 ### 1g. 🔔 Notificações do celular 🗣️
 
 | # | O que conferir | Esperado | Status | Obs. |

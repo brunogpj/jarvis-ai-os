@@ -72,7 +72,7 @@ test('fluxo completo: propõe repetindo o valor, só o "sim" grava, e dá para d
   var d = J(s.Financas.conversar('desfaz'));
   assert.ok(/Desfeito/.test(d.resp), d.resp);
   assert.strictEqual(s._posts.filter(function (x) { return /desfazer/.test(x.url); }).length, 2);
-  assert.ok(/Não há nenhuma recarga recente/.test(J(s.Financas.conversar('desfaz a recarga')).resp));
+  assert.ok(/Não há nada recente/.test(J(s.Financas.conversar('desfaz a recarga')).resp));
 });
 
 test('"não" descarta sem gravar; frase alheia deixa a proposta quieta; sem proposta, "sim" não é com a caderneta', function () {

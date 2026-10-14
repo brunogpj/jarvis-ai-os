@@ -4033,6 +4033,15 @@ function doPost(e) {
             saida.recargaTeste = { referencia: _ref, criou: _a1, repetiu: _a2, desfez: _a3 };
           } catch (eRt) { saida.recargaTeste = { erro: eRt.message }; }
         }
+        // Banco → caderneta. {app,titulo,texto}: só mostra como interpretaria. Com executar:true roda DE VERDADE (registra o gasto, com
+        // dedup contra o que ele digitou) — é assim que se reprocessa uma notificação que chegou antes da integração existir.
+        if (body.bancoSimular) {
+          try {
+            var _bs = body.bancoSimular, _bp = _bancoParse(_bs.app, _bs.titulo, _bs.texto);
+            saida.bancoSimular = { interpretado: _bp, categoria: _bp ? Financas.categoriaDe(_bp.estabelecimento) : null,
+              executou: (_bs.executar === true && _bp) ? _bancoParaCaderneta({ app: _bs.app, pacote: '', titulo: _bs.titulo, texto: _bs.texto, em: Number(_bs.em) || Date.now() }) : null };
+          } catch (eBs) { saida.bancoSimular = { erro: eBs.message }; }
+        }
         if (body.ensaioBriefing) { try { saida.ensaioBriefing = diagBriefingTexto({ tag: String(body.ensaioBriefing) }); } catch (eEb) { saida.ensaioBriefing = { erro: eEb.message }; } }
         return ContentService.createTextOutput(JSON.stringify(saida)).setMimeType(ContentService.MimeType.JSON);
       } catch (errDb) {
@@ -5512,6 +5521,69 @@ function _finGuardarBruto(d) {
   } catch (e) { return { ok: false, erro: e.message }; }
 }
 
+/* ===================== BANCOS → CADERNETA (14/10) =====================
+ * A notificação de gasto do Mercado Pago (cartão de crédito) e do Bradesco (débito/crédito) vira um gasto na caderneta, como a compra
+ * do Swile. Só os formatos JÁ VISTOS entram sozinhos; Pix enviado e afins ficam "aguarda_validacao" (avisa e deixa ele dizer o gasto por
+ * voz, com confirmação). Antes de criar, o Worker procura um gasto igual DIGITADO por ele (mesmo valor/meio, ±1 dia) para não duplicar.
+ * Crédito já está na fatura: o app não soma de novo no livre. Débito/Pix descontam do livre.
+ *   Mercado Pago: "Você pagou R$ 30 a Google CLOUD T7VH4R" | "O valor vai entrar na próxima fatura do seu Cartão Mercado Pago."
+ *   Bradesco:     "Você fez uma compra com seu cartão de débito final 2102, de R$ 5,90, em: SAM S CLUB LJ 6."
+ * Desliga com BANCOS_PARA_CADERNETA=nao. */
+function _bancoParse(app, titulo, texto) {
+  var a = String(app || '').toLowerCase(), t = String(titulo || '').replace(/\s+/g, ' ').trim(), x = String(texto || '').replace(/\s+/g, ' ').trim();
+  var junto = (t + ' ' + x).trim(), m;
+  if (/mercado ?pago/.test(a)) {
+    m = t.match(/voc[eê] pagou R\$\s*([\d.,]*\d)\s+a\s+(.+?)\.?$/i);
+    if (!m) return null;
+    var credito = /fatura/i.test(x);
+    return { origem: 'mp', valor: _finNum(m[1]), estabelecimento: m[2].trim(), meio: credito ? 'Cartão de crédito' : 'Pix / débito', auto: credito };
+  }
+  if (/bradesco/.test(a)) {
+    m = junto.match(/compra com (?:seu )?cart[aã]o de (d[eé]bito|cr[eé]dito) final \d+,?\s*de R\$\s*([\d.,]*\d),?\s*em:?\s*(.+?)\.?$/i);
+    if (m) return { origem: 'bd', valor: _finNum(m[2]), estabelecimento: m[3].trim(), meio: /d[eé]bito/i.test(m[1]) ? 'Pix / débito' : 'Cartão de crédito', auto: true };
+    m = junto.match(/voc[eê] fez um pix de R\$\s*([\d.,]*\d)\s+(?:para|pra)\s+(.+?)\.?$/i);
+    if (m) return { origem: 'bd', valor: _finNum(m[1]), estabelecimento: m[2].trim(), meio: 'Pix / débito', auto: false };
+  }
+  return null;
+}
+
+/** Notificação do banco → gasto na caderneta. → resultado de regra ({regra,acao,...}) se era gasto de banco, senão null. Nunca lança. */
+function _bancoParaCaderneta(d, opts) {
+  opts = opts || {};
+  try {
+    if (String(PropertiesService.getScriptProperties().getProperty('BANCOS_PARA_CADERNETA') || 'sim').toLowerCase() === 'nao') return null;
+    var p = _bancoParse(d.app, d.titulo, d.texto);
+    if (!p || !(p.valor > 0)) return null;
+    if (typeof Financas === 'undefined' || !Financas.configurado()) return null;
+    var em = d.em || Date.now(), dia = Utilities.formatDate(new Date(em), 'America/Sao_Paulo', 'yyyy-MM-dd');
+    var idFin = 'b' + _notifHash((d.app || '') + '|' + (d.titulo || '') + '|' + (d.texto || '')) + '_' + dia;
+    var existente = null;
+    try { existente = Firestore.getDoc(_FIN_COL, idFin); } catch (eG) {}
+    if (existente) return { regra: 'gasto_banco', acao: 'gasto_banco', jaRegistrado: true };
+    var cat = Financas.categoriaDe(p.estabelecimento);
+    var doc = { app: d.app || '', pacote: d.pacote || '', titulo: d.titulo || '', texto: d.texto || '', bruto: ((d.titulo || '') + ' | ' + (d.texto || '')).trim(),
+                em: em, dia: dia, tipo: 'gasto_banco', valor: p.valor, estabelecimento: p.estabelecimento, meio: p.meio, categoria: cat, origem: p.origem, parseado: true, versaoParser: 1 };
+    var rotulo = p.meio === 'Cartão de crédito' ? 'no crédito' : 'no débito/pix';
+    if (!p.auto) {
+      doc.caderneta = 'aguarda_validacao';
+      _finAvisarCaderneta('Gasto no banco', _fmtBRL(p.valor) + ' em ' + p.estabelecimento + ' (' + rotulo + '). Não registrei sozinho; diga o gasto por voz para eu lançar.', 'validacao');
+    } else {
+      var r = Financas.registrarGasto({ origem: p.origem, chave: idFin, data: dia, valor: p.valor, meio: p.meio, categoria: cat, descricao: p.estabelecimento });
+      if (!r.ok) { doc.caderneta = r.definitivo ? 'recusado' : 'pendente'; doc.cadernetaErro = String(r.erro || '').substring(0, 120); }
+      else if (r.criado) {
+        doc.caderneta = 'registrado';
+        try { Financas.guardarDesfazer({ tipo: 'gasto', via: p.origem, chave: idFin, valor: p.valor, descricao: p.estabelecimento }); } catch (eU) {}
+        _finAvisarCaderneta('Gasto → caderneta', 'Registrei ' + _fmtBRL(p.valor) + ' em ' + p.estabelecimento + ' (' + rotulo + ', ' + cat + '). Diga desfaz para tirar.', 'registro');
+      } else {
+        doc.caderneta = r.motivo === 'ja_existe' ? 'duplicado_manual' : 'duplicado';
+        if (doc.caderneta === 'duplicado_manual') _finAvisarCaderneta('Gasto no banco', 'Já havia um gasto igual na caderneta (' + _fmtBRL(p.valor) + ' em ' + p.estabelecimento + '). Não dupliquei.', 'registro');
+      }
+    }
+    if (!opts.simular) Firestore.setDoc(_FIN_COL, idFin, doc);
+    return { regra: 'gasto_banco', acao: 'gasto_banco', status: doc.caderneta, categoria: cat };
+  } catch (e) { return { regra: 'gasto_banco', acao: 'gasto_banco', erro: String(e.message).substring(0, 120) }; }
+}
+
 /** Desliga com SWILE_PARA_CADERNETA=nao. */
 function _swileParaCadernetaAtivo() {
   return String(PropertiesService.getScriptProperties().getProperty('SWILE_PARA_CADERNETA') || 'sim').toLowerCase() !== 'nao';
@@ -5556,6 +5628,13 @@ function _finReenviarPendentes() {
     var desde = Date.now() - 3 * 86400000;
     _finLer(120).forEach(function (it) {
       var d = it.d;
+      if (d.caderneta === 'pendente' && d.tipo === 'gasto_banco' && Number(d.em || 0) >= desde && d.valor) {
+        var rb = Financas.registrarGasto({ origem: d.origem, chave: it.id, data: d.dia, valor: d.valor, meio: d.meio, categoria: d.categoria, descricao: d.estabelecimento });
+        var pb = rb.ok ? { caderneta: rb.criado ? 'registrado' : (rb.motivo === 'ja_existe' ? 'duplicado_manual' : 'duplicado'), cadernetaErro: null } : (rb.definitivo ? { caderneta: 'recusado', cadernetaErro: String(rb.erro || '').substring(0, 120) } : null);
+        if (pb) { try { Firestore.updateDoc(_FIN_COL, it.id, pb); } catch (eB) {} }
+        if (rb.ok) feitos++; else falhas++;
+        return;
+      }
       if (d.caderneta !== 'pendente' || Number(d.em || 0) < desde || d.tipo !== 'compra' || !d.valor || !d.carteira) return;
       var r = Financas.registrarGastoSwile({ chave: it.id, data: d.dia, carteira: d.carteira, valor: d.valor, estabelecimento: d.estabelecimento });
       var patch = r.ok ? { caderneta: r.criado ? 'registrado' : 'duplicado', cadernetaErro: null } : (r.definitivo ? { caderneta: 'recusado', cadernetaErro: String(r.erro || '').substring(0, 120) } : null);
@@ -6284,6 +6363,11 @@ function _notifRoteia() {
 
 /** Aplica a primeira regra que casar. Devolve o que foi decidido (e por quê). */
 function _notifAplicarRegras(d) {
+  // GASTO DE BANCO (Mercado Pago, Bradesco) → caderneta. Antes das regras: a 'boleto' casava "fatura" no aviso do cartão e virava um
+  // lembrete "chegou em casa" com o texto da compra.
+  var gb = null;
+  try { gb = _bancoParaCaderneta(d); } catch (eGb) { gb = null; }
+  if (gb) return gb;
   var regras = _notifRegras();
   for (var i = 0; i < regras.length; i++) {
     var r = regras[i];

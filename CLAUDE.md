@@ -25,7 +25,7 @@ Projeto Google Apps Script gerenciado localmente via clasp.
 
 | Deployment ID | Versão | Descrição |
 |---|---|---|
-| `<DEPLOYMENT_ID>` | **@482** | **ATIVA** — "recarga: diagnóstico cru" (recarga do Swile por voz com confirmação). É esta que o celular e os scripts de diagnóstico usam. |
+| `<DEPLOYMENT_ID>` | **@483** | **ATIVA** — "gastos avulsos por voz e gasto de banco → caderneta" |
 | `<DEPLOYMENT_ID>` | @25 | Antiga — "TesteJobs" |
 | `<DEPLOYMENT_ID>` | @HEAD | Cabeça (muda a cada push, não é a de produção) |
 
@@ -261,6 +261,22 @@ rótulo (voucher/mobilidade) junto do número e números em dígitos ("mil" por 
 extrair valor de fala livre é seleção de número no código, não julgamento. Teste vivo: `ler_debug` com `recargaTeste:true`
 (cria R$ 0,01 no mês seguinte, repete, desfaz).
 
+**Gastos avulsos e bancos → caderneta (desde 14/10).** Duas portas para o mesmo `POST /api/jarvis/gasto` do Worker
+(`src/gasto.js`; Despesa e só despesa, meios Pix/débito, Cartão de crédito, Dinheiro, Boleto; categorias do formulário do app;
+ids `mp_`/`bd_`/`vz_` + chave; até R$ 20.000, 60 por dia; `/desfazer` só apaga esses prefixos):
+- **Notificação do banco** (`_bancoParse` + `_bancoParaCaderneta`, chamado ANTES das regras em `_notifAplicarRegras`): registra sozinho
+  só os formatos já vistos — Mercado Pago "Você pagou R$ X a Y / vai entrar na próxima fatura" (crédito) e Bradesco "compra com seu
+  cartão de débito|crédito final N, de R$ X, em: Y". Pix enviado e "Você pagou" sem a linha da fatura ficam `aguarda_validacao`
+  (avisa; ele diz o gasto por voz). Pix recebido, saque, extrato e promoção não são gasto e seguem as regras de sempre. Antes de criar, o
+  Worker procura um gasto igual DIGITADO por ele (mesmo valor e meio, ±1 dia, id que não é do Jarvis) e não duplica. Categoria por
+  palavras do lugar (`Financas.categoriaDe`), sem pista = Outros. Crédito não mexe no livre (já está na fatura); débito/Pix descontam.
+  Mesmo esquema de pendente/recusado/retentativa do Swile; `BANCOS_PARA_CADERNETA=nao` desliga; teste/reprocesso:
+  `ler_debug` com `bancoSimular:{app,titulo,texto,executar?,em?}`.
+- **Voz com confirmação** (`ACOES.gasto`): "gastei 35 reais no mercado no débito" → "Confirma o gasto de R$ 35,00 em mercado, no débito,
+  categoria Mercado, hoje? Diga sim ou não." Sem a forma de pagar ele pergunta; "ontem" muda a data; voucher/mobilidade vão pelo endpoint do
+  Swile. Não pega pergunta ("quanto gastei"), nem fatura, aluguel, luz, água, internet, dízimo (têm previsão própria; lançar de novo contaria
+  duas vezes). O "desfaz" vale também para o gasto que veio de notificação.
+
 **Fila de falas** (`controlarDispositivo('falar')`): a fala nova espera a anterior
 acabar, **fora do lock**, em passos de 15 s, até 110 s. A duração vem do áudio (WAV
 do Gemini = bytes/48 ms; OGG ≈ 14 caracteres/s; teto 150 s). Antes dormia no
@@ -359,7 +375,7 @@ o histórico. Então:
   genérico no teste do lembrete relativo).
 - O `README.md` é o que um recrutador lê primeiro. O projeto Jarvis no
   LinkedIn e o README do perfil do GitHub citam "147 testes automatizados"
-  (o repo tem 259 desde 14/10 — a frase segue verdadeira como piso);
+  (o repo tem 272 desde 14/10 — a frase segue verdadeira como piso);
   se a contagem mudar muito, avise o dono para atualizar lá também.
 - Nada sobre o empregador nem sobre sistemas internos de trabalho entra aqui.
 
@@ -408,7 +424,7 @@ público").
 cd tests-local && node --test
 ```
 
-259 testes offline (sem cota, sem rede) sobre a lógica determinística: MODO
+272 testes offline (sem cota, sem rede) sobre a lógica determinística: MODO
 DIRETO, gate sem-cota, hooks, parsing de turno/briefing, validação de prefs,
 ordenação dos cards, cadeia da voz, lembrete relativo e alertas de uma vez só,
 `_urlParaMacro`, `lerBiblia`, briefing com dados reais e trava de agenda
@@ -417,7 +433,7 @@ caracteres da voz no briefing e autodiagnóstico sem alarme de app raro
 (`tests-local/dia-0110.test.js`). `tests-local/gas-shims.js` simula as
 APIs do GAS (`formatDate` é fixo: teste que depende de horário injeta o seu).
 `tests-local/jev-caderneta.test.js` cobre o roteador semântico novo (JEV simulado, interruptor, máscara de log).
-Estado em 14/10/2026: **259/259 passando**.
+Estado em 14/10/2026: **272/272 passando**.
 
 Contra o sistema vivo, pelo terminal: `ler_debug` (POST com `VOICE_API_TOKEN`,
 `n` até 200, `alertas:true`, `notificacoes:N`, `ensaioBriefing:'<tag>'`, `gatilhos:true`,

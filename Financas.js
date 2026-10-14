@@ -510,6 +510,125 @@ var Financas = (function () {
     }
   };
 
+  // ── GASTO AVULSO por voz e por notificação do banco (14/10) ──────────────────────────────────────────────────
+  // "Gastei 35 reais no mercado no débito" → propõe, repete e espera o "sim". Da notificação do banco (Mercado Pago,
+  // Bradesco) o Code.js registra sozinho e guarda o "desfaz". Cartão de crédito já está na fatura: o app não soma de novo no
+  // livre; Pix/débito e dinheiro descontam do livre. Voucher e mobilidade vão pelo endpoint do Swile.
+
+  /** Categoria do app (a lista do formulário de gasto) pelo nome do lugar. Palavras fixas, sem modelo; sem pista = 'Outros'. */
+  var _CATEGORIAS_PALAVRAS = [
+    ['Trabalho',    /\b(google cloud|google|anthropic|claude|openai|github|vercel|cloudflare|dominio|hospedagem|aws|azure)\b/],
+    ['Compras',     /\b(shopee|mercado livre|amazon|magalu|americanas|shein|aliexpress|loja\w*|roupa\w*|sapato\w*|tenis|presente\w*)\b/],
+    ['Mercado',     /\b(mercado|supermercado\w*|atacad\w*|atacarejo|assai|carrefour|sam s club|sams club|epa|verdemar|hortifruti|acougue|sacolao)\b/],
+    ['Alimentação', /\b(padaria|lanche\w*|restaurante|ifood|pizza\w*|lanchonete|acai|cafe|cafeteria|bar|almoco|janta\w*|sorvete\w*|hamburguer\w*|churrasc\w*|salgado\w*|marmit\w*|doceria|sushi|pastel\w*)\b/],
+    ['Transporte',  /\b(uber|99|posto|gasolina|etanol|combustivel|estacionamento|pedagio|onibus|metro|shell|ipiranga|taxi|oficina|mecanic\w*)\b/],
+    ['Saúde',       /\b(farmacia|drogaria|drogasil|pacheco|raia|hospital|clinica|medic\w*|dentista|laboratorio|exame\w*|remedio\w*|consulta)\b/],
+    ['Lazer',       /\b(cinema|netflix|spotify|ingresso\w*|parque|show|steam|playstation|xbox|jogo\w*|viagem|hotel)\b/],
+    ['Educação',    /\b(curso\w*|escola|faculdade|livro\w*|livraria|udemy|alura)\b/],
+    ['Casa',        /\b(leroy|construcao|moveis|conserto\w*|eletricista|encanador|limpeza)\b/]
+  ];
+  function categoriaDe(texto) {
+    var s = _norm(texto);
+    for (var i = 0; i < _CATEGORIAS_PALAVRAS.length; i++) if (_CATEGORIAS_PALAVRAS[i][1].test(s)) return _CATEGORIAS_PALAVRAS[i][0];
+    return 'Outros';
+  }
+
+  /** Gasto geral no Worker (cartão, débito, Pix, dinheiro, boleto). g = {origem:'mp'|'bd'|'vz', chave, data, valor, meio, categoria, descricao}. */
+  function registrarGasto(g) {
+    var r = _post('/api/jarvis/gasto', g);
+    if (r.ok) return { ok: true, criado: r.dados.criado !== false, motivo: r.dados.motivo || null, existente: r.dados.existente || null };
+    var c = Number(r.codigo);
+    return { ok: false, erro: r.erro, definitivo: c >= 400 && c < 500 && c !== 429 && c !== 401 };
+  }
+  function desfazerGasto(origem, chave) {
+    var r = _post('/api/jarvis/gasto/desfazer', { origem: origem, chave: chave });
+    return r.ok ? { ok: true, removido: Number(r.dados.removido) || 0 } : { ok: false, erro: r.erro };
+  }
+  /** O Code.js chama isto depois de registrar um gasto vindo de notificação, para o "desfaz" valer também para ele. */
+  function guardarDesfazer(u) { _cachePut('fin_ultima_acao', u, DESFAZ_MIN * 60); }
+
+  var _MEIOS_FALADOS = [
+    // [regex, meio do app, rótulo falado, carteira]
+    [/\b(mobilidade)\b/, null, 'na mobilidade', 'mobilidade'],
+    [/\b(voucher|vouchers|swile|vale)\b/, null, 'no voucher', 'voucher'],
+    [/\b(credito)\b/, 'Cartão de crédito', 'no crédito', null],
+    [/\b(debito)\b/, 'Pix / débito', 'no débito', null],
+    [/\b(pix)\b/, 'Pix / débito', 'no pix', null],
+    [/\b(dinheiro|especie)\b/, 'Dinheiro', 'em dinheiro', null],
+    [/\b(boleto)\b/, 'Boleto', 'no boleto', null],
+    [/\b(alimentacao|refeicao)\b/, null, 'no voucher', 'voucher']   // só vale se nenhuma forma de pagar foi dita
+  ];
+  function _meioDe(s) {
+    for (var i = 0; i < _MEIOS_FALADOS.length; i++) if (_MEIOS_FALADOS[i][0].test(s)) return { meio: _MEIOS_FALADOS[i][1], rotulo: _MEIOS_FALADOS[i][2], carteira: _MEIOS_FALADOS[i][3] };
+    return null;
+  }
+  var _PARADAS = /^(gastei|paguei|comprei|passei|reais?|real|r|hoje|ontem|um|uma|uns|umas|de|do|da|dos|das|no|na|nos|nas|em|com|para|pra|pro|o|a|os|as|e|que|eu|aqui|agora|cartao|credito|debito|pix|dinheiro|especie|boleto|voucher|vale|swile|mobilidade|alimentacao|refeicao|foram|foi|saiu|total|pelo|pela|via|por|ai)$/;
+
+  /** "gastei 35 reais no mercado no débito" → {valor, meio, rotulo, carteira, descricao, categoria, dias} | {erro} | null. */
+  function interpretarGasto(msg) {
+    var s = _norm(msg).replace(/[?]/g, '');
+    if (!/\b(gastei|paguei|comprei)\b/.test(s)) return null;
+    if (/\b(quanto|qual|quais|quando|onde|quantos)\b/.test(s)) return null;
+    // contas fixas e fatura têm a previsão própria na caderneta: lançar como gasto avulso contaria duas vezes
+    if (/\b(fatura|parcela|aluguel|financiamento|condominio|iptu|ipva|luz|energia|agua|internet|telefone|plano de saude|dizimo)\b/.test(s)) return null;
+    var simples = _numerosSimples(msg);
+    var mv = simples.match(/(\d+(?:\.\d+)?)/);
+    if (!mv) return null;
+    var valor = Math.round(Number(mv[1]) * 100) / 100;
+    if (!(valor > 0)) return null;
+    if (valor > 20000) return { erro: 'Esse valor passa de vinte mil reais, o limite do Jarvis. Registre direto na caderneta.' };
+    var m = _meioDe(_norm(simples).replace(/\d+(\.\d+)?/g, ' '));
+    var palavras = _norm(simples).split(' ').map(function (t, i) { return t; });
+    var original = simples.split(/\s+/);
+    var descr = original.filter(function (t) {
+      var n = _norm(t).replace(/[^a-z0-9]/g, '');
+      return n && !/^\d/.test(n) && !_PARADAS.test(n);
+    }).join(' ').slice(0, 50);
+    var dias = /\bontem\b/.test(s) ? 1 : 0;
+    return { valor: valor, meio: m ? m.meio : null, rotulo: m ? m.rotulo : null, carteira: m ? m.carteira : null,
+             descricao: descr, categoria: categoriaDe(descr || s), dias: dias, temMeio: !!m };
+  }
+
+  function _fraseGasto(p) {
+    var dia = p.dias === 1 ? 'ontem' : 'hoje';
+    var onde = p.descricao ? ' em ' + p.descricao : '';
+    var cat = p.carteira ? '' : ', categoria ' + p.categoria;
+    return 'Confirma o gasto de ' + _brl(p.valor) + onde + ', ' + p.rotulo + cat + ', ' + dia + '? Diga sim ou não.';
+  }
+  function _dataGasto(dias) {
+    return Utilities.formatDate(new Date(Date.now() - dias * 86400000), TZ, 'yyyy-MM-dd');
+  }
+
+  ACOES.gasto = {
+    propor: function (msg) {
+      var g = interpretarGasto(msg);
+      if (!g) return null;
+      if (g.erro) return { resp: g.erro };
+      var p = { tipo: 'gasto', valor: g.valor, meio: g.meio, rotulo: g.rotulo, carteira: g.carteira, descricao: g.descricao,
+                categoria: g.categoria, dias: g.dias, id: Utilities.getUuid().replace(/-/g, '').slice(0, 12) };
+      if (!g.temMeio) { p.aguarda = 'meio'; return { pend: p, resp: 'Gasto de ' + _brl(p.valor) + (p.descricao ? ' em ' + p.descricao : '') + '. Foi no débito, no crédito, no pix, em dinheiro ou no voucher?' }; }
+      return { pend: p, resp: (p.valor >= 500 ? 'Esse valor é alto. ' : '') + _fraseGasto(p) };
+    },
+    executar: function (p) {
+      var data = _dataGasto(p.dias || 0), r, via;
+      if (p.carteira) {
+        via = 'swile';
+        r = registrarGastoSwile({ chave: p.id, data: data, carteira: p.carteira, valor: p.valor, estabelecimento: p.descricao });
+      } else {
+        via = 'vz';
+        r = registrarGasto({ origem: 'vz', chave: p.id, data: data, valor: p.valor, meio: p.meio, categoria: p.categoria, descricao: p.descricao });
+      }
+      if (!r.ok) return { resp: 'Não consegui registrar o gasto agora. Não gravei nada; tente de novo daqui a pouco.' };
+      var quando = p.dias === 1 ? ' de ontem' : '';
+      return { resp: 'Registrei o gasto' + quando + ' de ' + _brl(p.valor) + (p.descricao ? ' em ' + p.descricao : '') + ', ' + p.rotulo + '. Para desfazer, diga desfaz.',
+               desfazer: { tipo: 'gasto', via: via, chave: p.id, valor: p.valor, descricao: p.descricao || '' } };
+    },
+    desfazer: function (u) {
+      var r = u.via === 'swile' ? desfazerGastoSwile(u.chave) : desfazerGasto(u.via, u.chave);
+      return (r.ok && r.removido > 0) ? 'Desfeito: tirei o gasto de ' + _brl(u.valor) + (u.descricao ? ' em ' + u.descricao : '') + '.' : 'Não consegui desfazer. Ajuste na caderneta.';
+    }
+  };
+
   var _SIM = /^(sim|isso|isso mesmo|confirmo|confirma|confirmado|pode|pode registrar|pode confirmar|pode gravar|esta certo|ta certo|certo|correto|exato|positivo|com certeza|claro)\b/;
   var _NAO = /^(nao|negativo|cancela|cancelar|cancelado|deixa|deixa pra la|esquece|errado|nao precisa|para|pare)\b/;
   var _FILLER = /^(ok|okay|beleza|entao|bom|ta bom|ta|e ai|eai|pois|bem|enfim|ah|hum|uhum)[,.\s]+/;
@@ -525,6 +644,15 @@ var Financas = (function () {
       while (tentativas++ < 3 && _FILLER.test(s)) s = s.replace(_FILLER, '');
       if (!s) return null;
       var pend = _cacheGet('fin_pendente');
+      if (pend && pend.aguarda === 'meio') {
+        // falta só a forma de pagamento: a próxima frase responde isso (ou cancela)
+        if (_NAO.test(s)) { _cacheDel('fin_pendente'); return { resp: 'Certo, não registrei nada.' }; }
+        var mm = _meioDe(s);
+        if (!mm) return null;
+        pend.meio = mm.meio; pend.rotulo = mm.rotulo; pend.carteira = mm.carteira; pend.aguarda = null;
+        _cachePut('fin_pendente', pend, PEND_S);
+        return { resp: (pend.valor >= 500 ? 'Esse valor é alto. ' : '') + _fraseGasto(pend) };
+      }
       if (pend) {
         if (_SIM.test(s)) {
           _cacheDel('fin_pendente');
@@ -537,9 +665,9 @@ var Financas = (function () {
         if (_NAO.test(s)) { _cacheDel('fin_pendente'); return { resp: 'Certo, não registrei nada.' }; }
       }
       var ult = _cacheGet('fin_ultima_acao');
-      if (/^(desfaz|desfazer|desfaca|volta atras|cancela a recarga|apaga a recarga|tira a recarga|desfaz a recarga)\b/.test(s)) {
+      if (/^(desfaz|desfazer|desfaca|volta atras|(cancela|apaga|tira|remove) (a recarga|o gasto|esse gasto|o ultimo gasto))\b/.test(s)) {
         if (ult && ACOES[ult.tipo]) { _cacheDel('fin_ultima_acao'); return { resp: ACOES[ult.tipo].desfazer(ult) }; }
-        if (/recarga/.test(s)) return { resp: 'Não há nenhuma recarga recente para desfazer. Passou dos ' + DESFAZ_MIN + ' minutos, ajuste na caderneta.' };
+        if (/recarga|gasto/.test(s)) return { resp: 'Não há nada recente para desfazer. Passou dos ' + DESFAZ_MIN + ' minutos, ajuste na caderneta.' };
         return null;
       }
       var tipos = Object.keys(ACOES);
@@ -559,7 +687,8 @@ var Financas = (function () {
   return { configurado: configurado, resumo: resumo, falar: falar, interpretar: interpretar, responder: responder, AJUDA: AJUDA,
            avisos: avisos, verificarAvisos: verificarAvisos,
            registrarGastoSwile: registrarGastoSwile, desfazerGastoSwile: desfazerGastoSwile, falarSaldoSwile: falarSaldoSwile,
-           interpretarRecarga: interpretarRecarga, conversar: conversar, registrarRecarga: registrarRecarga, desfazerRecarga: desfazerRecarga };
+           interpretarRecarga: interpretarRecarga, conversar: conversar, registrarRecarga: registrarRecarga, desfazerRecarga: desfazerRecarga,
+           interpretarGasto: interpretarGasto, categoriaDe: categoriaDe, registrarGasto: registrarGasto, desfazerGasto: desfazerGasto, guardarDesfazer: guardarDesfazer };
 })();
 
 /** Diagnóstico no editor: mostra se está conectado e o que ele responderia, sem falar no celular. */

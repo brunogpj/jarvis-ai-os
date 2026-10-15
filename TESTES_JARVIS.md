@@ -277,6 +277,13 @@ Sem você pedir, no tick de 15 min, em duas janelas: **manhã 9–11h** e **noit
 | 1.146 | Monitor de páginas: preço/estoque/inscrição mudou | notifica com "Mudou: …" e as linhas novas | ⚠️ | idem; monitores antigos avisam sem resumo na 1ª mudança e passam a guardar o texto |
 | 1.147 | Voto do insight com "foi bem legal essa dica" / "já sabia disso" | 👍 / 👎 e a resposta de sempre ("Anotado, vou trazer mais…") | ⚠️ | `votoJev` ao vivo 17/18; falta votar de verdade logo depois de um insight |
 | 1.148 | "e amanhã também" logo depois de perguntar a agenda | só consulta; não oferece ferramenta de criar alerta | ✅ | 14/10 (`criaAgenda: []` com conversa) |
+| 1.149 | "Atualiza o saldo do CDB para X" e, antes do sim, mudar o saldo no app | o Jarvis diz "o saldo mudou na caderneta desde que eu falei (agora R$ …)" e NÃO grava | ✅ | 14/10: 409 provado ao vivo (`occProva`) e em teste automático (Worker e Jarvis) |
+| 1.150 | "Paguei o aluguel" e, antes do sim, editar o valor da conta no app | "O valor de … mudou…", nada marcado como pago | ✅ | idem (`valor_esperado`) |
+| 1.151 | "Desfaz" do saldo depois de corrigir o saldo no app | "Não desfiz: o saldo mudou depois…" | ✅ | teste automático |
+| 1.152 | Botão do olho (ou Ctrl+Shift+P) no web app | borra mensagens, cartões, conversas e nome; o campo de digitação fica legível; lembra a escolha | ⚠️ | testes de seletor passam; falta conferir visualmente no navegador logado |
+| 1.153 | "Acha o documento sobre inteligência artificial" | `buscarArquivosDrive` devolve nomes e links de arquivos do Drive | ✅ | 14/10 ao vivo (`buscaDrive`): os 4 primeiros eram sobre IA; 120 arquivos indexados |
+| 1.154 | Busca de um assunto que não há no Drive ("investimentos e aposentadoria") | scores baixos (~0,1), sem inventar; o agente deve dizer que não há um claramente melhor | ⚠️ | scores medidos; falta ver a frase do agente |
+| 1.155 | `BUSCA_DRIVE_ATIVA=sim` e esperar alguns ticks | o índice cresce sozinho (`buscaDrive:true` mostra `indexados` subindo) e arquivo novo aparece na busca | ⏳ | desligada por padrão; ligar é decisão do dono |
 | 1.139 | Interruptores: `FERRAMENTAS_JEV`, `CONFIRMA_JEV`, `INJECAO_JEV`, `ACAO_JEV`, `CATEGORIA_JEV` = nao | volta ao comportamento anterior | ✅ | testes automáticos |
 
 ### 1g. 🔔 Notificações do celular 🗣️

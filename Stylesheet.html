@@ -364,6 +364,21 @@
     .topbar__heading { display: flex; flex-direction: column; line-height: 1.2; }
     .topbar__heading h1 { font-size: 17px; font-weight: 700; letter-spacing: -0.01em; }
     .topbar__heading p { font-size: 12.5px; color: var(--text-mute); }
+    /* ===== MODO PRIVACIDADE (html.priv) — para gravar demonstração sem expor dados =====
+       Borra o CONTEÚDO (mensagens, cartões do dashboard, títulos de conversa, identidade, WhatsApp) e deixa a interface legível.
+       O que o apresentador DIGITA no campo de mensagem continua visível. Qualquer elemento novo pode entrar com data-sensivel. */
+    .topbar__priv { display: inline-flex; align-items: center; gap: 7px; border: 0; background: transparent; color: var(--text-mute); cursor: pointer; padding: 7px 10px; border-radius: 10px; font: inherit; font-size: 12.5px; }
+    .topbar__priv:hover { color: var(--text); }
+    .topbar__priv .priv-ico--on, .topbar__priv .priv-badge { display: none; }
+    html.priv .topbar__priv { color: var(--accent); }
+    html.priv .topbar__priv .priv-ico--off { display: none; }
+    html.priv .topbar__priv .priv-ico--on, html.priv .topbar__priv .priv-badge { display: inline; }
+    html.priv .msg__text, html.priv .msg__img, html.priv .dash-card > :not(.dash-card__head), html.priv #dashResumoDia,
+    html.priv .conv-list, html.priv .who, html.priv .popover__head, html.priv .wpp-instances, html.priv [data-sensivel] {
+      filter: blur(7px); -webkit-user-select: none; user-select: none; pointer-events: none;
+    }
+    @media (max-width: 640px) { .topbar__priv .priv-badge { display: none !important; } }
+
     .topbar__status {
       margin-left: 4px;
       display: inline-flex; align-items: center; gap: 6px;

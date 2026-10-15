@@ -335,7 +335,9 @@ var Gemini = (function () {
     // ao estourar a cota de embedding DELA, a reindexação inteira travava (198/284) mesmo com a 2ª
     // chave livre. A cota de embedContent é POR PROJETO → cada chave tem cota independente.
     var tents = _tentativas();
-    if (!tents.length) throw new Error('Configure GEMINI_API_KEY (ou FALLBACK) para embeddings.');
+    // opts.soPago: o TEXTO de arquivos pessoais só pode ir pela chave de faturamento (a gratuita pode usar o conteúdo para melhorar produtos). Sem ela, não embeda.
+    if (opts.soPago) tents = tents.filter(function (t) { return t.tier === 'faturamento'; });
+    if (!tents.length) throw new Error(opts.soPago ? 'Sem chave paga disponível (faturamento ausente ou teto do mês atingido): não envio texto pessoal pela chave gratuita.' : 'Configure GEMINI_API_KEY (ou FALLBACK) para embeddings.');
     var cache = null; try { cache = CacheService.getScriptCache(); } catch (eCc) {}
     var payload = { model: 'models/' + model, content: { parts: [{ text: String(texto || '').substring(0, 8000) }] } };
     if (opts.tipo) payload.taskType = opts.tipo;

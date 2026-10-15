@@ -958,6 +958,34 @@ var Jarvis = (function () {
     parameters: { type: 'OBJECT', properties: { consulta: { type: 'STRING', description: 'O que procurar (linguagem natural).' } }, required: ['consulta'] }
   }];
 
+  // Busca SEMÂNTICA nos ARQUIVOS do Drive do dono (Docs, Planilhas, Apresentações, PDFs, textos) — só dono. Devolve o link do arquivo vivo.
+  var _driveBuscaDecl = [{
+    name: 'buscarArquivosDrive',
+    description: 'ACHA ARQUIVOS no Google Drive do dono por SIGNIFICADO ("o documento sobre o contrato do aluguel", "aquela planilha de gastos da viagem"), não por nome exato. Devolve nome, tipo, data e LINK do arquivo. Use quando ele quer ENCONTRAR um arquivo; para ler trechos da base de conhecimento use buscarConhecimento; para listar uma pasta use listarArquivosDrive. score maior = mais parecido; parcial:true = indexado só pelo nome (PDF/imagem).',
+    parameters: { type: 'OBJECT', properties: {
+      consulta: { type: 'STRING', description: 'O que ele procura, em linguagem natural.' },
+      tipo: { type: 'STRING', description: 'Opcional: documento | planilha | apresentacao | pdf | texto | todos (padrão todos).' },
+      max: { type: 'NUMBER', description: 'Opcional: quantos resultados (padrão 5, máximo 10).' }
+    }, required: ['consulta'] }
+  }];
+
+  function _buscarArquivosDrive(a) {
+    a = a || {};
+    var consulta = String(a.consulta || '').trim();
+    if (!consulta) return { status: 'error', erro: 'Diga o que procurar.' };
+    if (typeof BuscaDrive === 'undefined') return { status: 'error', erro: 'A busca de arquivos do Drive não está disponível.' };
+    var r = BuscaDrive.buscar(consulta, { k: a.max, tipo: a.tipo });
+    if (r.ok) return { status: 'success', modo: 'semantica', indexados: r.indexados, arquivos: r.itens,
+                       nota: r.itens.length ? 'Mostre o nome e o link de cada arquivo. score é similaridade (não é porcentagem de certeza): se o primeiro for muito parecido com os demais, diga que não há um claramente melhor.' : 'Nenhum arquivo parecido.' };
+    // Índice ainda vazio (busca desligada ou primeira varredura em andamento): plano B honesto, pela busca de TEXTO do próprio Drive.
+    if (r.vazio) {
+      var lex = BuscaDrive.buscaLexical(consulta, Number(a.max) || 5);
+      return { status: 'success', modo: 'palavra-chave', arquivos: lex,
+               aviso: 'A busca por SIGNIFICADO ainda não está indexada; este resultado é só por palavra-chave do próprio Drive. Diga isso ao dono.' };
+    }
+    return { status: 'error', erro: r.erro };
+  }
+
   // Roteador de Conhecimento UNIFICADO — funde busca semântica (vetores) + palavra-chave (Drive), via RRF.
   // É a porta de entrada PREFERIDA para consultar a base; cai para palavra-chave se os vetores estiverem
   // vazios ou a quota de embeddings cair. Disponível para TODOS (somente leitura).
@@ -1114,7 +1142,7 @@ var Jarvis = (function () {
       n: 'mensagem de WhatsApp; notificações do celular; agenda; tarefas' },
     { id: 'drive', rep: 'listarArquivosDrive',
       i: 'Para atender o pedido, o assistente precisa mexer em ARQUIVOS, pastas, documentos ou planilhas do Google Drive?',
-      s: 'cria uma planilha de gastos; lista a pasta de contratos; faz um documento com o resumo',
+      s: 'cria uma planilha de gastos; lista a pasta de contratos; faz um documento com o resumo; acha o documento sobre o aluguel; onde está aquela planilha da viagem',
       n: 'anotar no segundo cérebro; e-mail; agenda' },
     { id: 'tarefas', rep: 'adicionarTarefa',
       i: 'Para atender o pedido, o assistente precisa listar, criar, concluir ou apagar itens da lista de TAREFAS (Google Tasks)?',
@@ -1251,7 +1279,7 @@ var Jarvis = (function () {
       },
       {
         re: /(drive|arquivo|pasta|document|\bdoc\b|planilha|sheet|relat[oi]rio|upload)/,
-        nomes: ['criarPastaDrive', 'listarArquivosDrive', 'criarDocumento', 'criarPlanilha']
+        nomes: ['criarPastaDrive', 'listarArquivosDrive', 'criarDocumento', 'criarPlanilha', 'buscarArquivosDrive']
       },
       {
         re: /(tarefa|to-?do|lista de|afazer)/,
@@ -1454,7 +1482,7 @@ var Jarvis = (function () {
       return wiki.concat(_conhecimentoDecl).concat(_memoriaConvDecl).concat(_prefsDecl).concat(_semanticaDecl).concat(_webDecl).concat(_youtubeDecl).concat(_autorizacaoDecl);
     }
     // Proprietário: constrói a lista COMPLETA e depois filtra por intenção (TSI-1).
-    var listaCompleta = wiki.concat(_conhecimentoDecl).concat(_memoriaConvDecl).concat(_prefsDecl).concat(_semanticaDecl).concat(_webDecl).concat(_youtubeDecl).concat(_autorizacaoDecl).concat(_workspaceToolDecls()).concat(_gmailToolDecls()).concat(SkillsManager.getToolDeclarations());
+    var listaCompleta = wiki.concat(_conhecimentoDecl).concat(_memoriaConvDecl).concat(_prefsDecl).concat(_semanticaDecl).concat(_driveBuscaDecl).concat(_webDecl).concat(_youtubeDecl).concat(_autorizacaoDecl).concat(_workspaceToolDecls()).concat(_gmailToolDecls()).concat(SkillsManager.getToolDeclarations());
 
     // WhatsApp desligado → as ferramentas dele nem são oferecidas (o modelo não tenta e não inventa motivo).
     if (typeof _whatsappAtivo === 'function' && !_whatsappAtivo()) {
@@ -1575,6 +1603,7 @@ var Jarvis = (function () {
       case 'listarWiki':   return WikiMemoryService.listarWiki(args.pasta || '');
       case 'buscarNoWiki': return WikiMemoryService.buscarNoWiki(args.termo);
       case 'buscarSemantico': return _buscarSemantico(args);
+      case 'buscarArquivosDrive': return isOwner ? _buscarArquivosDrive(args) : _denied(name);
       case 'buscarConhecimento': return _buscarConhecimento(args);
       case 'capturarConhecimento': return isOwner ? _capturarConhecimento(args) : _denied(name);
       case 'reindexarConhecimento': return isOwner ? _reindexarConhecimento(args) : _denied(name);

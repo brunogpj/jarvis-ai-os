@@ -378,7 +378,7 @@ var Financas = (function () {
     } catch (e) { return { ok: false, erro: 'sem conexão', codigo: 'rede' }; }
     var code = res.getResponseCode(), dados = null;
     try { dados = JSON.parse(res.getContentText()); } catch (eJ) {}
-    if (code !== 200) return { ok: false, erro: (dados && dados.erro) || ('HTTP ' + code), codigo: code };
+    if (code !== 200) return { ok: false, erro: (dados && dados.erro) || ('HTTP ' + code), codigo: code, dados: dados };
     try { CacheService.getScriptCache().remove('fin_resumo_atual'); } catch (eC) {}   // o saldo mudou: a próxima pergunta não pode ler o cache
     return { ok: true, dados: dados };
   }
@@ -880,7 +880,9 @@ var Financas = (function () {
       return { pend: p, resp: 'Marco como paga: ' + o.nome + ', ' + _brl(o.valor) + (o.dia ? ', dia ' + o.dia : '') + '.' + aviso + ' Diga sim ou não.' };
     },
     executar: function (p) {
-      var x = _post('/api/jarvis/pagamento', { mes: p.mes, chave: p.chave, pago: true });
+      // valor_esperado: o que o Jarvis repetiu. Se a conta foi editada no app entre a proposta e o "sim", o Worker recusa (409) e nada é marcado.
+      var x = _post('/api/jarvis/pagamento', { mes: p.mes, chave: p.chave, pago: true, valor_esperado: p.valor });
+      if (!x.ok && Number(x.codigo) === 409) return { resp: 'O valor de ' + p.nome + ' mudou na caderneta desde que eu falei' + (x.dados && x.dados.atual != null ? ' (agora ' + _brl(x.dados.atual) + ')' : '') + '. Não marquei nada; diga de novo se ainda quiser.' };
       if (!x.ok) return { resp: 'Não consegui marcar como paga agora. Não mudei nada; tente de novo daqui a pouco.' };
       var livre = '';
       var r = resumo();
@@ -1003,7 +1005,8 @@ var Financas = (function () {
       return { pend: p, resp: 'Marco ' + o.nome + ' como recebido: ' + _brl(o.valor) + '.' + aviso + ' Isso entra no seu livre de hoje. Diga sim ou não.' };
     },
     executar: function (p) {
-      var x = _post('/api/jarvis/pagamento', { mes: p.mes, chave: p.chave, pago: true });
+      var x = _post('/api/jarvis/pagamento', { mes: p.mes, chave: p.chave, pago: true, valor_esperado: p.valor });
+      if (!x.ok && Number(x.codigo) === 409) return { resp: 'O valor de ' + p.nome + ' mudou na caderneta desde que eu falei' + (x.dados && x.dados.atual != null ? ' (agora ' + _brl(x.dados.atual) + ')' : '') + '. Não marquei nada; diga de novo se ainda quiser.' };
       if (!x.ok) return { resp: 'Não consegui marcar como recebido agora. Não mudei nada; tente de novo daqui a pouco.' };
       if (!x.dados.mudou) return { resp: p.nome + ' já estava marcado como recebido.' };
       var r = resumo(), livre = (r.ok && r.dados && r.dados.livreHoje != null) ? ' Seu livre hoje agora é ' + _brl(r.dados.livreHoje) + (Number(r.dados.livreHoje) < 0 ? ' negativo' : '') + '.' : '';
@@ -1099,12 +1102,16 @@ var Financas = (function () {
       return { pend: p, resp: (grande ? 'A mudança é grande. ' : '') + 'Atualizo o saldo de ' + i.nome + ' de ' + _brl(antes) + ' para ' + _brl(novo) + ' (' + (dif >= 0 ? 'mais ' : 'menos ') + _brl(Math.abs(dif)) + ')? Diga sim ou não.' };
     },
     executar: function (p) {
-      var x = _post('/api/jarvis/investimento', { id: p.id, saldo: p.novo });
+      // saldo_esperado: o "de X" que foi dito. Se o saldo mudou no app entre a proposta e o "sim", o Worker recusa (409) e o valor novo do extrato não é pisado.
+      var x = _post('/api/jarvis/investimento', { id: p.id, saldo: p.novo, saldo_esperado: p.antes });
+      if (!x.ok && Number(x.codigo) === 409) return { resp: 'O saldo de ' + p.nome + ' mudou na caderneta desde que eu falei' + (x.dados && x.dados.atual != null ? ' (agora ' + _brl(x.dados.atual) + ', eu tinha dito ' + _brl(p.antes) + ')' : '') + '. Não mudei nada; diga o valor de novo se ainda quiser.' };
       if (!x.ok) return { resp: 'Não consegui atualizar o saldo agora. Não mudei nada.' };
       return { resp: 'Atualizei o saldo de ' + p.nome + ' para ' + _brl(x.dados.depois) + '. Para desfazer, diga desfaz.', desfazer: { tipo: 'saldoInvest', id: p.id, nome: p.nome, antes: x.dados.antes, atualizadoAntes: x.dados.atualizadoAntes || null, valor: x.dados.depois } };
     },
     desfazer: function (u) {
-      var x = _post('/api/jarvis/investimento', { id: u.id, saldo: u.antes, atualizado: u.atualizadoAntes || undefined });
+      // o desfaz só volta se o saldo ainda é o que o Jarvis gravou (senão pisaria uma correção feita depois no app)
+      var x = _post('/api/jarvis/investimento', { id: u.id, saldo: u.antes, atualizado: u.atualizadoAntes || undefined, saldo_esperado: u.valor });
+      if (!x.ok && Number(x.codigo) === 409) return 'Não desfiz: o saldo de ' + u.nome + ' mudou depois' + (x.dados && x.dados.atual != null ? ' (agora ' + _brl(x.dados.atual) + ')' : '') + '. Ajuste na caderneta.';
       return x.ok ? 'Desfeito: o saldo de ' + u.nome + ' voltou para ' + _brl(u.antes) + '.' : 'Não consegui desfazer. Ajuste na caderneta.';
     }
   };

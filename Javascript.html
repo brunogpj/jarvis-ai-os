@@ -397,6 +397,19 @@
 
       bootAuth();
 
+      /* ---------- Modo privacidade (persistente; Ctrl+Shift+P) ---------- */
+      var privBtn = document.getElementById("privToggle");
+      function setPriv(on) {
+        root.classList.toggle("priv", !!on);
+        if (privBtn) privBtn.setAttribute("aria-pressed", on ? "true" : "false");
+        try { localStorage.setItem("jarvis-priv", on ? "1" : "0"); } catch (ePv) {}
+      }
+      try { setPriv(localStorage.getItem("jarvis-priv") === "1"); } catch (ePv0) {}
+      if (privBtn) privBtn.addEventListener("click", function () { setPriv(!root.classList.contains("priv")); });
+      document.addEventListener("keydown", function (e) {
+        if (e.ctrlKey && e.shiftKey && (e.key === "P" || e.key === "p")) { e.preventDefault(); setPriv(!root.classList.contains("priv")); }
+      });
+
       /* ---------- Tema (persistente) ---------- */
       var savedTheme = localStorage.getItem("softtech-theme");
       if (savedTheme === "dark") { root.setAttribute("data-theme", "dark"); themeToggle.checked = true; }

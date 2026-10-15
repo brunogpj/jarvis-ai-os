@@ -25,7 +25,7 @@ Projeto Google Apps Script gerenciado localmente via clasp.
 
 | Deployment ID | Versão | Descrição |
 |---|---|---|
-| `<DEPLOYMENT_ID>` | **@507** | **ATIVA** — "JEV: monitor de páginas, voto do insight, portão de agendamento com contexto" |
+| `<DEPLOYMENT_ID>` | **@509** | **ATIVA** — "busca semântica no Drive, modo privacidade, controle otimista" |
 | `<DEPLOYMENT_ID>` | @25 | Antiga — "TesteJobs" |
 | `<DEPLOYMENT_ID>` | @HEAD | Cabeça (muda a cada push, não é a de produção) |
 
@@ -93,6 +93,7 @@ arquivo. **Arquivo novo que precise subir tem que ser adicionado lá**, senão o
 | `Objetivos.js` | Autonomia por meta: planeja → confirma → executa em 2º plano → sintetiza |
 | `Consultor.js` | Fase 4 da caderneta: o consultor da estratégia do dono (carteira × alvo, aporte do mês, simulações, reserva, metas), só leitura, 100% no código |
 | `Briefing.js` | Briefings falados com **dados buscados pelo código** (agenda, tarefas, notícias locais e nacionais, tempo, versículo); o modelo só redige notícias — ver "Briefings" |
+| `BuscaDrive.js` | Busca SEMÂNTICA nos arquivos do Drive ("acha o documento sobre X"): 1 vetor int8 por arquivo num índice único no Drive, com o `file_id` para abrir o arquivo vivo — ver "Busca semântica no Drive" |
 | `Evals.js` / `QA.js` | `rodarEvals()` (comportamento, via `toolTrace` real) e `rodarQA()` (saúde funcional) |
 
 ### Integrações
@@ -407,6 +408,25 @@ Medido: 7/7 (preço, estoque e inscrição aberta avisam; visitas, hora, ofertas
 10. **Portão de agendamento com contexto**: o portão antigo (`_intencaoAgendamento`) também recebe as últimas 3 mensagens. Achado ao acompanhar os eventos reais: "e amanhã também" abria `agendarAlertaVoz`; com a conversa, não abre mais
 (sem conversa continua ambíguo, e a ferramenta só é oferecida, o modelo decide).
 Diagnósticos: `ler_debug` com `ferramentasJev` (agora mostra `criaAgenda`), `injecaoJev:[textos]`, `acaoJev:[respostas]`, `categoriaJev:[lugares]`, `triagemGmail`, `triagemPagina:[{antigo,novo,descricao}]`, `votoJev:[frases]` (nada é executado).
+**Controle otimista nas escritas da caderneta (14/10, do post "Bidirectional Writeback" de Tanaike).** Entre o Jarvis repetir a proposta e o "sim" passam até 3 min (15 nas de banco); se o dado mudou no app nesse
+intervalo, gravar pisaria na correção. Agora a proposta carrega o que foi dito e o Worker confere: `/api/jarvis/investimento` aceita `saldo_esperado` (a condição vai NO UPDATE, atômica: `WHERE ABS(saldo - ?) < 0.005`) e
+`/api/jarvis/pagamento` aceita `valor_esperado` (o valor que ele ouviu da conta ou do salário). Divergência → **409** com `{conflito:true, atual}`, NADA é gravado, e o Jarvis diz o valor novo ("O saldo de X mudou na caderneta desde que
+eu falei (agora R$ …)"). O "desfaz" do saldo também confere (só volta se o saldo ainda é o que o Jarvis gravou). Sem o campo, o Worker se comporta como antes (compatível com um Jarvis antigo). Prova ao vivo sem gravar:
+`ler_debug` com `occProva:true` (409 nos dois endpoints). Meta e ajustes do consultor vivem em Script Properties, não no Worker, e ficaram de fora.
+
+**Modo privacidade no web app (14/10).** Botão do olho na barra superior (ou **Ctrl+Shift+P**), lembrado em `localStorage` (`jarvis-priv`): borra o CONTEÚDO (texto e imagem das mensagens, cartões do dashboard, resumo do dia, lista de conversas, nome e
+e-mail, instâncias do WhatsApp) e deixa a interface legível, para gravar demonstração (o repositório é vitrine). O que o apresentador digita no campo de mensagem continua visível. `html.priv` em `Stylesheet.html`; qualquer elemento novo entra com
+`data-sensivel`. `tests-local/privacidade-ui.test.js` amarra cada seletor borrado a uma classe que a interface realmente gera (renomear `msg__text` sem atualizar o CSS faria o vídeo vazar dado sem erro nenhum).
+
+**Busca semântica no Drive (`BuscaDrive.js`, 14/10, do post "Serverless Multimodal Vector Search" de Tanaike, sem BigQuery/Iceberg).** Ferramenta do agente `buscarArquivosDrive({consulta, tipo?, max?})` (só dono): devolve nome, tipo, data e o LINK do arquivo vivo,
+por SIGNIFICADO ("o documento sobre o aluguel"). A Semantica.js continua sendo a busca da wiki. Diferenças deliberadas: 1 vetor por ARQUIVO (nome + tipo + 2.500 caracteres do texto), **quantizado em int8** (~1 KB por arquivo em vez de ~10 KB), guardado num
+índice único `indice-busca-drive.json` no Drive (`BUSCA_DRIVE_INDICE_FILE_ID`), sem Firestore e sem o teto de 1.000 docs; a busca lê UM arquivo, centraliza os vetores (mesma correção de anisotropia da Semantica) e dá um empurrão pequeno a nome que contém a palavra.
+Só entra texto que o Workspace lê de graça: Docs, Slides, Sheets (cabeçalho + primeiras linhas), .txt/.md/.csv; **PDF e imagem entram só pelo nome** (`parcial:true`; ler o conteúdo exigiria OCR e queimaria cota). Ficam de fora a lixeira, a pasta da wiki e nomes que casam
+com `BUSCA_DRIVE_EXCLUIR` (regex em Script Property). **Privacidade:** o texto vai ao Gemini SÓ pela chave de faturamento (`Gemini.embeddar(..., {soPago:true})` recusa se só houver chave gratuita, que pode usar conteúdo para melhorar produtos); o índice guarda vetor, nunca texto.
+Indexação: `BuscaDrive.tick()` no tick de 15 min (Agenda.js), **desligada por padrão** (`BUSCA_DRIVE_ATIVA=sim` liga, via `config_fala`); lote de ~40 arquivos / 70 s, RESUMÍVEL por token do iterador, incremental por `modifiedDate`, com varredura completa a cada 7 dias que remove o que saiu do Drive.
+Medido ao vivo: ~6 s por arquivo (leitura do Workspace + embedding), então um Drive de milhares de arquivos leva dias no tick; 120 arquivos indexados à mão em 14/10. Sem índice, a ferramenta cai na busca de texto do próprio Drive e avisa que é por palavra-chave. `ler_debug` com `buscaDrive`:
+`true` (status) · `{consulta,k,tipo}` (busca) · `{rodar:true,maxArquivos}` (indexa um lote) · `{simular:true}` (conta sem gravar) · `{limpar:true}`.
+
 **Acompanhar o JEV na produção:** `ler_debug` com `n:200` e filtrar os eventos `gate:jev:ferramentas`, `gate:jev:agenda`, `confirma:jev`, `hook:acao_sem_fonte`, `hook:injecao_conteudo`, `monitor:triagem`, `web:triagem`, `rota:jev:*`
 (os `hook:acao_sem_fonte` de 14/10 22:02 são do ensaio `acaoJev`, não de uso real).
 Revisão diária automática: tarefa agendada `revisao-diaria-jev` (todo dia ~08:40, só leitura, roda enquanto o app Claude estiver aberto; se estiver fechado, roda na próxima abertura). Ela executa `node diagnostico_jev.js 24` (lê os eventos, sem segredo no arquivo: o token vem do `diagnostico.js`, que está no .gitignore) e relata acertos, falsos positivos e latência.

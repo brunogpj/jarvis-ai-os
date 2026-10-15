@@ -3157,7 +3157,7 @@ function doPost(e) {
       var _PERMITIDAS_CF = {
         FALA_PROATIVA_LOCAL: /^(sim|nao)$/, FALA_RESPOSTAS_LOCAL: /^(sim|nao)$/,
         MODO_FALA_VOZ: /^(nuvem|auto|local)$/, FALA_VOLUME_DB: /^(1[0-6]|[0-9])$/,
-        FALA_FORMATO: /^(ogg|wav)$/, FALA_ARQUIVO_UNICO: /^(sim|nao)$/, ROTA_JEV_NOVAS: /^(sim|nao)$/, FERRAMENTAS_JEV: /^(nao|adiciona|sim)$/, INJECAO_JEV: /^(sim|nao)$/, ACAO_JEV: /^(sim|nao)$/, CATEGORIA_JEV: /^(sim|nao)$/, FERRAMENTAS_JEV_ADD: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE: /^0?\.\d{1,2}$/, CONFIRMA_JEV: /^(sim|nao)$/, MONITOR_GMAIL_JEV: /^(sim|nao)$/, WEB_MONITOR_JEV: /^(sim|nao)$/, WEB_MONITOR_JEV_CORTE: /^0?\.\d{1,2}$/, MONITOR_GMAIL_JEV_CORTE: /^0?\.\d{1,2}$/, FIN_AVISOS_ATIVO: /^(sim|nao)$/, FIN_NOME_DONO: /^[a-zà-ÿ ]{3,80}$/, FIN_CPF_DONO: /^\d{3}\.\d{3}$/,
+        FALA_FORMATO: /^(ogg|wav)$/, FALA_ARQUIVO_UNICO: /^(sim|nao)$/, ROTA_JEV_NOVAS: /^(sim|nao)$/, FERRAMENTAS_JEV: /^(nao|adiciona|sim)$/, INJECAO_JEV: /^(sim|nao)$/, ACAO_JEV: /^(sim|nao)$/, CATEGORIA_JEV: /^(sim|nao)$/, FERRAMENTAS_JEV_ADD: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE: /^0?\.\d{1,2}$/, CONFIRMA_JEV: /^(sim|nao)$/, MONITOR_GMAIL_JEV: /^(sim|nao)$/, BUSCA_DRIVE_ATIVA: /^(sim|nao)$/, BUSCA_DRIVE_MAX: /^\d{2,4}$/, WEB_MONITOR_JEV: /^(sim|nao)$/, WEB_MONITOR_JEV_CORTE: /^0?\.\d{1,2}$/, MONITOR_GMAIL_JEV_CORTE: /^0?\.\d{1,2}$/, FIN_AVISOS_ATIVO: /^(sim|nao)$/, FIN_NOME_DONO: /^[a-zà-ÿ ]{3,80}$/, FIN_CPF_DONO: /^\d{3}\.\d{3}$/,
         // consultor (fase 4): margem na conta (R$), taxa ao mês (decimal), reserva-alvo (meses) e pausa do rebalanceamento (data)
         CONSULTOR_MARGEM: /^\d{1,6}$/, CONSULTOR_TAXA_MES: /^0?\.\d{1,4}$/, CONSULTOR_RESERVA_ALVO: /^\d{1,2}$/, CONSULTOR_PAUSA_ATE: /^\d{4}-\d{2}-\d{2}$/, CONSULTOR_AVISO_ATIVO: /^(sim|nao)$/, CONSULTOR_AVISO_MIN: /^\d{1,6}$/
       };
@@ -4123,6 +4123,24 @@ function doPost(e) {
         // Voto do insight por JEV: o que ele entenderia de cada frase (up/down/null), sem registrar nada. Máx. 30.
         if (body.votoJev && Array.isArray(body.votoJev)) {
           saida.votoJev = body.votoJev.slice(0, 30).map(function (f) { try { return { frase: String(f), voto: TypeSafe.votoFeedback(String(f)) }; } catch (eVj2) { return { frase: String(f), erro: eVj2.message }; } });
+        }
+        // Prova AO VIVO do controle otimista da caderneta, sem gravar nada: manda um valor "esperado" propositalmente errado e o Worker tem que
+        // responder 409 (conflito) ANTES de qualquer escrita. Usa o 1º investimento e a 1ª conta aberta do mês.
+        if (body.occProva) {
+          try {
+            var _rs = Financas.resumo(), _d = _rs.ok ? _rs.dados : null, _o = { configurado: !!_d };
+            if (_d) {
+              var _inv = ((_d.investimentos || {}).itens || [])[0];
+              if (_inv) { var _ri = Financas._postBruto('/api/jarvis/investimento', { id: _inv.id, saldo: Number(_inv.saldo), saldo_esperado: Number(_inv.saldo) + 123.45 }); _o.investimento = { status: _ri.codigo || 200, conflito: !!(_ri.dados && _ri.dados.conflito), gravou: _ri.ok }; }
+              var _ob = (_d.obrigacoes || []).filter(function (x) { return x.chave && !x.pago && !x.outroPaga; })[0];
+              if (_ob) { var _rp = Financas._postBruto('/api/jarvis/pagamento', { mes: _d.mes, chave: _ob.chave, pago: true, valor_esperado: Number(_ob.valor) + 50 }); _o.pagamento = { status: _rp.codigo || 200, conflito: !!(_rp.dados && _rp.dados.conflito), gravou: _rp.ok }; }
+            }
+            saida.occProva = _o;
+          } catch (eOcc) { saida.occProva = { erro: eOcc.message }; }
+        }
+        // Busca semântica de ARQUIVOS do Drive. {} → status · {consulta,k,tipo} → busca · {rodar:true,maxArquivos} → indexa um lote · {simular:true} → conta sem gravar · {limpar:true}.
+        if (body.buscaDrive) {
+          try { saida.buscaDrive = diagBuscaDrive(body.buscaDrive === true ? {} : body.buscaDrive); } catch (eBd) { saida.buscaDrive = { erro: eBd.message }; }
         }
         // Categoria de gasto: lista de palavras primeiro, JEV só para o que ela não conhece. Máx. 30 lugares.
         if (body.categoriaJev && Array.isArray(body.categoriaJev)) {

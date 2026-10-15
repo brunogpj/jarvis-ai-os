@@ -25,7 +25,7 @@ Projeto Google Apps Script gerenciado localmente via clasp.
 
 | Deployment ID | Versão | Descrição |
 |---|---|---|
-| `<DEPLOYMENT_ID>` | **@527** | **ATIVA** — "hoje/ontem somam tudo e classificar Outros por regras ensinadas" |
+| `<DEPLOYMENT_ID>` | **@536** | **ATIVA** — "Relatórios de investimentos (todas as aplicações/por classe) e de atividade, no código" |
 | `<DEPLOYMENT_ID>` | @25 | Antiga — "TesteJobs" |
 | `<DEPLOYMENT_ID>` | @HEAD | Cabeça (muda a cada push, não é a de produção) |
 
@@ -523,6 +523,8 @@ Peculiaridades medidas via ADB:
   (estado 2 = pausado, 3 = tocando), logcat de `SetVolumeActivity` (macro
   Falar começou) e `SynthHandler` (TTS falando).
 - scrcpy com áudio disputa o microfone com a macro: usar `--no-audio`.
+
+**Relatórios dos botões do chat (15/10).** "Automação e Objetivos → Triggers rápidos" mandava "Execute a automação: Relatório de FIIs" ao modelo; não existe automação com esse nome, ele respondeu "não encontrei" e depois inventou uma tabela do IFIX. Agora `_rotaDireta` (Code.js), ANTES do modelo, entrega: **Investimentos / FIIs** (`Financas.interpretarRelatorio` + `Financas.relatorio(consulta,'chat'|'voz')`, TODAS as aplicações ou uma classe: fii, renda fixa, tesouro, ações, liquidez; saldo, peso, alvo, rendimento no ano, liquidez, data do saldo, concentração >40%, saldo velho >45 dias; o Worker passou a expor `rendimentoAno/liquidez/taxa/atualizado` por investimento) e **Atividades** (`_relatorioAtividade`: log das últimas 24 h, sem modelo). Análise de MERCADO ("principais FIIs do IFIX", cotação, melhores) NÃO é interceptada: segue ao agente com pesquisa e fonte. A mesma frase por voz ("relatório dos meus investimentos") responde um resumo curto. Prova ao vivo sem falar: `ler_debug` com `relatorioTeste:['frase',…]`. Cuidado ao gerar código por `node -e`: `\b` virou backspace e o hook nunca casava.
 
 ## Gatilhos de tempo
 

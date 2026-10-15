@@ -154,12 +154,13 @@ const WikiMemoryService = {
     return null; // não está sob a pasta do wiki
   },
 
-  buscarNoWiki: function(termo) {
+  /** opts.semVarredura: pula a varredura recursiva de arquivos (o buscarConhecimento roda o semântico em seguida; medido em 15/10: a varredura custou até 8,9 s por chamada). */
+  buscarNoWiki: function(termo, opts) {
     try {
       Logger.log('[WikiMemoryService] buscarNoWiki: ' + termo);
       const termoLower = String(termo).toLowerCase();
       // Cache do resultado por termo (30min) — abrir arquivos do Drive p/ o trecho é o que custava ~40s.
-      const _ck = 'wiki_kw_' + (function (s) { var h = 0; for (var i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36); })(termoLower);
+      const _ck = 'wiki_kw_' + (opts && opts.semVarredura ? 'r_' : '') + (function (s) { var h = 0; for (var i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36); })(termoLower);
       const _cache = CacheService.getScriptCache();
       try { var _hit = _cache.get(_ck); if (_hit) return JSON.parse(_hit); } catch (eH) {}
       const resultados = [];
@@ -198,7 +199,7 @@ const WikiMemoryService = {
       // FRASE inteira ("o que falta eu fazer") nunca casa por indexOf nem por fullText de frase: a varredura abaixo (30 arquivos lidos um a um)
       // custava ~13 s na 1ª chamada e não podia achar nada (medido em 15/10 pelo diag tempoConhecimento). Linguagem natural é trabalho do
       // semântico, que o buscarConhecimento chama em seguida. A varredura fica para termos curtos (até 4 palavras), onde a palavra-chave faz sentido.
-      if (termoLower.split(/\s+/).filter(Boolean).length > 4) {
+      if ((opts && opts.semVarredura) || termoLower.split(/\s+/).filter(Boolean).length > 4) {
         var _rL = { status: 'success', termo: termo, total_encontrados: 0, resultados: [], via: 'frase-longa-sem-varredura' };
         try { _cache.put(_ck, JSON.stringify(_rL), 1800); } catch (ePL) {}
         return _rL;

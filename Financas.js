@@ -198,6 +198,104 @@ var Financas = (function () {
     return null;
   }
 
+  // ── RELATÓRIO DE INVESTIMENTOS (15/10) ─────────────────────────────────────────────────────────────────────────────────────────────────────
+  // O botão "Relatório FIIs" do web app só mandava "Execute a automação: Relatório de FIIs" ao chat; não existe automação com esse nome, o modelo respondeu "não encontrei" e, no pedido seguinte,
+  // inventou uma tabela do IFIX (pesos, P/VP, DY "aprox.") sem dado nenhum. Agora o relatório vem da CADERNETA, do código, para TODAS as aplicações ou para uma classe (FIIs, renda fixa, tesouro,
+  // ações, liquidez): saldo, peso na carteira, alvo, rendimento no ano, liquidez, data do saldo e alertas. Cotação e análise de MERCADO continuam sendo outra coisa (pesquisa na web, com fonte).
+  var _CLASSES_REL = [['fii', /\b(fiis?|fundos? imobiliarios?)\b/], ['renda fixa', /\brenda fixa\b/], ['tesouro', /\btesouro\b/], ['acoes', /\bacoes\b/], ['liquidez', /\b(liquidez|reserva|cofrinhos?)\b/]];
+
+  /** "relatório dos meus investimentos / dos FIIs", "raio-x da carteira", "analisa meus investimentos", "Execute a automação: Relatório de FIIs". → {tipo:'relatorio', classe?} | null. PURA.
+   *  NÃO pega análise de MERCADO ("analisar principais FIIs do IFIX", "melhores FIIs", cotação): isso é pesquisa, não os dados dele. */
+  function interpretarRelatorio(s) {
+    s = String(s || '');
+    if (/\b(ifix|cotacao|cotacoes|recomend\w*|melhores?|principais|vale a pena|ranking|dividend yield|p\/?vp)\b/.test(s)) return null;
+    var tema = /\b(investiment\w*|aplicac\w*|carteira|fiis?|fundos? imobiliarios?|renda fixa|tesouro|acoes|liquidez|patrimonio)\b/.test(s);
+    var pede = /\b(relatorio|panorama|raio ?x|balanco)\b/.test(s) || (/\b(analis\w+|resum\w+)\b/.test(s) && /\b(meus?|minhas?)\b/.test(s)) || /\bcomo (estao|esta|andam|anda) (os |as |meus |minhas )?(meus |minhas )?(fiis?|investiment\w*|aplicac\w*)\b/.test(s);
+    if (!tema || !pede) return null;
+    if (/\b(criar?|cri[ae]|agend\w*|program\w*|todo dia|toda semana)\b/.test(s)) return null;   // pedir para AGENDAR um relatório é outra coisa
+    var classe = null;
+    for (var i = 0; i < _CLASSES_REL.length; i++) if (_CLASSES_REL[i][1].test(s)) { classe = _CLASSES_REL[i][0]; break; }
+    return classe ? { tipo: 'relatorio', classe: classe } : { tipo: 'relatorio' };
+  }
+
+  function _pct1(v) { return (Math.round(v * 10) / 10).toString().replace('.', ',') + '%'; }
+  function _dataBr(iso) { var m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? m[3] + '/' + m[2] : '—'; }
+  function _diasDesde(iso, hojeISO) { var a = Date.parse(iso + 'T00:00:00Z'), b = Date.parse(hojeISO + 'T00:00:00Z'); return (isFinite(a) && isFinite(b)) ? Math.round((b - a) / 86400000) : null; }
+
+  /** Relatório dos investimentos da caderneta. formato 'chat' = markdown completo; 'voz' = resumo curto para falar. Sempre texto (nunca lança). */
+  function relatorio(consulta, formato) {
+    try {
+      if (!configurado()) return 'A caderneta ainda não está conectada ao Jarvis.';
+      var r = resumo();
+      if (!r.ok) return 'Não consegui consultar a caderneta agora.';
+      var d = r.dados, inv = d.investimentos || {}, todos = (inv.itens || []).filter(function (i) { return Number(i.saldo) > 0; });
+      if (!todos.length) return 'Não há investimentos cadastrados na caderneta.';
+      var total = todos.reduce(function (s, i) { return s + Number(i.saldo); }, 0), alvo = d.metaAlocacao || {};
+      // classe pedida → categorias da caderneta que casam (por nome normalizado); sem classe = tudo
+      var cats = {};
+      todos.forEach(function (i) { var k = i.categoria || 'Outros'; var o = cats[k] || (cats[k] = { nome: k, saldo: 0, rend: 0, n: 0 }); o.saldo += Number(i.saldo); o.rend += Number(i.rendimentoAno) || 0; o.n++; });
+      var itens = todos, rotulo = 'todas as aplicações';
+      if (consulta && consulta.classe) {
+        var cl = consulta.classe;
+        var casam = Object.keys(cats).filter(function (k) { var n = _norm(k); return cl === 'fii' ? /\bfiis?\b/.test(n) : cl === 'acoes' ? /\bacoes\b/.test(n) : (cl === 'liquidez' ? /liquidez|reserva/.test(n) : n.indexOf(cl) !== -1); });
+        if (!casam.length) return 'Não achei a classe "' + cl + '" entre as suas aplicações. Você tem: ' + Object.keys(cats).join(', ') + '.';
+        itens = todos.filter(function (i) { return casam.indexOf(i.categoria || 'Outros') !== -1; });
+        rotulo = casam.join(' e ');
+      }
+      var soma = itens.reduce(function (s, i) { return s + Number(i.saldo); }, 0), rend = itens.reduce(function (s, i) { return s + (Number(i.rendimentoAno) || 0); }, 0);
+      var rendPct = (soma - rend) > 0 ? rend / (soma - rend) * 100 : 0;
+      var ordenados = itens.slice().sort(function (a, b) { return b.saldo - a.saldo; });
+      var hojeISO = d.hoje, velhos = itens.filter(function (i) { var n = _diasDesde(i.atualizado, hojeISO); return n != null && n > 45; });
+      var catsLista = Object.keys(cats).map(function (k) { var c = cats[k], at = c.saldo / total * 100, al = Number(alvo[k]) || 0; return { nome: k, saldo: c.saldo, rend: c.rend, n: c.n, at: at, alvo: al, gap: al - at }; }).sort(function (a, b) { return b.saldo - a.saldo; });
+      var abaixo = catsLista.filter(function (c) { return c.alvo > 0; }).sort(function (a, b) { return b.gap - a.gap; })[0];
+
+      if (formato === 'voz') {
+        var maior = ordenados[0], pesoClasse = soma / total * 100;
+        if (consulta && consulta.classe) {
+          var cc = catsLista.filter(function (c) { return rotulo.indexOf(c.nome) !== -1; })[0];
+          return 'Em ' + rotulo + ' você tem ' + itens.length + (itens.length === 1 ? ' investimento' : ' investimentos') + ', ' + _brl(soma) + ', ' + _pct1(pesoClasse) + ' da carteira' + (cc && cc.alvo ? ', com alvo de ' + _pct1(cc.alvo) : '') +
+                 '. O maior é ' + maior.nome + ', ' + _brl(maior.saldo) + '. Rendimento no ano: ' + _brl(rend) + '. Para o relatório completo, peça no chat.';
+        }
+        return 'Seus investimentos somam ' + _brl(total) + ', em ' + todos.length + ' aplicações. A maior parte está em ' + catsLista[0].nome + ', ' + _pct1(catsLista[0].at) + '. Rendimento no ano: ' + _brl(rend) + '.' +
+               (abaixo && abaixo.gap >= 1 ? ' A mais abaixo do alvo é ' + abaixo.nome + ', por ' + Math.round(abaixo.gap) + ' pontos percentuais.' : '') +
+               (velhos.length ? ' ' + velhos.length + (velhos.length === 1 ? ' saldo está desatualizado' : ' saldos estão desatualizados') + ' há mais de 45 dias.' : '') + ' Para o relatório completo, peça no chat.';
+      }
+
+      var L = [];
+      L.push('### 📈 Relatório de investimentos — ' + rotulo + ' (' + _dataBr(hojeISO) + ')');
+      L.push('');
+      L.push('**Total:** ' + _brl(soma) + (rotulo === 'todas as aplicações' ? '' : ' (' + _pct1(soma / total * 100) + ' da carteira de ' + _brl(total) + ')') + ' · **Rendimento no ano:** ' + _brl(rend) + ' (≈ ' + _pct1(rendPct) + ' sobre o saldo de começo, sem descontar aportes)' +
+             (rotulo === 'todas as aplicações' && d.reservaMeses != null ? ' · **Reserva com resgate diário:** ' + (Math.round(d.reservaMeses * 10) / 10).toString().replace('.', ',') + ' meses' : ''));
+      L.push('');
+      L.push('**Por categoria**');
+      L.push('');
+      L.push('| Categoria | Saldo | % da carteira | Alvo | Diferença | Rend. no ano |');
+      L.push('|---|---:|---:|---:|---:|---:|');
+      catsLista.forEach(function (c) {
+        if (consulta && consulta.classe && rotulo.indexOf(c.nome) === -1) return;
+        L.push('| ' + c.nome + ' | ' + _brl(c.saldo) + ' | ' + _pct1(c.at) + ' | ' + (c.alvo ? _pct1(c.alvo) : '—') + ' | ' + (c.alvo ? (c.gap < 0 ? '+' : '') + (Math.round(-c.gap * 10) / 10).toString().replace('.', ',') + ' pp' : '—') + ' | ' + _brl(c.rend) + ' |');
+      });
+      L.push('');
+      L.push('**Por investimento** (' + Math.min(ordenados.length, 15) + ' de ' + ordenados.length + ', do maior para o menor)');
+      L.push('');
+      L.push('| Investimento | Instituição | Categoria | Saldo | Rend. no ano | Liquidez | Saldo de |');
+      L.push('|---|---|---|---:|---:|---|---|');
+      ordenados.slice(0, 15).forEach(function (i) {
+        L.push('| ' + i.nome + ' | ' + (i.instituicao || '—') + ' | ' + (i.categoria || '—') + ' | ' + _brl(i.saldo) + ' | ' + _brl(i.rendimentoAno || 0) + ' | ' + (i.liquidez || '—') + ' | ' + _dataBr(i.atualizado) + ' |');
+      });
+      var obs = [];
+      if (ordenados[0] && ordenados[0].saldo / total > 0.4) obs.push('**Concentração:** ' + ordenados[0].nome + ' tem ' + _pct1(ordenados[0].saldo / total * 100) + ' de toda a carteira.');
+      if (abaixo && abaixo.gap >= 1 && !(consulta && consulta.classe)) obs.push('**Alvo:** a categoria mais abaixo é ' + abaixo.nome + ', por ' + Math.round(abaixo.gap) + ' pontos percentuais.');
+      if (velhos.length) obs.push('**Saldo desatualizado:** ' + velhos.slice(0, 5).map(function (i) { return i.nome + ' (' + _dataBr(i.atualizado) + ')'; }).join(', ') + ' — mais de 45 dias; o rendimento e o peso podem estar defasados.');
+      var semRend = itens.filter(function (i) { return !(Number(i.rendimentoAno) > 0); });
+      if (semRend.length && semRend.length < itens.length) obs.push('**Sem rendimento informado no ano:** ' + semRend.slice(0, 5).map(function (i) { return i.nome; }).join(', ') + '.');
+      if (obs.length) { L.push(''); L.push('**Pontos de atenção**'); L.push(''); obs.forEach(function (o) { L.push('- ' + o); }); }
+      L.push('');
+      L.push('_Dados da sua caderneta (saldos que você atualiza). Não inclui cotações de mercado nem projeções; para análise de mercado, peça uma pesquisa com fonte._');
+      return L.join('\n');
+    } catch (e) { return 'Não consegui montar o relatório agora.'; }
+  }
+
   function interpretar(msg) {
     var s = String(msg || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[?!.,;:]/g, ' ').replace(/\s+/g, ' ').trim();
     if (!s) return null;
@@ -214,6 +312,8 @@ var Financas = (function () {
     // "liste", "gastos do mês"): "quanto gastei essa semana" e "onde gastei" continuam sendo do Swile.
     var gq = _interpretarGastos(s);
     if (gq) return gq;
+    var rq = interpretarRelatorio(s);   // "relatório dos meus investimentos / dos FIIs" (voz: resumo curto; chat: relatório completo)
+    if (rq) return rq;
     // Swile / vale: é da outra rota (_interpretarFinanceiro)
     if (/\b(swile|suav|suail|voucher|vale|mobilidade|alimentacao|refeicao|combustivel)\b/.test(s)) return null;
     // comando/ação que não é consulta (registrar, criar, cancelar...): fica para fases seguintes / modelo
@@ -257,6 +357,7 @@ var Financas = (function () {
       if (!configurado()) return 'A caderneta ainda não está conectada ao Jarvis.';
       var r = resumo();
       if (!r.ok) return r.codigo === 401 ? 'A caderneta recusou o acesso do Jarvis. Preciso que o acesso seja reconfigurado.' : 'Não consegui consultar a caderneta agora.';
+      if (consulta.tipo === 'relatorio') return relatorio(consulta, 'voz');
       if (consulta.tipo === 'gastos_semana' || consulta.tipo === 'gastos_dia') {
         // Período fechado (hoje, ontem ou os últimos 7 dias, atravessando a virada do mês); o Worker manda gastosMes.semana e gastosMes.dias.{hoje,ontem}:
         // todas as despesas lançadas, inclusive as do voucher.
@@ -1689,7 +1790,7 @@ var Financas = (function () {
            registrarGastoSwile: registrarGastoSwile, desfazerGastoSwile: desfazerGastoSwile, falarSaldoSwile: falarSaldoSwile,
            interpretarRecarga: interpretarRecarga, conversar: conversar, registrarRecarga: registrarRecarga, desfazerRecarga: desfazerRecarga,
            interpretarGasto: interpretarGasto, categoriaDe: categoriaDe, registrarGasto: registrarGasto, desfazerGasto: desfazerGasto, guardarDesfazer: guardarDesfazer,
-           _postBruto: _post, ehDoDono: ehDoDono, proporEntrada: proporEntrada, proporBancoGenerico: proporBancoGenerico, proporPagamentoFatura: proporPagamentoFatura, sugerirCategoria: sugerirCategoria, perguntarCategoria: _perguntarCategoria, registrarReceita: registrarReceita, desfazerReceita: desfazerReceita };
+           _postBruto: _post, ehDoDono: ehDoDono, proporEntrada: proporEntrada, proporBancoGenerico: proporBancoGenerico, proporPagamentoFatura: proporPagamentoFatura, sugerirCategoria: sugerirCategoria, relatorio: relatorio, interpretarRelatorio: interpretarRelatorio, perguntarCategoria: _perguntarCategoria, registrarReceita: registrarReceita, desfazerReceita: desfazerReceita };
 })();
 
 /** Diagnóstico no editor: mostra se está conectado e o que ele responderia, sem falar no celular. */

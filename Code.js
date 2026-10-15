@@ -1342,10 +1342,57 @@ function diagRotaSemantica(args) {
            respostaDoJev: resp };
 }
 
+/**
+ * 🧾 RELATÓRIO DE ATIVIDADE (15/10) — o botão "Atividades" do web app mandava "Execute a automação: Relatório de Atividade" ao modelo, que não achou automação nenhuma e ofereceu três
+ * interpretações (inclusive uma planilha de OUTRO projeto). Agora vem do log real (agente_eventos), das últimas 24 h: o que o Jarvis fez, por onde as falas foram atendidas, o que foi lento ou falhou
+ * e o gasto do Gemini no mês. 100% código, sem modelo. `eventos` é injetável para teste. → markdown.
+ */
+function _relatorioAtividade(eventos, agora) {
+  agora = agora || Date.now();
+  var desde = agora - 24 * 3600e3, ev;
+  try {
+    ev = (eventos || (Firestore.listDocs('agente_eventos', 500) || []).map(function (d) { return d.dados || d || {}; }))
+      .filter(function (e) { var t = new Date(e.ts).getTime(); return isFinite(t) && t >= desde && !/^diag:/.test(String(e.tool || '')); });
+  } catch (e0) { return 'Não consegui ler o log de atividade agora.'; }
+  if (!ev.length) return '### 🧾 Relatório de atividade (últimas 24 h)\n\nNenhum evento registrado nas últimas 24 horas.';
+  function contar(lista, chave) { var m = {}; lista.forEach(function (e) { var k = chave(e); if (k) m[k] = (m[k] || 0) + 1; }); return Object.keys(m).map(function (k) { return { k: k, n: m[k] }; }).sort(function (a, b) { return b.n - a.n; }); }
+  var voz = ev.filter(function (e) { return /^voz:/.test(e.tool) && !/^voz:entrega/.test(e.tool); });
+  var porRota = contar(voz, function (e) { return e.tool.replace(/^voz:/, ''); });
+  var entregas = contar(ev.filter(function (e) { return /^voz:entrega:/.test(e.tool); }), function (e) { return e.tool.replace(/^voz:entrega:/, ''); });
+  var ferr = ev.filter(function (e) { return !/^(voz:|diag:|gate:|rota:jev|confirma:|hook:|notif:|alertaVoz:|aviso:|briefing:|proativo:|memoriaConversas|monitor:|web:)/.test(e.tool); });
+  var porFerr = {}; ferr.forEach(function (e) { var o = porFerr[e.tool] || (porFerr[e.tool] = { n: 0, ms: 0, erros: 0 }); o.n++; o.ms += Number(e.ms) || 0; if (e.ok === false) o.erros++; });
+  var topFerr = Object.keys(porFerr).map(function (k) { return { k: k, n: porFerr[k].n, med: Math.round(porFerr[k].ms / porFerr[k].n), erros: porFerr[k].erros }; }).sort(function (a, b) { return b.n - a.n; }).slice(0, 6);
+  var jev = contar(ev.filter(function (e) { return /^(gate:jev|rota:jev|confirma:jev|hook:|monitor:triagem|web:triagem)/.test(e.tool); }), function (e) { return e.tool; });
+  var avisos = ev.filter(function (e) { return /^(alertaVoz:|aviso:|proativo:)/.test(e.tool) && !/suprimido/.test(e.tool); });
+  var lentos = ev.filter(function (e) { return Number(e.ms) >= 30000; }).sort(function (a, b) { return b.ms - a.ms; }).slice(0, 4);
+  var falhas = ev.filter(function (e) { return e.ok === false; });
+  var L = ['### 🧾 Relatório de atividade (últimas 24 h)', ''];
+  L.push('**' + ev.length + ' eventos** · **' + voz.length + ' falas atendidas** · **' + ferr.length + ' execuções de ferramenta** · **' + avisos.length + ' avisos/alertas**');
+  if (porRota.length) { L.push(''); L.push('**Falas por quem atendeu:** ' + porRota.slice(0, 8).map(function (x) { return x.k + ' ' + x.n; }).join(' · ') + (entregas.length ? '  \n**Entrega da voz:** ' + entregas.map(function (x) { return x.k + ' ' + x.n; }).join(' · ') : '')); }
+  if (topFerr.length) {
+    L.push(''); L.push('**Ferramentas mais usadas**'); L.push(''); L.push('| Ferramenta | Execuções | Tempo médio | Erros |'); L.push('|---|---:|---:|---:|');
+    topFerr.forEach(function (x) { L.push('| ' + x.k + ' | ' + x.n + ' | ' + (x.med >= 1000 ? (Math.round(x.med / 100) / 10).toString().replace('.', ',') + ' s' : x.med + ' ms') + ' | ' + x.erros + ' |'); });
+  }
+  if (jev.length) { L.push(''); L.push('**JEV e guardas:** ' + jev.slice(0, 8).map(function (x) { return x.k + ' ' + x.n; }).join(' · ')); }
+  if (lentos.length) { L.push(''); L.push('**Mais lentos:** ' + lentos.map(function (e) { return e.tool + ' ' + Math.round(e.ms / 1000) + ' s'; }).join(' · ')); }
+  L.push(''); L.push(falhas.length ? '**Falhas (' + falhas.length + '):** ' + contar(falhas, function (e) { return e.tool; }).slice(0, 5).map(function (x) { return x.k + ' ' + x.n; }).join(' · ') : '**Falhas:** nenhuma ✅');
+  try {
+    if (typeof GastoIA !== 'undefined') { var g = GastoIA.estado(); L.push(''); L.push('**Gemini no mês:** R$ ' + String(g.gastoBRL).replace('.', ',') + ' de R$ ' + String(g.tetoBRL).replace('.', ',') + ' (' + String(g.pct).replace('.', ',') + '%) · projeção R$ ' + String(g.projecaoBRL).replace('.', ',') + ' · ' + g.chamadas + ' chamadas'); }
+  } catch (eG) {}
+  return L.join('\n');
+}
+
+var _ultimoErroRel = null;   // só para o diagnóstico relatorioTeste
 function _rotaDireta(mensagem, email, isOwner) {
   if (!isOwner) return null;
   var m = String(mensagem || '').toLowerCase().trim();
   if (!m) return null;
+  // RELATÓRIOS DOS BOTÕES (15/10): "Relatório de FIIs / de Investimentos / de Atividade" vêm do código, ANTES de qualquer saída para o modelo (que não tem esses dados e respondeu "não encontrei" e depois inventou uma tabela do IFIX).
+  try {
+    var _mn = m.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[?!.,;:]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (/\brelatorio de atividades?\b|\batividades? (de hoje|das ultimas|recentes)\b|\bo que o jarvis fez\b/.test(_mn)) return _relatorioAtividade();
+    if (typeof Financas !== 'undefined' && Financas.interpretarRelatorio) { var _rq = Financas.interpretarRelatorio(_mn); if (_rq) return Financas.relatorio(_rq, 'chat'); }
+  } catch (eRel) { _ultimoErroRel = String(eRel && eRel.message); }
   // Se o pedido envolve raciocínio/redação ou ação de escrita, NÃO é leitura direta.
   if (/resum|analis|detalh|escrev|redi[jg]|compar|explic|por que|porqu/.test(m)) return null;
   // Perguntas META/conceituais (sobre cards, telas, wiki, melhorias, "o que é…") NÃO são leitura de
@@ -4187,6 +4234,31 @@ function doPost(e) {
             }) };
           } catch (eTe) { saida.ttsEco = { erro: eTe.message }; }
         }
+        // Histórico do CHAT do web app: conversas (de todos os usuários) cujas mensagens contêm `contem`, com as mensagens. {contem, max?, tamanho?}. Só leitura.
+        if (body.historicoChat) {
+          try {
+            var _hc = body.historicoChat, _termo = String(_hc.contem || '').toLowerCase(), _mx = Math.min(5, Number(_hc.max) || 2), _tam = Math.min(4000, Number(_hc.tamanho) || 1500), _achadas = [];
+            var _us = Firestore.listDocs('usuarios', 100);
+            for (var _iu = 0; _iu < _us.length && _achadas.length < _mx; _iu++) {
+              var _cs = Firestore.listDocs('usuarios/' + _us[_iu].id + '/conversas', 100);
+              for (var _ic = 0; _ic < _cs.length && _achadas.length < _mx; _ic++) {
+                var _ms = Firestore.listDocs('usuarios/' + _us[_iu].id + '/conversas/' + _cs[_ic].id + '/mensagens', 200).map(function (m) { return m.dados; }).sort(function (a, b) { return Number(a.ts || 0) - Number(b.ts || 0); });
+                if (_ms.some(function (m) { return String(m.text || '').toLowerCase().indexOf(_termo) !== -1; }))
+                  _achadas.push({ titulo: (_cs[_ic].dados || {}).titulo, mensagens: _ms.map(function (m) { return { quando: m.ts, papel: m.role, texto: String(m.text || '').slice(0, _tam) }; }) });
+              }
+            }
+            saida.historicoChat = _achadas;
+          } catch (eHc) { saida.historicoChat = { erro: eHc.message }; }
+        }
+        // Eventos LENTOS de um período maior que o limite de 200 do ler_debug: lê até `n` (máx. 1500) eventos e devolve só os de `ms` ≥ minMs, com a hora. {n?, minMs?}. Só leitura.
+        if (body.lentos) {
+          try {
+            var _ln = Math.min(1500, Math.max(50, Number(body.lentos.n) || 1000)), _lm = Number(body.lentos.minMs) || 30000, _lt = body.lentos.tools ? new RegExp(String(body.lentos.tools).slice(0, 80)) : null;   // tools: regex de eventos que entram mesmo rápidos
+            var _lev = Firestore.listDocs('agente_eventos', _ln) || [];
+            saida.lentos = { lidos: _lev.length, maisAntigo: _lev.length ? _lev[_lev.length - 1].dados.ts : null,
+              eventos: _lev.filter(function (e) { return Number(e.dados.ms) >= _lm || (_lt && _lt.test(String(e.dados.tool))); }).map(function (e) { return { ts: e.dados.ts, tool: e.dados.tool, ms: e.dados.ms, spans: e.dados.spans || null, resumo: String(e.dados.resumo || '').slice(0, 260) }; }) };
+          } catch (eLn) { saida.lentos = { erro: eLn.message }; }
+        }
         // Itens da categoria "Outros" (e sem categoria) do mês, maiores primeiro, com a origem pelo prefixo do id. Só leitura: base para classificar melhor.
         if (body.outrosDiag) {
           try {
@@ -4234,6 +4306,17 @@ function doPost(e) {
             }
             saida.caderneta = _cd;
           } catch (eCad) { saida.caderneta = { erro: eCad.message }; }
+        }
+        // Relatórios dos botões do chat, sem falar nada: `relatorioTeste:['relatório de fiis', ...]` (+ 'atividade'). Mostra o que o chat responderia.
+        if (body.relatorioTeste) {
+          try {
+            saida.relatorioTeste = [].concat(body.relatorioTeste).slice(0, 4).map(function (f) {
+              var d = _rotaDireta(String(f), String(Jarvis._ownerEmail ? Jarvis._ownerEmail() : (PropertiesService.getScriptProperties().getProperty('OWNER_EMAIL') || '')), true);
+              if (d == null && /atividade/i.test(f)) { try { d = _relatorioAtividade(); } catch (eAt) { d = 'ERRO atividade: ' + eAt.message; } }
+              if (d == null && _ultimoErroRel) d = 'ERRO rotaDireta: ' + _ultimoErroRel;
+              return { frase: f, resposta: d == null ? null : String(d).slice(0, 2500) };
+            });
+          } catch (eRt) { saida.relatorioTeste = { erro: eRt.message }; }
         }
         // Avisos proativos da caderneta: o que sairia agora na janela pedida ('manha'|'noite'), sem enviar nem gravar.
         if (body.cadernetaAvisos) { try { saida.cadernetaAvisos = Financas.verificarAvisos({ ensaio: true, janela: String(body.cadernetaAvisos) === 'noite' ? 'noite' : 'manha' }); } catch (eCa) { saida.cadernetaAvisos = { erro: eCa.message }; } }

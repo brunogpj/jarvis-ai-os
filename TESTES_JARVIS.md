@@ -302,6 +302,10 @@ Sem você pedir, no tick de 15 min, em duas janelas: **manhã 9–11h** e **noit
 | 1.171 | "Reclassifica os gastos em Outros" | diz quantos há, o total e, sem certeza, ensina a ensinar ("Railway é Trabalho"); nunca muda sozinho | ✅ | 15/10 ao vivo: 6 gastos, R$ 305,51, nenhuma sugestão segura |
 | 1.172 | "Railway é trabalho" → "sim" | guarda a regra, troca o gasto de Outros para Trabalho e diz "diga desfaz" | ⚠️ | proposta confirmada ao vivo; cancelei com "não" para não mexer nos seus dados. Falta você confirmar |
 | 1.173 | "Desfaz" depois de ensinar uma categoria | esquece a regra e devolve o gasto para Outros | ✅ | teste automático |
+| 1.174 | Chat → Automação e Objetivos → botão **Investimentos** ("Relatório de Investimentos") | relatório da caderneta: total, rendimento no ano, tabela por categoria × alvo, tabela por investimento e pontos de atenção; sem cotação inventada | ✅ | 15/10 ao vivo (`ler_debug` `relatorioTeste`) |
+| 1.175 | Botão **FIIs** | mesmo relatório só da classe FIIs, dos seus saldos | ✅ | 15/10 ao vivo |
+| 1.176 | Botão **Atividades** | relatório das últimas 24 h do log: falas por rota, ferramentas (média e erros), JEV, lentos, falhas e gasto do Gemini | ✅ | 15/10 ao vivo |
+| 1.177 | "Analisar principais FIIs do IFIX" | NÃO é interceptado (é análise de mercado, vai ao agente com pesquisa e fonte) | ✅ | teste automático + ao vivo |
 | 1.139 | Interruptores: `FERRAMENTAS_JEV`, `CONFIRMA_JEV`, `INJECAO_JEV`, `ACAO_JEV`, `CATEGORIA_JEV` = nao | volta ao comportamento anterior | ✅ | testes automáticos |
 
 ### 1g. 🔔 Notificações do celular 🗣️

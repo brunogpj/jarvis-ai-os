@@ -89,3 +89,17 @@ test('Monitor de páginas: o resumo da notificação prefere linhas com palavras
   var soDatas = s.Web.julgarMudanca('A', 'A\nSep 15, 2026\nOct 1, 2026', 'x');
   assert.match(soDatas.resumo, /Sep 15, 2026/, 'sem nada melhor, mostra o que houver');
 });
+
+test('buscarNoWiki com semVarredura (usado pelo buscarConhecimento) nunca varre o Drive, nem para termo curto; sem a opção, termo curto ainda varre', function () {
+  var s = wikiSandbox();
+  var r = s.W.buscarNoWiki('cdb', { semVarredura: true });
+  assert.strictEqual(r.total_encontrados, 0);
+  assert.strictEqual(s._varreu, false, 'a varredura de até 30 arquivos (8,9 s medidos) é redundante: o semântico roda em seguida');
+  var c = wikiSandbox();
+  c.W.buscarNoWiki('cdb');
+  assert.strictEqual(c._varreu, true, 'a ferramenta buscarNoWiki isolada continua varrendo');
+  // as duas versões não compartilham cache (senão o resultado "vazio sem varredura" taparia a busca completa)
+  var k = wikiSandbox();
+  k.W.buscarNoWiki('cdb', { semVarredura: true }); k.W.buscarNoWiki('cdb');
+  assert.strictEqual(k._varreu, true);
+});

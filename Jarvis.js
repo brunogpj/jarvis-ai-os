@@ -1929,6 +1929,7 @@ var Jarvis = (function () {
     var K = 60;            // constante RRF padrão (amortece o peso das primeiras posições)
     var TOP = 6;           // trechos retornados ao agente
     var fontes = [];       // diagnóstico: quais backends responderam
+    var _T = {}, _tk = Date.now();   // tempo por etapa (15/10: a busca levava 25–54 s em produção e o diag, 12 s; sem medir por etapa em produção não dava para achar onde)
     var mapa = {};         // caminho -> { caminho, trecho, score, origens:{}, semScore }
 
     function _acc(caminho, trecho, rank, origem, semScore) {
@@ -1944,7 +1945,7 @@ var Jarvis = (function () {
     // 1) PALAVRA-CHAVE primeiro (Drive — ZERO custo de IA; é o piso de robustez).
     var kwForte = false;
     try {
-      var kw = WikiMemoryService.buscarNoWiki(a.consulta);
+      var kw = WikiMemoryService.buscarNoWiki(a.consulta, { semVarredura: true });   // o semântico vem logo depois: a varredura recursiva só somava segundos
       var lista = (kw && kw.status === 'success' && kw.resultados) ? kw.resultados : [];
       if (lista.length) {
         fontes.push('palavra-chave');
@@ -1955,6 +1956,7 @@ var Jarvis = (function () {
       }
     } catch (eKw) { Logger.log('[buscarConhecimento] palavra-chave indisponível: ' + eKw.message); }
 
+    _T.palavraChave = Date.now() - _tk; _tk = Date.now();
     // 2) SEMÂNTICO só quando a palavra-chave NÃO bastou (Q2a · lazy semantic).
     // Embeddings dividem a MESMA cota do Gemini que o chat → só pagamos o embedding quando a
     // busca barata vem fraca/vazia. (Consultas repetidas ainda reaproveitam o cache do embeddar.)
@@ -1970,6 +1972,7 @@ var Jarvis = (function () {
       } catch (eSem) { Logger.log('[buscarConhecimento] semântico indisponível: ' + eSem.message); }
     }
 
+    _T.semantico = Date.now() - _tk; _tk = Date.now();
     var fundidos = Object.keys(mapa).map(function (k) { return mapa[k]; });
     if (!fundidos.length) {
       return { status: 'success', fontes: fontes, trechos: [], resultado: fontes.length ? '(nenhum trecho relevante na base)' : '(base de conhecimento indisponível — vetores vazios e Drive sem correspondência)' };
@@ -1991,6 +1994,7 @@ var Jarvis = (function () {
       if (_rr && _rr.length) { fundidos = _rr; fontes.push('rerank'); }
     } catch (eRr) { Logger.log('[buscarConhecimento] rerank indisponível: ' + eRr.message); }
 
+    _T.rerank = Date.now() - _tk; _tk = Date.now();
     // RAG refino (full-page-on-citation): para os TOP_FULL primeiros, injeta a PÁGINA INTEIRA
     // (via lerWiki) quando ela cabe em MAX_FULL — assim o agente não perde conteúdo que ficou
     // FORA do chunk recuperado (ex.: uma receita/seção no fim da página). Páginas grandes mantêm
@@ -2011,8 +2015,10 @@ var Jarvis = (function () {
       }
     });
 
+    _T.paginas = Date.now() - _tk;
     return {
       status: 'success',
+      tempos: _T,                                      // ms por etapa (palavraChave, semantico, rerank, paginas)
       fontes: fontes,                                  // quais backends contribuíram
       total_fundidos: fundidos.length,
       trechos: top.map(function (r) {
@@ -3370,7 +3376,7 @@ var Jarvis = (function () {
     if (!result) return '';
     if (result.status === 'error' || result.erro) return 'erro: ' + String(result.erro || result.status).substring(0, 120);
     if (result.status === 'confirmacao_requerida') return 'confirmação requerida';
-    if (name === 'buscarConhecimento' && result.trechos) return result.trechos.length + ' trechos · fontes=' + (result.fontes || []).join(',');
+    if (name === 'buscarConhecimento' && result.trechos) return result.trechos.length + ' trechos · fontes=' + (result.fontes || []).join(',') + (result.tempos ? ' · ms ' + JSON.stringify(result.tempos) : '');
     if (name === 'lembrarDeConversas' && result.lembrancas) return result.lembrancas.length + ' lembranças';
     if ((name === 'definirPreferencia' || name === 'esquecerPreferencia') && result.chave) return result.chave;
     if (name === 'pesquisarYouTube') return result.melhor ? ('▶ ' + String(result.melhor.titulo).substring(0, 50)) : (result.via || 'busca');

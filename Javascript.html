@@ -487,6 +487,46 @@
 
       var fileIconSvg = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
       function escapeHtml(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+      /*MD_INI*/
+      // Markdown SEGURO só para os relatórios (tabelas, títulos, negrito, citação, lista, link). O chat era textContent puro: as tabelas dos relatórios apareciam como "| a | b |" crus (15/10).
+      // Escapa o HTML ANTES de qualquer troca (nada que venha do modelo ou de um e-mail vira tag) e só aceita link http(s). Texto comum, sem tabela nem título, continua textContent.
+      function pareceMd(t) { return /(^|\n)\|.+\|\s*\n\|[\s:|-]+\|/.test(String(t || '')) || /(^|\n)#{1,4} \S/.test(String(t || '')); }
+      function mdSeguro(texto) {
+        function inl(s) {
+          s = escapeHtml(s);
+          s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, function (m, a, u) { return '<a href="' + u.replace(/"/g, "%22") + '" target="_blank" rel="noopener noreferrer">' + a + '</a>'; });
+          s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+          s = s.replace(/(^|[\s(])_([^_\n]+)_(?=[\s).,;:]|$)/g, "$1<em>$2</em>");
+          return s;
+        }
+        function cels(l) { return l.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(function (c) { return c.trim(); }); }
+        var ls = String(texto).split("\n"), out = [], i = 0;
+        while (i < ls.length) {
+          var l = ls[i];
+          if (/^\s*\|.+\|\s*$/.test(l) && i + 1 < ls.length && /^\s*\|[\s:|-]+\|\s*$/.test(ls[i + 1])) {
+            var cab = cels(l), al = cels(ls[i + 1]).map(function (c) { return /^:?-+:$/.test(c) ? "right" : "left"; }), h = "<div class=\"md-tab\"><table><thead><tr>";
+            cab.forEach(function (c, k) { h += "<th style=\"text-align:" + (al[k] || "left") + "\">" + inl(c) + "</th>"; });
+            h += "</tr></thead><tbody>"; i += 2;
+            while (i < ls.length && /^\s*\|.+\|\s*$/.test(ls[i])) {
+              h += "<tr>"; cels(ls[i]).forEach(function (c, k) { h += "<td style=\"text-align:" + (al[k] || "left") + "\">" + inl(c) + "</td>"; }); h += "</tr>"; i++;
+            }
+            out.push(h + "</tbody></table></div>"); continue;
+          }
+          var hd = l.match(/^(#{1,4}) (.+)$/);
+          if (hd) { out.push("<div class=\"md-h md-h" + hd[1].length + "\">" + inl(hd[2]) + "</div>"); i++; continue; }
+          if (/^>\s?/.test(l)) { var q = []; while (i < ls.length && /^>\s?/.test(ls[i])) { q.push(inl(ls[i].replace(/^>\s?/, ""))); i++; } out.push("<blockquote>" + q.join("<br>") + "</blockquote>"); continue; }
+          if (/^\s*[-*] /.test(l)) { var li = []; while (i < ls.length && /^\s*[-*] /.test(ls[i])) { li.push("<li>" + inl(ls[i].replace(/^\s*[-*] /, "")) + "</li>"); i++; } out.push("<ul>" + li.join("") + "</ul>"); continue; }
+          if (!l.trim()) { i++; continue; }
+          var p = []; while (i < ls.length && ls[i].trim() && !/^(#{1,4} |>|\s*[-*] |\s*\|)/.test(ls[i])) { p.push(inl(ls[i])); i++; }
+          if (!p.length) { p.push(inl(ls[i])); i++; }
+          out.push("<p>" + p.join("<br>") + "</p>");
+        }
+        return out.join("");
+      }
+      function definirTextoMsg(el, texto) {
+        if (pareceMd(texto)) { el.innerHTML = mdSeguro(texto); el.classList.add("md"); } else { el.textContent = texto; }
+      }
+      /*MD_FIM*/
       function readAs(file, how, cb) {
         var r = new FileReader();
         r.onload = function () { cb(r.result); };
@@ -705,6 +745,7 @@
       var prefersReduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       function typeOut(el, text, done) {
         text = String(text == null ? "" : text);
+        if (pareceMd(text)) { definirTextoMsg(el, text); scrollBottom(); if (done) done(); return; }   // relatório com tabela: renderiza direto, sem efeito de digitação
         if (prefersReduced || text.length < 2) { el.textContent = text; scrollBottom(); if (done) done(); return; }
         el.textContent = "";
         var i = 0, step = Math.max(2, Math.round(text.length / 350)); // textos longos terminam em ~6s
@@ -750,7 +791,7 @@
             '<span class="msg__time">' + fmtHora(tsMs) + '</span></div>' +
           attHtml +
           '<div class="msg__text"></div></div>';
-        wrap.querySelector(".msg__text").textContent = text;
+        definirTextoMsg(wrap.querySelector(".msg__text"), text);
         // 🔊 nas respostas CARREGADAS do histórico (as novas ganham o botão no fluxo de envio).
         if (role !== "user" && text && text.length > 1 && hasBackend && String(text).indexOf("⚠️") !== 0) {
           var metaOld = document.createElement("div");
@@ -2195,6 +2236,7 @@
           '<div style="display:flex;gap:6px;">' +
             '<button type="button" class="av-btn" style="flex:1;font-size:11px;padding:6px;" data-act="trigger" data-script="Relatório de Investimentos"><i class="fas fa-chart-pie"></i> Investimentos</button>' +
             '<button type="button" class="av-btn" style="flex:1;font-size:11px;padding:6px;" data-act="trigger" data-script="Relatório de FIIs"><i class="fas fa-chart-line"></i> FIIs</button>' +
+            '<button type="button" class="av-btn" style="flex:1;font-size:11px;padding:6px;" data-act="trigger" data-script="Relatório de Cofrinhos"><i class="fas fa-piggy-bank"></i> Cofrinhos</button>' +
             '<button type="button" class="av-btn" style="flex:1;font-size:11px;padding:6px;" data-act="trigger" data-script="Relatório de Atividade"><i class="fas fa-tasks"></i> Atividades</button>' +
           '</div>' +
         '</div>';

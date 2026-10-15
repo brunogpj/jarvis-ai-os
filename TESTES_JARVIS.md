@@ -306,6 +306,10 @@ Sem você pedir, no tick de 15 min, em duas janelas: **manhã 9–11h** e **noit
 | 1.175 | Botão **FIIs** | mesmo relatório só da classe FIIs, dos seus saldos | ✅ | 15/10 ao vivo |
 | 1.176 | Botão **Atividades** | relatório das últimas 24 h do log: falas por rota, ferramentas (média e erros), JEV, lentos, falhas e gasto do Gemini | ✅ | 15/10 ao vivo |
 | 1.177 | "Analisar principais FIIs do IFIX" | NÃO é interceptado (é análise de mercado, vai ao agente com pesquisa e fonte) | ✅ | teste automático + ao vivo |
+| 1.178 | Chat → botão **FIIs** | relatório da caderneta + seção "Mercado dos fundos" (Funds Explorer, com link e hora da leitura): cotação, P/VP, valor patrimonial, último rendimento (data-com e pagamento), DY; tabelas renderizadas no chat | ✅ | 15/10 ao vivo no web app |
+| 1.179 | Botão **Cofrinhos** | tabela dos cofrinhos do Mercado Pago + pesquisa na web com fontes (ou aviso se não achar) | ⚠️ | código e teste automático; falta ver a pesquisa ao vivo (30–120 s) |
+| 1.180 | "Tenho 5 cotas do KNRI11 e 65 do MXRF11" → "sim" → "desfaz" | repete, só o sim grava, desfaz devolve; vale para vários fundos numa frase | ⚠️ | teste automático e Worker implantado; falta você dizer as suas cotas reais por voz |
+| 1.181 | "Lança os proventos dos fundos" → "sim" | soma cotas × valor do último rendimento só dos fundos que já pagaram e não foram lançados; não mexe no saldo nem no livre | ⚠️ | teste automático; depende das cotas (1.180) |
 | 1.139 | Interruptores: `FERRAMENTAS_JEV`, `CONFIRMA_JEV`, `INJECAO_JEV`, `ACAO_JEV`, `CATEGORIA_JEV` = nao | volta ao comportamento anterior | ✅ | testes automáticos |
 
 ### 1g. 🔔 Notificações do celular 🗣️

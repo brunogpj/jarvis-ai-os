@@ -25,7 +25,7 @@ Projeto Google Apps Script gerenciado localmente via clasp.
 
 | Deployment ID | Versão | Descrição |
 |---|---|---|
-| `<DEPLOYMENT_ID>` | **@536** | **ATIVA** — "Relatórios de investimentos (todas as aplicações/por classe) e de atividade, no código" |
+| `<DEPLOYMENT_ID>` | **@538** | **ATIVA** — "Chat renderiza tabelas e títulos dos relatórios; mercado dos FIIs, cotas e proventos" |
 | `<DEPLOYMENT_ID>` | @25 | Antiga — "TesteJobs" |
 | `<DEPLOYMENT_ID>` | @HEAD | Cabeça (muda a cada push, não é a de produção) |
 
@@ -93,6 +93,7 @@ arquivo. **Arquivo novo que precise subir tem que ser adicionado lá**, senão o
 | `Objetivos.js` | Autonomia por meta: planeja → confirma → executa em 2º plano → sintetiza |
 | `Consultor.js` | Fase 4 da caderneta: o consultor da estratégia do dono (carteira × alvo, aporte do mês, simulações, reserva, metas), só leitura, 100% no código |
 | `Briefing.js` | Briefings falados com **dados buscados pelo código** (agenda, tarefas, notícias locais e nacionais, tempo, versículo); o modelo só redige notícias — ver "Briefings" |
+| `MercadoFii.js` | Mercado dos FIIs (cotação, P/VP, valor patrimonial, último rendimento, DY) lido do HTML público do Funds Explorer, com fonte e hora — ver "Relatórios dos botões do chat" |
 | `BuscaDrive.js` | Busca SEMÂNTICA nos arquivos do Drive ("acha o documento sobre X"): 1 vetor int8 por arquivo num índice único no Drive, com o `file_id` para abrir o arquivo vivo — ver "Busca semântica no Drive" |
 | `Evals.js` / `QA.js` | `rodarEvals()` (comportamento, via `toolTrace` real) e `rodarQA()` (saúde funcional) |
 
@@ -525,6 +526,8 @@ Peculiaridades medidas via ADB:
 - scrcpy com áudio disputa o microfone com a macro: usar `--no-audio`.
 
 **Relatórios dos botões do chat (15/10).** "Automação e Objetivos → Triggers rápidos" mandava "Execute a automação: Relatório de FIIs" ao modelo; não existe automação com esse nome, ele respondeu "não encontrei" e depois inventou uma tabela do IFIX. Agora `_rotaDireta` (Code.js), ANTES do modelo, entrega: **Investimentos / FIIs** (`Financas.interpretarRelatorio` + `Financas.relatorio(consulta,'chat'|'voz')`, TODAS as aplicações ou uma classe: fii, renda fixa, tesouro, ações, liquidez; saldo, peso, alvo, rendimento no ano, liquidez, data do saldo, concentração >40%, saldo velho >45 dias; o Worker passou a expor `rendimentoAno/liquidez/taxa/atualizado` por investimento) e **Atividades** (`_relatorioAtividade`: log das últimas 24 h, sem modelo). Análise de MERCADO ("principais FIIs do IFIX", cotação, melhores) NÃO é interceptada: segue ao agente com pesquisa e fonte. A mesma frase por voz ("relatório dos meus investimentos") responde um resumo curto. Prova ao vivo sem falar: `ler_debug` com `relatorioTeste:['frase',…]`. Cuidado ao gerar código por `node -e`: `\b` virou backspace e o hook nunca casava.
+
+**Mercado dos FIIs, cotas e proventos (15/10).** O relatório de FIIs (`Financas.relatorio` com `classe:'fii'`) agora traz, ao lado da caderneta, a seção "Mercado dos fundos" lida por `MercadoFii` do Funds Explorer (parser sobre o HTML real, cache 15 min, link da fonte e hora da leitura; a página não informa a hora da cotação; página fora do ar → só a caderneta). O relatório de **cofrinhos** (`classe:'liquidez'`, botão Cofrinhos) soma uma pesquisa na web com fontes (`Gemini.pesquisarWeb`, cache 6 h), rotulada como resumo de busca. **Cotas**: coluna `cotas` em `investimentos` (migração 005 aplicada no D1; campo no app; `POST /api/jarvis/cotas` com `cotas_esperadas`). Por voz, no molde propor → sim → desfaz: "tenho 5 cotas do KNRI11 e 65 do MXRF11" (`ACOES.cotas`) e "lança os proventos dos fundos" (`ACOES.provento`: cotas × valor do último rendimento, só dos que já pagaram, soma ao `rendimento_ano` via `POST /api/jarvis/rendimento` com `rendimento_esperado`; `FIN_PROVENTOS` impede lançar o mesmo data-com duas vezes; NÃO mexe no saldo nem no livre). O chat passou a renderizar markdown seguro (tabelas, títulos, negrito, citação, link http(s), HTML escapado antes) só quando o texto tem tabela ou título (`pareceMd`/`mdSeguro` em `Javascript.html`; antes era `textContent` puro e as tabelas saíam como `| a | b |`).
 
 ## Gatilhos de tempo
 

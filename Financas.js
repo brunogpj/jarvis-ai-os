@@ -202,6 +202,80 @@ var Financas = (function () {
   // O botão "Relatório FIIs" do web app só mandava "Execute a automação: Relatório de FIIs" ao chat; não existe automação com esse nome, o modelo respondeu "não encontrei" e, no pedido seguinte,
   // inventou uma tabela do IFIX (pesos, P/VP, DY "aprox.") sem dado nenhum. Agora o relatório vem da CADERNETA, do código, para TODAS as aplicações ou para uma classe (FIIs, renda fixa, tesouro,
   // ações, liquidez): saldo, peso na carteira, alvo, rendimento no ano, liquidez, data do saldo e alertas. Cotação e análise de MERCADO continuam sendo outra coisa (pesquisa na web, com fonte).
+  // ── MERCADO DOS FIIs e COFRINHOS ao lado da caderneta (15/10) ──────────────────────────────────────────────────────────────────────────────
+  // Mercado = leitura da página do Funds Explorer (MercadoFii.js), com URL e hora da leitura; a caderneta continua sendo a fonte dos SEUS saldos. Nada disso é recomendação.
+  function _tickerDe(nome) { var m = String(nome || '').match(/\b([A-Za-z]{4}1[1-3])\b/); return m ? m[1].toUpperCase() : null; }
+  function _hora(ms) { try { return Utilities.formatDate(new Date(ms), 'America/Sao_Paulo', 'dd/MM HH:mm'); } catch (e) { return ''; } }
+  function _dec(v, c) { return (Math.round(Number(v) * Math.pow(10, c)) / Math.pow(10, c)).toFixed(c).replace('.', ','); }
+  function _gravarProventos(o) {
+    var ks = Object.keys(o); if (ks.length > 40) ks.slice(0, ks.length - 40).forEach(function (k) { delete o[k]; });
+    try { PropertiesService.getScriptProperties().setProperty('FIN_PROVENTOS', JSON.stringify(o)); } catch (e) {}
+  }
+  function _lerProventos() { try { return JSON.parse(_p('FIN_PROVENTOS') || '{}') || {}; } catch (e) { return {}; } }
+
+  function _secaoMercadoFii(itens) {
+    var fiis = itens.filter(function (i) { return _tickerDe(i.nome); });
+    if (!fiis.length || typeof MercadoFii === 'undefined') return [];
+    var d = MercadoFii.consultarVarios(fiis.map(function (i) { return _tickerDe(i.nome); }));
+    var ok = fiis.filter(function (i) { var x = d[_tickerDe(i.nome)]; return x && x.ok; });
+    var L = ['', '### 🌐 Mercado dos fundos' + (ok.length ? ' (Funds Explorer, lido em ' + _hora(d[_tickerDe(ok[0].nome)].lidoEm) + ')' : ''), ''];
+    if (!ok.length) { L.push('Não consegui ler o mercado agora (a página do Funds Explorer não respondeu). O relatório acima é só da sua caderneta.'); return L; }
+    L.push('| Fundo | Cotação | No dia | P/VP | Valor patrimonial/cota | Último rendimento | Data-com → pagamento | DY 12 meses |');
+    L.push('|---|---:|---:|---:|---:|---:|---|---:|');
+    ok.forEach(function (i) {
+      var x = d[_tickerDe(i.nome)], rd = x.rendimento;
+      L.push('| [' + x.ticker + '](' + x.fonte + ') | R$ ' + _dec(x.cotacao, 2) + ' | ' + (x.variacao != null ? (x.variacao > 0 ? '+' : '') + _dec(x.variacao, 2) + '%' : '—') + ' | ' + (x.pvp != null ? _dec(x.pvp, 2) : '—') + ' | ' + (x.vp != null ? 'R$ ' + _dec(x.vp, 2) : '—') +
+             ' | ' + (rd ? 'R$ ' + _dec(rd.valor, 2) : '—') + ' | ' + (rd ? _dataBr(rd.dataCom) + ' → ' + _dataBr(rd.pagamento) : '—') + ' | ' + (x.dy12 != null ? _dec(x.dy12, 2) + '%' : '—') + ' |');
+    });
+    var comCotas = ok.filter(function (i) { return Number(i.cotas) > 0; }), semCotas = ok.filter(function (i) { return !(Number(i.cotas) > 0); });
+    if (comCotas.length) {
+      L.push(''); L.push('**Sua posição** (cotas × cotação de mercado, ao lado do saldo da caderneta)'); L.push('');
+      L.push('| Fundo | Cotas | Valor de mercado | Saldo na caderneta | Diferença | Último provento seu | Yield do mês sobre a cotação |');
+      L.push('|---|---:|---:|---:|---:|---:|---:|');
+      var totM = 0, totC = 0, totP = 0;
+      comCotas.forEach(function (i) {
+        var x = d[_tickerDe(i.nome)], vm = Number(i.cotas) * x.cotacao, sd = Number(i.saldo) || 0, rd = x.rendimento, prov = rd ? Number(i.cotas) * rd.valor : null;
+        totM += vm; totC += sd; if (prov != null) totP += prov;
+        L.push('| ' + x.ticker + ' | ' + _dec(i.cotas, Number(i.cotas) % 1 ? 4 : 0) + ' | ' + _brl(vm) + ' | ' + _brl(sd) + ' | ' + (vm - sd >= 0 ? '+' : '−') + _brl(Math.abs(vm - sd)) + ' | ' + (prov != null ? _brl(prov) : '—') + ' | ' + (rd ? _dec(rd.valor / x.cotacao * 100, 2) + '%' : '—') + ' |');
+      });
+      if (comCotas.length > 1) L.push('| **Total** | | **' + _brl(totM) + '** | **' + _brl(totC) + '** | ' + (totM - totC >= 0 ? '+' : '−') + _brl(Math.abs(totM - totC)) + ' | **' + _brl(totP) + '** | |');
+    }
+    if (semCotas.length) { L.push(''); L.push('_Falta a quantidade de cotas de ' + semCotas.map(function (i) { return _tickerDe(i.nome); }).join(', ') + ' para calcular o seu rendimento em R$. Diga, por exemplo: "tenho 5 cotas do ' + _tickerDe(semCotas[0].nome) + '"._'); }
+    return L;
+  }
+
+  function _pesquisaCofrinho() {
+    var ck = 'fin_cofrinho_web';
+    try { var c = CacheService.getScriptCache().get(ck); if (c) return JSON.parse(c); } catch (e0) {}
+    try {
+      if (typeof Gemini === 'undefined' || !Gemini.temChave()) return null;
+      var hoje = Utilities.formatDate(new Date(), 'America/Sao_Paulo', 'dd/MM/yyyy');
+      var r = Gemini.pesquisarWeb('Hoje é ' + hoje + '. Qual o rendimento ATUAL (em % do CDI) dos Cofrinhos do Mercado Pago? Há campanha para o "Cofrinho Mercado Livre" (140% do CDI)? Informe limite de valor, prazo da campanha, e o que acontece se sacar. ' +
+        'Responda em no máximo 6 linhas, SÓ com o que as fontes dizem, indicando a data da fonte quando houver; se não achar a taxa padrão atual, diga que não achou.');
+      if (!r || !r.texto) return null;
+      var o = { texto: r.texto, fontes: r.fontes || [], em: Date.now() };
+      try { CacheService.getScriptCache().put(ck, JSON.stringify(o), 21600); } catch (e1) {}
+      return o;
+    } catch (e) { return null; }
+  }
+
+  function _secaoCofrinhos(itens) {
+    var cof = itens.filter(function (i) { return /cofrinho|mercado pago/.test(_norm(i.nome + ' ' + (i.instituicao || ''))); });
+    if (!cof.length) return [];
+    var L = ['', '### 🐷 Cofrinhos do Mercado Pago', '', '| Cofrinho | Saldo | Taxa registrada na caderneta | Rendimento no ano | Saldo de |', '|---|---:|---|---:|---|'];
+    cof.forEach(function (i) { L.push('| ' + i.nome + ' | ' + _brl(i.saldo) + ' | ' + (i.taxa || 'não informada') + ' | ' + _brl(i.rendimentoAno || 0) + ' | ' + _dataBr(i.atualizado) + ' |'); });
+    var web = _pesquisaCofrinho();
+    L.push('');
+    if (web) {
+      L.push('**Pesquisa na web** (feita em ' + _hora(web.em) + '; resumo de busca com fontes, confira no app):'); L.push('');
+      web.texto.split('\n').forEach(function (l) { if (l.trim()) L.push('> ' + l.trim()); });
+      if (web.fontes.length) { L.push(''); L.push('Fontes: ' + web.fontes.slice(0, 4).map(function (f) { var m = String(f).match(/^(.*?)\s+—\s+(https?:\/\/\S+)$/); return m ? '[' + (m[1] || m[2]) + '](' + m[2] + ')' : f; }).join(' · ')); }
+    } else {
+      L.push('_Não consegui pesquisar a taxa vigente agora. O Mercado Pago muda as condições dos cofrinhos com frequência: confira no app._');
+    }
+    return L;
+  }
+
   var _CLASSES_REL = [['fii', /\b(fiis?|fundos? imobiliarios?)\b/], ['renda fixa', /\brenda fixa\b/], ['tesouro', /\btesouro\b/], ['acoes', /\bacoes\b/], ['liquidez', /\b(liquidez|reserva|cofrinhos?)\b/]];
 
   /** "relatório dos meus investimentos / dos FIIs", "raio-x da carteira", "analisa meus investimentos", "Execute a automação: Relatório de FIIs". → {tipo:'relatorio', classe?} | null. PURA.
@@ -209,7 +283,7 @@ var Financas = (function () {
   function interpretarRelatorio(s) {
     s = String(s || '');
     if (/\b(ifix|cotacao|cotacoes|recomend\w*|melhores?|principais|vale a pena|ranking|dividend yield|p\/?vp)\b/.test(s)) return null;
-    var tema = /\b(investiment\w*|aplicac\w*|carteira|fiis?|fundos? imobiliarios?|renda fixa|tesouro|acoes|liquidez|patrimonio)\b/.test(s);
+    var tema = /\b(investiment\w*|aplicac\w*|carteira|fiis?|fundos? imobiliarios?|renda fixa|tesouro|acoes|liquidez|patrimonio|cofrinhos?)\b/.test(s);
     var pede = /\b(relatorio|panorama|raio ?x|balanco)\b/.test(s) || (/\b(analis\w+|resum\w+)\b/.test(s) && /\b(meus?|minhas?)\b/.test(s)) || /\bcomo (estao|esta|andam|anda) (os |as |meus |minhas )?(meus |minhas )?(fiis?|investiment\w*|aplicac\w*)\b/.test(s);
     if (!tema || !pede) return null;
     if (/\b(criar?|cri[ae]|agend\w*|program\w*|todo dia|toda semana)\b/.test(s)) return null;   // pedir para AGENDAR um relatório é outra coisa
@@ -290,8 +364,14 @@ var Financas = (function () {
       var semRend = itens.filter(function (i) { return !(Number(i.rendimentoAno) > 0); });
       if (semRend.length && semRend.length < itens.length) obs.push('**Sem rendimento informado no ano:** ' + semRend.slice(0, 5).map(function (i) { return i.nome; }).join(', ') + '.');
       if (obs.length) { L.push(''); L.push('**Pontos de atenção**'); L.push(''); obs.forEach(function (o) { L.push('- ' + o); }); }
+      var extra = [];
+      if (consulta && consulta.classe === 'fii') extra = _secaoMercadoFii(itens);
+      else if (consulta && consulta.classe === 'liquidez') extra = _secaoCofrinhos(itens);
+      extra.forEach(function (x) { L.push(x); });
       L.push('');
-      L.push('_Dados da sua caderneta (saldos que você atualiza). Não inclui cotações de mercado nem projeções; para análise de mercado, peça uma pesquisa com fonte._');
+      L.push(consulta && consulta.classe === 'fii' && extra.length > 2
+        ? '_Caderneta: seus saldos (você atualiza). Mercado: leitura pública do Funds Explorer (links na tabela), sem recomendação de investimento; a página não informa a hora da cotação._'
+        : '_Dados da sua caderneta (saldos que você atualiza). Não inclui cotações de mercado nem projeções; para análise de mercado, peça uma pesquisa com fonte._');
       return L.join('\n');
     } catch (e) { return 'Não consegui montar o relatório agora.'; }
   }
@@ -843,6 +923,8 @@ var Financas = (function () {
       case 'saldoInvest': return 'a atualização do saldo de ' + (u.nome || 'um investimento');
       case 'reclassificar': return 'a troca de categoria de ' + ((u.itens || []).length) + ' gasto(s) que estavam em Outros';
       case 'ensinarCategoria': return 'a regra "' + (u.termo || '') + '" e a troca de categoria que veio com ela';
+      case 'cotas': return 'a quantidade de cotas de ' + ((u.itens || []).map(function (i) { return i.ticker; }).join(', ') || 'um fundo');
+      case 'provento': return 'o lançamento de ' + v + ' em proventos de ' + ((u.itens || []).map(function (i) { return i.ticker; }).join(', ') || 'fundos');
       case 'consultor': return 'o ajuste ' + (u.rotulo || 'do consultor');
       default: return 'a última ação';
     }
@@ -1324,6 +1406,107 @@ var Financas = (function () {
     }
   };
 
+
+  // ── COTAS e PROVENTOS dos FIIs por voz (15/10), no molde propor → "sim" → "desfaz" ───────────────────────────────────────────────────────
+  // "tenho 5 cotas do KNRI11, 5 do HGLG11 e 65 do MXRF11" guarda a quantidade; "lança os proventos dos fundos" soma (cotas × valor do último rendimento do Funds Explorer)
+  // ao rendimento do ano de cada fundo, só dos que JÁ pagaram e ainda não foram lançados (FIN_PROVENTOS). Não mexe no saldo nem no livre: o saldo atualiza do extrato.
+  function _fiisDaCaderneta() {
+    var r = resumo(), itens = (r.ok && r.dados && r.dados.investimentos && r.dados.investimentos.itens) || [];
+    return { r: r, fiis: itens.filter(function (i) { return _tickerDe(i.nome); }) };
+  }
+  ACOES.cotas = {
+    propor: function (msg) {
+      var s = _norm(msg).replace(/[?]/g, '');
+      if (!/\bcotas?\b/.test(s) || /\b(quanto|qual|quais|quantas|quantos)\b/.test(s)) return null;
+      var base = _fiisDaCaderneta(), pares = [], m, re1 = /(\d+(?:[.,]\d+)?)\s*(?:cotas?\s*)?(?:d[oae]s?\s*)?(?:fii\s*)?([a-z]{4}1[1-3])\b/g;
+      while ((m = re1.exec(s))) pares.push({ t: m[2].toUpperCase(), n: Number(m[1].replace(',', '.')) });
+      if (!pares.length) { var re2 = /\b([a-z]{4}1[1-3])\b[^0-9]{0,25}?(\d+(?:[.,]\d+)?)\s*cotas?/g; while ((m = re2.exec(s))) pares.push({ t: m[1].toUpperCase(), n: Number(m[2].replace(',', '.')) }); }
+      if (!pares.length) return null;
+      var itens = [], vistos = {};
+      for (var k = 0; k < pares.length; k++) {
+        var fi = base.fiis.filter(function (i) { return _tickerDe(i.nome) === pares[k].t; })[0];
+        if (!fi || vistos[fi.id]) continue;
+        if (!(pares[k].n > 0) || pares[k].n > 1000000) return { resp: 'Não entendi a quantidade de cotas de ' + pares[k].t + '. Diga um número, por exemplo: tenho 5 cotas do ' + pares[k].t + '.' };
+        vistos[fi.id] = 1;
+        itens.push({ id: fi.id, nome: fi.nome, ticker: pares[k].t, antes: fi.cotas == null ? null : Number(fi.cotas), novo: pares[k].n });
+      }
+      if (!itens.length) return null;   // ticker que não é da caderneta: não é desta ação
+      return { pend: { tipo: 'cotas', itens: itens }, resp: 'Confirma guardar as cotas: ' + itens.map(function (i) { return i.ticker + ', ' + _dec(i.novo, i.novo % 1 ? 4 : 0) + (i.antes ? ' (era ' + _dec(i.antes, i.antes % 1 ? 4 : 0) + ')' : ''); }).join('; ') + '? Diga sim ou não.' };
+    },
+    executar: function (p) {
+      var feitos = [], falhas = [];
+      p.itens.forEach(function (i) {
+        var x = _post('/api/jarvis/cotas', { id: i.id, cotas: i.novo, cotas_esperadas: i.antes == null ? null : i.antes });
+        if (x.ok) feitos.push(i); else falhas.push({ i: i, conflito: Number(x.codigo) === 409 });
+      });
+      if (!feitos.length) return { resp: falhas.some(function (f) { return f.conflito; }) ? 'A quantidade de cotas mudou na caderneta desde que eu falei. Não gravei nada; diga de novo.' : 'Não consegui guardar as cotas agora. Não mudei nada.' };
+      return { resp: 'Guardei as cotas de ' + feitos.map(function (i) { return i.ticker; }).join(', ') + '.' + (falhas.length ? ' Não consegui ' + falhas.map(function (f) { return f.i.ticker; }).join(', ') + '.' : '') + ' Para desfazer, diga desfaz.',
+               desfazer: { tipo: 'cotas', itens: feitos } };
+    },
+    desfazer: function (u) {
+      var ok = 0;
+      u.itens.forEach(function (i) { var x = _post('/api/jarvis/cotas', { id: i.id, cotas: i.antes || 0, cotas_esperadas: i.novo }); if (x.ok) ok++; });
+      return ok ? 'Desfeito: devolvi as cotas de ' + ok + (ok === 1 ? ' fundo' : ' fundos') + '.' : 'Não consegui desfazer. Ajuste na caderneta.';
+    }
+  };
+
+  ACOES.provento = {
+    propor: function (msg) {
+      var s = _norm(msg).replace(/[?]/g, '');
+      if (/\b(quanto|qual|quais|quando)\b/.test(s)) return null;
+      if (!/\b(proventos?|rendimentos?|dividendos?)\b/.test(s)) return null;
+      if (!/\b(lanc\w*|registr\w*|anot\w*|cairam|caiu|recebi|entraram|entrou|pagaram|pagou)\b/.test(s)) return null;
+      if (!/\b(fiis?|fundos?|proventos?|dividendos?)\b/.test(s)) return null;   // "rendimento" sozinho (CDB, cofrinho) não é daqui
+      if (typeof MercadoFii === 'undefined') return null;
+      var base = _fiisDaCaderneta();
+      if (!base.fiis.length) return null;
+      var pedido = (s.match(/\b([a-z]{4}1[1-3])\b/) || [])[1];
+      var fiis = pedido ? base.fiis.filter(function (i) { return _tickerDe(i.nome) === pedido.toUpperCase(); }) : base.fiis;
+      if (!fiis.length) return null;
+      var hoje = base.r.dados.hoje, d = MercadoFii.consultarVarios(fiis.map(function (i) { return _tickerDe(i.nome); })), lanc = _lerProventos();
+      var itens = [], semCotas = [], jaLancado = 0, naoPagou = [], semDado = [];
+      fiis.forEach(function (i) {
+        var t = _tickerDe(i.nome), x = d[t], rd = x && x.ok ? x.rendimento : null;
+        if (!rd || !rd.dataCom) { semDado.push(t); return; }
+        if (rd.pagamento && rd.pagamento > hoje) { naoPagou.push(t + ' em ' + _dataBr(rd.pagamento)); return; }
+        if (lanc[t + ':' + rd.dataCom]) { jaLancado++; return; }
+        if (!(Number(i.cotas) > 0)) { semCotas.push(t); return; }
+        itens.push({ id: i.id, nome: i.nome, ticker: t, cotas: Number(i.cotas), valorCota: rd.valor, dataCom: rd.dataCom, pagamento: rd.pagamento,
+                     delta: Math.round(Number(i.cotas) * rd.valor * 100) / 100, esperado: Math.round((Number(i.rendimentoAno) || 0) * 100) / 100 });
+      });
+      var falta = semCotas.length ? ' Faltam as cotas de ' + semCotas.join(', ') + '; diga, por exemplo, tenho 5 cotas do ' + semCotas[0] + '.' : '';
+      if (!itens.length) {
+        if (semCotas.length) return { resp: 'Antes de lançar eu preciso da quantidade de cotas.' + falta };
+        if (jaLancado) return { resp: 'Os proventos pagos até hoje já estão lançados.' + (naoPagou.length ? ' Ainda vão pagar: ' + naoPagou.join(', ') + '.' : '') };
+        if (naoPagou.length) return { resp: 'Ainda não pagaram: ' + naoPagou.join(', ') + '.' };
+        return { resp: 'Não consegui ler os proventos dos fundos agora. Não lancei nada.' };
+      }
+      var total = itens.reduce(function (a, i) { return a + i.delta; }, 0);
+      return { pend: { tipo: 'provento', itens: itens, valor: Math.round(total * 100) / 100 },
+               resp: 'Proventos já pagos: ' + itens.map(function (i) { return i.ticker + ', ' + _dec(i.cotas, i.cotas % 1 ? 4 : 0) + ' cotas a ' + _brl(i.valorCota) + ', ' + _brl(i.delta); }).join('; ') + '. Total ' + _brl(total) +
+                     '. Lanço no rendimento do ano de cada fundo? Não mexe no saldo nem no livre.' + falta + ' Diga sim ou não.' };
+    },
+    executar: function (p) {
+      var feitos = [], falhas = [], lanc = _lerProventos();
+      p.itens.forEach(function (i) {
+        var x = _post('/api/jarvis/rendimento', { id: i.id, delta: i.delta, rendimento_esperado: i.esperado });
+        if (x.ok) { feitos.push({ id: i.id, nome: i.nome, ticker: i.ticker, delta: i.delta, depois: x.dados.depois, chave: i.ticker + ':' + i.dataCom }); lanc[i.ticker + ':' + i.dataCom] = Date.now(); }
+        else falhas.push({ i: i, conflito: Number(x.codigo) === 409 });
+      });
+      if (feitos.length) _gravarProventos(lanc);
+      if (!feitos.length) return { resp: falhas.some(function (f) { return f.conflito; }) ? 'O rendimento mudou na caderneta desde que eu falei. Não lancei nada; peça de novo.' : 'Não consegui lançar agora. Não mudei nada.' };
+      var tot = feitos.reduce(function (a, f) { return a + f.delta; }, 0);
+      return { resp: 'Lancei ' + _brl(tot) + ' de proventos (' + feitos.map(function (f) { return f.ticker; }).join(', ') + ').' + (falhas.length ? ' Não consegui ' + falhas.map(function (f) { return f.i.ticker; }).join(', ') + '.' : '') + ' Para desfazer, diga desfaz.',
+               desfazer: { tipo: 'provento', itens: feitos, valor: Math.round(tot * 100) / 100 } };
+    },
+    desfazer: function (u) {
+      var ok = 0, lanc = _lerProventos();
+      u.itens.forEach(function (f) { var x = _post('/api/jarvis/rendimento', { id: f.id, delta: -f.delta, rendimento_esperado: f.depois }); if (x.ok) { ok++; delete lanc[f.chave]; } });
+      if (ok) _gravarProventos(lanc);
+      return ok ? 'Desfeito: tirei os proventos lançados de ' + ok + (ok === 1 ? ' fundo' : ' fundos') + '.' : 'Não consegui desfazer. Ajuste o rendimento na caderneta.';
+    }
+  };
+
   // ── AJUSTAR O CONSULTOR por voz ("muda a margem para 500", "taxa de 1% ao mês", "retoma o rebalanceamento") — com confirmação ───────────
   var _CFG_CONSULTOR = {
     margem:  { chave: 'CONSULTOR_MARGEM',       rotulo: 'da margem',          padrao: '300',   fmt: function (v) { return _brl(Number(v)); } },
@@ -1660,7 +1843,7 @@ var Financas = (function () {
     }
   };
 
-  var ORDEM_ACOES = ['recarga', 'receber', 'gasto', 'receita', 'pagar', 'fecharMes', 'aporte', 'aplicar', 'saldoInvest', 'consultor', 'meta', 'reclassificar', 'ensinarCategoria'];
+  var ORDEM_ACOES = ['recarga', 'cotas', 'provento', 'receber', 'gasto', 'receita', 'pagar', 'fecharMes', 'aporte', 'aplicar', 'saldoInvest', 'consultor', 'meta', 'reclassificar', 'ensinarCategoria'];
 
   var _SIM = /^(sim|isso|isso mesmo|confirmo|confirma|confirmado|pode|pode registrar|pode confirmar|pode gravar|esta certo|ta certo|certo|correto|exato|positivo|com certeza|claro)\b/;
   var _NAO = /^(nao|negativo|cancela|cancelar|cancelado|deixa|deixa pra la|esquece|errado|nao precisa|para|pare)\b/;

@@ -291,6 +291,10 @@ Sem você pedir, no tick de 15 min, em duas janelas: **manhã 9–11h** e **noit
 | 1.160 | Falar um endereço e o reconhecimento repetir "rota para" no meio | traça a rota só para o endereço final | ⚠️ | teste automático; falta acontecer de novo |
 | 1.161 | Compra no Swile (carteira Refeição/Alimentação) | gasto no voucher da caderneta, aviso "Registrei R$ …", saldo atualizado | ✅ | 15/10 de manhã, compra real de pequeno valor: registrada na caderneta e conferida pelo dono |
 | 1.162 | Ouvir o briefing da manhã e o despertador | a fala começa em "Bom dia, Bruno", sem instrução falada antes, e o tom é caloroso | ⚠️ | transcrição do áudio sintetizado confirma (15/10, `ttsEco`); falta ouvir de verdade no briefing de amanhã |
+| 1.163 | "Liste os gastos da categoria mercado alimentação" | só Mercado e Alimentação, com o total e a divisão | ✅ | 15/10 ao vivo no celular |
+| 1.164 | "Quais foram os gastos do cartão Mercado Pago" | só os lançamentos registrados pela notificação do Mercado Pago (não o supermercado) | ✅ | 15/10 ao vivo; hoje só 1 lançamento vem desse banco |
+| 1.165 | "Gasto em lugar fora da lista" (fragmento) | gastos fora de Mercado e Alimentação | ✅ | 15/10 ao vivo |
+| 1.166 | "Quanto gastei essa semana" | resposta do Swile dizendo "No cartão Swile, nos últimos 7 dias…" | ✅ | 15/10 ao vivo |
 | 1.139 | Interruptores: `FERRAMENTAS_JEV`, `CONFIRMA_JEV`, `INJECAO_JEV`, `ACAO_JEV`, `CATEGORIA_JEV` = nao | volta ao comportamento anterior | ✅ | testes automáticos |
 
 ### 1g. 🔔 Notificações do celular 🗣️

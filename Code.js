@@ -1155,7 +1155,9 @@ function _rotaSemantica(mensagem, email, isOwner, opts) {
     categoria_gasto: {
       type: 'choice',
       instructions: 'SUPONDO que o pedido seja sobre os GASTOS do mês por categoria: de qual categoria ele quer saber?',
-      criteria: { todas: 'Todos os gastos / por categoria / não especificou.', fora_mercado: 'Os gastos fora de mercado e alimentação (tudo menos comida).', saude: 'Saúde, farmácia, remédios.',
+      criteria: { todas: 'Todos os gastos / por categoria / não especificou.', fora_mercado: 'Os gastos fora de mercado e alimentação (tudo menos comida).',
+                  mercado_alimentacao: 'SÓ os gastos de mercado e alimentação (comida).', mercadopago: 'Os gastos do cartão ou da conta do banco MERCADO PAGO (o banco, não o supermercado).',
+                  bradesco: 'Os gastos do banco Bradesco.', itau: 'Os gastos do banco Itaú.', saude: 'Saúde, farmácia, remédios.',
                   transporte: 'Transporte, uber, táxi, estacionamento.', lazer: 'Lazer, diversão, cinema.', educacao: 'Educação, escola, curso.', casa: 'Casa.', compras: 'Compras em lojas.',
                   trabalho: 'Trabalho.', outros: 'Outros.' }
     },
@@ -1252,7 +1254,11 @@ function _rotaSemantica(mensagem, email, isOwner, opts) {
       else if (intencao === 'cad_mercado') _cq = { tipo: 'orcamento' };
       else if (intencao === 'cad_gastos') {
         var _cg = arg('categoria_gasto', 'todas'), _MAPA_CG = { saude: 'Saúde', transporte: 'Transporte', lazer: 'Lazer', educacao: 'Educação', casa: 'Casa', compras: 'Compras', trabalho: 'Trabalho', outros: 'Outros' };
-        _cq = _cg === 'fora_mercado' ? { tipo: 'gastos', excluir: ['Mercado', 'Alimentação'] } : (_MAPA_CG[_cg] ? { tipo: 'gastos', categoria: _MAPA_CG[_cg] } : { tipo: 'gastos' });
+        var _MAPA_OG = { mercadopago: 'mp', bradesco: 'bd', itau: 'it' };
+        _cq = _cg === 'fora_mercado' ? { tipo: 'gastos', excluir: ['Mercado', 'Alimentação'] }
+            : _cg === 'mercado_alimentacao' ? { tipo: 'gastos', categoria: ['Mercado', 'Alimentação'] }
+            : _MAPA_OG[_cg] ? { tipo: 'gastos', origem: _MAPA_OG[_cg] }
+            : (_MAPA_CG[_cg] ? { tipo: 'gastos', categoria: _MAPA_CG[_cg] } : { tipo: 'gastos' });
       }
       else if (intencao === 'cad_investido') _cq = { tipo: arg('foco_invest', 'investido') === 'reserva' ? 'reserva' : 'investido' };
       else if (intencao === 'cad_carteira') _cq = { tipo: 'carteira' };
@@ -6533,7 +6539,8 @@ function _finFalarGastos(dias) {
   function br(v) { return 'R$ ' + Number(v).toFixed(2).replace('.', ','); }
   if (!g.compras) return 'Não registrei nenhuma compra do Swile nos últimos ' + dias + ' dias.';
   var top = (g.maioresEstabelecimentos || [])[0];
-  return 'Nos últimos ' + dias + ' dias: ' + g.compras + ' compra' + (g.compras > 1 ? 's' : '') +
+  // "No cartão Swile": a frase solta ("R$ 187,32 no total") soava como o gasto TOTAL dele; é só o cartão de benefícios (15/10: ele perguntou logo depois do cartão do Mercado Pago)
+  return 'No cartão Swile, nos últimos ' + dias + ' dias: ' + g.compras + ' compra' + (g.compras > 1 ? 's' : '') +
          ', ' + br(g.gastoVoucher + g.gastoMobilidade) + ' no total.' +
          (top ? ' Maior gasto: ' + top.estabelecimento + ', ' + br(top.total) + '.' : '') +
          ' ' + _finFalarSaldo(null);

@@ -172,19 +172,31 @@ var Financas = (function () {
 
   /** "gastos do mês" por categoria. s = frase normalizada. → {tipo:'gastos', categoria?|excluir?} | null. PURA. */
   function _interpretarGastos(s) {
-    var pergunta = /\b(quanto|quantos|quais|qual|liste|lista|listar|me (diga|fale|fala|conta|mostre|mostra)|fale|diga|mostre)\b/.test(s);
-    if (!pergunta || !/\bgast\w*\b/.test(s)) return null;
+    // "lista" só vale como VERBO ("lista os gastos"); em "fora da lista" é substantivo e fazia "gastei … fora da lista" parecer pergunta
+    var pergunta = /\b(quanto|quantos|quais|qual|liste|listar|me (diga|fale|fala|conta|mostre|mostra)|fale|diga|mostre)\b|\blista (os|as|me|tudo)\b/.test(s);
+    // Fragmento sem verbo de pergunta ("gasto em lugar fora da lista", dito logo depois de outro pedido): vale só como SUBSTANTIVO ("gasto/gastos"), com "fora" e sem número —
+    // nunca "gastei 50 fora de casa", que é registro de gasto e não consulta.
+    var fragmento = !pergunta && /\bgastos?\b/.test(s) && /\bfora\b/.test(s) && !/\d/.test(s);
+    if ((!pergunta && !fragmento) || !/\bgast\w*\b/.test(s)) return null;
     if (/\b(swile|suav|voucher|vale|mobilidade|semana|hoje|ontem|amanha)\b/.test(s)) return null;
     var fora = /\bfora\b/.test(s);
     if (fora) return { tipo: 'gastos', excluir: ['Mercado', 'Alimentação'] };   // "fora da lista / da categoria de mercado e alimentação"
+    // Por BANCO: o id do lançamento diz quem o criou (mp_/bd_/it_ = notificação do banco). "gastos do cartão Mercado Pago".
+    var orig = /\bmercadopago\b/.test(s) ? 'mp' : /\bbradesco\b/.test(s) ? 'bd' : /\bitau\b/.test(s) ? 'it' : null;
+    if (orig) return { tipo: 'gastos', origem: orig };
+    // "liste os gastos da categoria mercado e alimentação": o pedido é SÓ essas (o contrário de "fora de"). Sem "liste/categoria", mercado segue no orçamento.
+    var inc = []; if (/\bmercado\b/.test(s)) inc.push('Mercado'); if (/\balimentacao\b/.test(s)) inc.push('Alimentação');
+    if (inc.length && (/\bcategorias?\b/.test(s) || /\b(liste|listar)\b|\blista (os|as|me|tudo)\b/.test(s))) return { tipo: 'gastos', categoria: inc.length === 1 ? inc[0] : inc };
     for (var i = 0; i < _CAT_FALADA.length; i++) if (_CAT_FALADA[i][1].test(s)) return { tipo: 'gastos', categoria: _CAT_FALADA[i][0] };
-    if (/\bcategorias?\b/.test(s) || /\b(liste|lista|listar)\b/.test(s) || /\bgastos? d[eoa]s? (esse|este|neste|nesse)? ?mes\b/.test(s) || /\bgastos? (esse|este|neste|nesse) mes\b/.test(s) || /\btodos os gastos\b/.test(s)) return { tipo: 'gastos' };
+    if (/\bcategorias?\b/.test(s) || /\b(liste|listar)\b|\blista (os|as|me|tudo)\b/.test(s) || /\bgastos? d[eoa]s? (esse|este|neste|nesse)? ?mes\b/.test(s) || /\bgastos? (esse|este|neste|nesse) mes\b/.test(s) || /\btodos os gastos\b/.test(s)) return { tipo: 'gastos' };
     return null;
   }
 
   function interpretar(msg) {
     var s = String(msg || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[?!.,;:]/g, ' ').replace(/\s+/g, ' ').trim();
     if (!s) return null;
+    // "Mercado Pago" é o BANCO: sem isto, "gastos do cartão Mercado Pago" caía no orçamento do supermercado (15/10).
+    s = s.replace(/\bmercado ?pago\b/g, 'mercadopago');
     // CONSULTOR (fase 4): distribuição da carteira, quanto aportar, simulação, reserva contra o alvo, metas. Recebe a frase SEM tirar
     // vírgula e ponto (são decimais e milhar: "1,5 milhão", "1.000") e vem antes das regras abaixo, que cortam esses sinais.
     if (typeof Consultor !== 'undefined') {
@@ -244,6 +256,21 @@ var Financas = (function () {
         var gm = r.dados.gastosMes;
         if (!gm || !gm.porCategoria) return 'A caderneta ainda não informa os gastos por categoria.';
         var cats = Object.keys(gm.porCategoria).map(function (k) { return { nome: k, total: Number(gm.porCategoria[k].total) || 0, n: Number(gm.porCategoria[k].n) || 0, maior: gm.porCategoria[k].maior }; });
+        if (consulta.origem) {
+          var NOMES_O = { mp: 'Mercado Pago', bd: 'Bradesco', it: 'Itaú' }, nomeO = NOMES_O[consulta.origem] || consulta.origem;
+          if (!gm.porOrigem) return 'A caderneta ainda não informa os gastos por banco.';
+          var oo = gm.porOrigem[consulta.origem];
+          if (!oo || !oo.total) return 'Neste mês não há gastos registrados pelo ' + nomeO + ' na caderneta. Só entram os que chegaram pela notificação do banco.';
+          return 'Pelo ' + nomeO + ' você tem ' + oo.n + (oo.n === 1 ? ' lançamento' : ' lançamentos') + ' neste mês, ' + _brl(oo.total) + '. Os maiores: ' +
+                 (oo.maiores || []).slice(0, 4).map(function (m) { return (m.descricao || 'sem descrição') + ' ' + _brl(m.valor); }).join(', ') + '. Só entram os registrados pela notificação do banco.';
+        }
+        if (consulta.categoria && Array.isArray(consulta.categoria)) {
+          var alvos = consulta.categoria.map(_norm), achadas = cats.filter(function (c) { return alvos.indexOf(_norm(c.nome)) !== -1 && c.total > 0; }).sort(function (a, b) { return b.total - a.total; });
+          if (!achadas.length) return 'Neste mês não há gastos lançados em ' + consulta.categoria.join(' e ') + '.';
+          var somaA = achadas.reduce(function (s, c) { return s + c.total; }, 0), nA = achadas.reduce(function (s, c) { return s + c.n; }, 0);
+          return 'Em ' + consulta.categoria.join(' e ') + ' você lançou ' + _brl(somaA) + ' neste mês, em ' + nA + (nA === 1 ? ' lançamento' : ' lançamentos') + ': ' +
+                 achadas.map(function (c) { return c.nome + ' ' + _brl(c.total); }).join(', ') + '.';
+        }
         if (consulta.categoria) {
           var alvoC = cats.filter(function (c) { return _norm(c.nome) === _norm(consulta.categoria); })[0];
           if (!alvoC || !alvoC.total) return 'Neste mês não há gastos lançados em ' + consulta.categoria + '.';

@@ -79,3 +79,47 @@ test('JEV: "onde mais gastei fora do mercado" (paráfrase que a regex não pega)
   assert.match(String(cat._rotaSemantica('e o que sobrou de diversão', 'dono@exemplo.com', true, { canal: 'voz' })), /^Em Lazer você lançou R\$ 150,00/);
   assert.strictEqual(sb(null, jev('cad_gastos', 0.65, { categoria_gasto: 'lazer' }))._rotaSemantica('talvez gastos', 'dono@exemplo.com', true, { canal: 'voz' }), null, 'abaixo de 0,70 não responde');
 });
+
+// ── 15/10 08:41: dois pedidos reais do dono que foram para o lugar errado ──────────────────────────
+var DADOS2 = JSON.parse(JSON.stringify(DADOS));
+DADOS2.gastosMes.porOrigem = {
+  mp: { total: 100.8, n: 2, maiores: [{ descricao: 'Loja Exemplo', categoria: 'Compras', valor: 70.8, data: '2026-10-07' }, { descricao: 'Serviço de nuvem', categoria: 'Trabalho', valor: 30, data: '2026-10-06' }] },
+  bd: { total: 60, n: 1, maiores: [{ descricao: 'Posto Exemplo', categoria: 'Transporte', valor: 60, data: '2026-10-09' }] }
+};
+
+test('"Liste os gastos da categoria mercado alimentação" pede SÓ essas duas (antes devolvia todas as categorias)', function () {
+  var s = sb(DADOS2);
+  assert.deepStrictEqual(J(s.Financas.interpretar('Liste os gastos da categoria mercado alimentação')), { tipo: 'gastos', categoria: ['Mercado', 'Alimentação'] });
+  assert.strictEqual(s.Financas.responder({ tipo: 'gastos', categoria: ['Mercado', 'Alimentação'] }),
+    'Em Mercado e Alimentação você lançou R$ 960,59 neste mês, em 10 lançamentos: Mercado R$ 700,00, Alimentação R$ 260,59.');
+  assert.match(s.Financas.responder({ tipo: 'gastos', categoria: ['Educação', 'Casa'] }), /^Neste mês não há gastos lançados em Educação e Casa\./);
+  // sem "liste/categoria", "gastei no mercado" continua sendo o orçamento do mercado
+  assert.strictEqual(s.Financas.interpretar('quanto gastei no mercado esse mês').tipo, 'orcamento');
+  assert.deepStrictEqual(J(s.Financas.interpretar('liste os gastos de mercado')), { tipo: 'gastos', categoria: 'Mercado' });
+});
+
+test('"Gastos do cartão Mercado Pago" é o BANCO, não o supermercado (antes caía no orçamento do mercado)', function () {
+  var s = sb(DADOS2);
+  assert.deepStrictEqual(J(s.Financas.interpretar('detalhe para mim quais foram os gastos do cartão mercado pago')), { tipo: 'gastos', origem: 'mp' });
+  assert.deepStrictEqual(J(s.Financas.interpretar('Liste os gastos do cartão Mercado Pago esse mês')), { tipo: 'gastos', origem: 'mp' });
+  assert.deepStrictEqual(J(s.Financas.interpretar('quanto gastei no bradesco')), { tipo: 'gastos', origem: 'bd' });
+  assert.strictEqual(s.Financas.responder({ tipo: 'gastos', origem: 'mp' }),
+    'Pelo Mercado Pago você tem 2 lançamentos neste mês, R$ 100,80. Os maiores: Loja Exemplo R$ 70,80, Serviço de nuvem R$ 30,00. Só entram os registrados pela notificação do banco.');
+  assert.match(s.Financas.responder({ tipo: 'gastos', origem: 'it' }), /^Neste mês não há gastos registrados pelo Itaú na caderneta\./);
+  var antigo = JSON.parse(JSON.stringify(DADOS)); // Worker sem porOrigem
+  assert.strictEqual(sb(antigo).Financas.responder({ tipo: 'gastos', origem: 'mp' }), 'A caderneta ainda não informa os gastos por banco.');
+});
+
+test('JEV: "o que gastei no cartão do mercado pago" vira consulta por banco, e "só comida" vira mercado+alimentação', function () {
+  var s = sb(DADOS2, jev('cad_gastos', 0.93, { categoria_gasto: 'mercadopago' }));
+  assert.match(String(s._rotaSemantica('me mostra o que passou no meu cartão laranja', 'dono@exemplo.com', true, { canal: 'voz' })), /^Pelo Mercado Pago você tem 2 lançamentos/);
+  var c = sb(DADOS2, jev('cad_gastos', 0.93, { categoria_gasto: 'mercado_alimentacao' }));
+  assert.match(String(c._rotaSemantica('quanto foi só de comida', 'dono@exemplo.com', true, { canal: 'voz' })), /^Em Mercado e Alimentação você lançou R\$ 960,59/);
+});
+
+test('Fragmento "gasto em lugar fora da lista" (sem pergunta) é consulta; "gastei 50 fora de casa" NÃO (é registro de gasto)', function () {
+  var s = sb(DADOS2);
+  assert.deepStrictEqual(J(s.Financas.interpretar('gasto em lugar fora da lista')), { tipo: 'gastos', excluir: ['Mercado', 'Alimentação'] });
+  assert.strictEqual(s.Financas.interpretar('gastei 50 reais fora de casa'), null);
+  assert.strictEqual(s.Financas.interpretar('gastei fora da lista'), null, 'verbo no passado em 1ª pessoa não é consulta');
+});

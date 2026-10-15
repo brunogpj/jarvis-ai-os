@@ -148,7 +148,7 @@ test('Semana: as variações de pergunta entram; Swile, categoria e hoje/ontem s
     assert.deepStrictEqual(J(s.Financas.interpretar(f)), { tipo: 'gastos_semana' }, f);
   });
   assert.strictEqual(s.Financas.interpretar('quanto gastei no voucher essa semana'), null);
-  assert.strictEqual(s.Financas.interpretar('quanto gastei hoje'), null);
+  assert.deepStrictEqual(J(s.Financas.interpretar('quanto gastei hoje')), { tipo: 'gastos_dia', dia: 'hoje' }, 'hoje agora soma tudo (ver testes de hoje/ontem)');
   assert.strictEqual(s.Financas.interpretar('gastei 50 reais essa semana'), null, 'registro de gasto não é consulta');
 });
 
@@ -161,4 +161,37 @@ test('Resposta financeira do JEV (intenção cad_*) fica SEMPRE no aparelho, mes
   var src = require('fs').readFileSync(require('path').join(__dirname, '..', 'Code.js'), 'utf8');
   assert.match(src, /var _financeiraJev = \(_viaBase === 'jev' && \/\^cad_\/\.test\(String\(typeof _ROTA_ULTIMA/);
   assert.match(src, /_viaBase === 'caderneta_acao' \|\| _financeiraJev\)\)/, 'entra na condição de falar local');
+});
+
+// ── hoje e ontem somam todas as despesas (15/10) ────────────────────────────────────────────────
+var DADOS4 = JSON.parse(JSON.stringify(DADOS3));
+DADOS4.gastosMes.dias = {
+  hoje: { de: '2026-10-15', ate: '2026-10-15', total: 20, n: 2, porCategoria: { Alimentação: 20 }, maiores: [{ descricao: 'Café Exemplo', categoria: 'Alimentação', valor: 12, data: '2026-10-15' }], swile: { total: 8, n: 1 } },
+  ontem: { de: '2026-10-14', ate: '2026-10-14', total: 150, n: 1, porCategoria: { Outros: 150 }, maiores: [{ descricao: 'Conserto', categoria: 'Outros', valor: 150, data: '2026-10-14' }], swile: { total: 0, n: 0 } } };
+
+test('Hoje e ontem: somam todas as despesas do dia, com categoria, o maior e a parte do Swile', function () {
+  var s = sb(DADOS4);
+  assert.strictEqual(s.Financas.responder({ tipo: 'gastos_dia', dia: 'hoje' }),
+    'Hoje você lançou R$ 20,00 em 2 despesas. Por categoria: Alimentação R$ 20,00. O maior foi R$ 12,00 em Café Exemplo. Do cartão Swile foram R$ 8,00. São as despesas lançadas; faturas e contas fixas ficam de fora.');
+  assert.strictEqual(s.Financas.responder({ tipo: 'gastos_dia', dia: 'ontem' }),
+    'Ontem você lançou R$ 150,00 em 1 despesa. O maior foi R$ 150,00 em Conserto. São as despesas lançadas; faturas e contas fixas ficam de fora.');
+  var vazio = JSON.parse(JSON.stringify(DADOS4)); vazio.gastosMes.dias.hoje = { de: 'a', ate: 'a', total: 0, n: 0, porCategoria: {}, maiores: [], swile: { total: 0, n: 0 } };
+  assert.strictEqual(sb(vazio).Financas.responder({ tipo: 'gastos_dia', dia: 'hoje' }), 'Hoje não há despesas lançadas na caderneta.');
+  assert.strictEqual(sb(JSON.parse(JSON.stringify(DADOS))).Financas.responder({ tipo: 'gastos_dia', dia: 'hoje' }), 'A caderneta ainda não informa os gastos do dia.');
+});
+
+test('Hoje e ontem: as variações entram; Swile, categoria e registro de gasto seguem os caminhos de antes', function () {
+  var s = sb(DADOS4);
+  assert.deepStrictEqual(J(s.Financas.interpretar('quanto gastei hoje')), { tipo: 'gastos_dia', dia: 'hoje' });
+  assert.deepStrictEqual(J(s.Financas.interpretar('quanto eu gastei ontem')), { tipo: 'gastos_dia', dia: 'ontem' });
+  assert.deepStrictEqual(J(s.Financas.interpretar('o que eu gastei ontem')), { tipo: 'gastos_dia', dia: 'ontem' });
+  assert.strictEqual(s.Financas.interpretar('quanto gastei hoje no swile'), null);
+  assert.strictEqual(s.Financas.interpretar('quanto gastei hoje no mercado'), null, 'com mercado na frase não é o total do dia (segue o caminho de antes)');
+  assert.strictEqual(s.Financas.interpretar('gastei 30 reais hoje'), null, 'registro de gasto não é consulta');
+  assert.deepStrictEqual(J(s.Financas.interpretar('o que eu gastei com saúde')), { tipo: 'gastos', categoria: 'Saúde' }, '"o que" também é pergunta nas categorias');
+});
+
+test('JEV: "quanto foi que eu gastei ontem" vira o total de ontem', function () {
+  var s = sb(DADOS4, jev('cad_gastos', 0.93, { categoria_gasto: 'ontem' }));
+  assert.match(String(s._rotaSemantica('e ontem, quanto foi que saiu', 'dono@exemplo.com', true, { canal: 'voz' })), /^Ontem você lançou R\$ 150,00/);
 });

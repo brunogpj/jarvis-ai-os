@@ -25,7 +25,7 @@ Projeto Google Apps Script gerenciado localmente via clasp.
 
 | Deployment ID | Versão | Descrição |
 |---|---|---|
-| `<DEPLOYMENT_ID>` | **@522** | **ATIVA** — "semana soma todas as despesas; resposta financeira do JEV sempre local" |
+| `<DEPLOYMENT_ID>` | **@527** | **ATIVA** — "hoje/ontem somam tudo e classificar Outros por regras ensinadas" |
 | `<DEPLOYMENT_ID>` | @25 | Antiga — "TesteJobs" |
 | `<DEPLOYMENT_ID>` | @HEAD | Cabeça (muda a cada push, não é a de produção) |
 
@@ -443,7 +443,14 @@ Medido ao vivo: ~6 s por arquivo (leitura do Workspace + embedding), então um D
   só no SUBSTANTIVO "gasto(s)", com "fora" e sem número (nunca "gastei 50 fora de casa"); "lista" só conta como verbo ("lista os/as/me"). "Quanto gastei essa semana" continua sendo do Swile, mas agora diz "No cartão Swile, nos últimos 7 dias…" (a frase solta soava como o gasto total).
 - **"Quanto gastei essa semana" soma TODAS as despesas (15/10, pedido do dono).** Antes era só o extrato do Swile ("R$ 187,32 no total", que soava como o gasto total). Agora `Financas` responde `{tipo:'gastos_semana'}` com o Worker mandando `gastosMes.semana`: hoje e os 6 dias anteriores
   (atravessa a virada do mês), total, nº de despesas, 3 maiores categorias, o maior gasto e quanto foi pago no cartão Swile (todo lançamento com meio Voucher/Mobilidade, inclusive o digitado no app). Variações: "nesta semana", "nos últimos 7 dias", "quanto saiu da minha conta nos últimos dias" (JEV: `cad_gastos` com
-  `categoria_gasto: semana`). Com Swile/voucher/mobilidade, categoria, mercado ou banco na frase NÃO é o total da semana: Swile segue no extrato do Swile ("No cartão Swile, nos últimos 7 dias…"). `gastos_swile` no JEV passou a exigir que ele fale do cartão de benefícios. "Quanto gastei hoje" ainda é do Swile.
+  `categoria_gasto: semana`). Com Swile/voucher/mobilidade, categoria, mercado ou banco na frase NÃO é o total da semana: Swile segue no extrato do Swile ("No cartão Swile, nos últimos 7 dias…"). `gastos_swile` no JEV passou a exigir que ele fale do cartão de benefícios. "Quanto gastei hoje" e "ontem" também somam tudo (abaixo).
+- **"Hoje" e "ontem" também somam todas as despesas (15/10).** O Worker manda `gastosMes.dias.{hoje,ontem}` (mesma forma da semana, via `periodo(de, ate)`); `Financas` responde `{tipo:'gastos_dia', dia}` ("Hoje você lançou R$ … em N despesas…", "Ontem …", ou "Hoje não há despesas lançadas").
+  Mesmas exceções da semana (Swile, categoria, mercado ou banco na frase seguem o caminho de antes) e "o que eu gastei ontem" também é pergunta; JEV: `categoria_gasto` ganhou `hoje` e `ontem`.
+- **Classificar melhor "Outros": o dono ensina, ninguém adivinha (15/10).** Medido: dos 6 lançamentos em Outros (R$ 305,51, todos digitados no app), 3 eram Outros de verdade e 3 eram ambíguos sem contexto, e o JEV sozinho classificou "Railway" (hospedagem) como **Transporte com 0,98**
+  (leu ferrovia). Por isso: (1) **regra ensinada por voz** — "Railway é Trabalho" / "classifica o X como Lazer" (`ACOES.ensinarCategoria`, propor → sim → desfaz): guarda `{termo, categoria}` em `FIN_CAT_REGRAS` (até 50) e, se houver gasto com o termo em Outros, oferece trocá-lo;
+  `categoriaDe` consulta as regras do dono ANTES da lista de palavras e do JEV, então vale para as notificações de banco e a voz dali em diante; (2) **"reclassifica os gastos em Outros"** (`ACOES.reclassificar`): só propõe o que tem regra do dono ou lista de palavras CONFIRMADA pelo JEV (mesma categoria, ≥ 0,85);
+  sem certeza, não muda nada, lista os maiores e ensina a ensinar; (3) novas palavras de hospedagem/dev na lista de Trabalho (railway, render, heroku, digitalocean, netlify, supabase, firebase, notion, chatgpt…). Worker: `POST /api/jarvis/categoria` troca SÓ a categoria de DESPESA, até 20 por vez, e só se ela ainda está como o Jarvis leu
+  (`de`; "Outros" casa com vazio): controle otimista no próprio UPDATE, então nunca pisa uma categoria que ele escolheu no app; o desfaz é a mesma chamada com `de`/`para` trocados. `ler_debug` com `outrosDiag:true` lista os itens de Outros com a escolha bruta do JEV (nada é gravado).
 - **Resposta financeira do JEV sempre no aparelho (15/10).** A regra "financeiro fica local mesmo longo" só cobria as rotas `caderneta`/`caderneta_acao`: uma resposta do JEV (rota `jev`, intenção `cad_*`) de 305 caracteres passou do limite curto e foi sintetizada na nuvem (7,8 s, valores gravados num arquivo de áudio no Drive).
   Agora `_financeiraJev` (rota `jev` + `_ROTA_ULTIMA` começando em `cad_`) entra na condição de falar local. Verificado nos eventos: `voz:entrega:local · jev · 306 car.`.
 - **Instrumentação:** `Heartbeat.medir` guarda QUANDO foi o pico de cada gatilho (`maxEm`). Ontem o `tickAlertasVoz` teve um pico de 220 s sem causa conhecida; compare `maxEm` com os eventos.

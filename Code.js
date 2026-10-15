@@ -1057,7 +1057,7 @@ function _rotaSemantica(mensagem, email, isOwner, opts) {
                             examples: ['meus investimentos estão ganhando da inflação', 'bati o CDI esse ano', 'quanto rendeu minha carteira esse ano'] },
         cad_gastos:       { what: 'Perguntar quanto ele GASTOU no total na SEMANA (últimos 7 dias) ou neste mês, por CATEGORIA (saúde, transporte, lazer, casa, compras…), listar os gastos do mês, ou os gastos FORA de mercado e alimentação — as despesas lançadas na caderneta, o dinheiro do dia a dia.',
                             not_for: 'Só o mercado/comida — isso é cad_mercado; o cartão de benefícios (Swile) — isso é gastos_swile; o resumo geral do mês (renda, sobra) — isso é cad_mes; REGISTRAR um gasto — isso é nenhuma.',
-                            examples: ['quanto gastei essa semana', 'quanto saiu da minha conta nos últimos dias', 'liste os gastos desse mês', 'quanto gastei com saúde', 'onde mais gastei fora do mercado', 'gastos por categoria', 'e os gastos de lazer'] },
+                            examples: ['quanto gastei hoje', 'o que eu gastei ontem', 'quanto gastei essa semana', 'quanto saiu da minha conta nos últimos dias', 'liste os gastos desse mês', 'quanto gastei com saúde', 'onde mais gastei fora do mercado', 'gastos por categoria', 'e os gastos de lazer'] },
         cad_mes:          { what: 'Pedir o RESUMO / balanço do MÊS: como foi o mês (renda, saídas, sobra, quanto aplicou), do mês atual ou de um mês passado.',
                             not_for: 'Só o livre de hoje — isso é cad_livre; só o que falta pagar — isso é cad_falta_pagar; FECHAR, ENCERRAR ou REABRIR o mês (uma ordem, não uma pergunta) — isso é nenhuma.',
                             examples: ['como foi o mês', 'me dá o balanço do mês', 'como foi setembro'] },
@@ -1155,7 +1155,7 @@ function _rotaSemantica(mensagem, email, isOwner, opts) {
     categoria_gasto: {
       type: 'choice',
       instructions: 'SUPONDO que o pedido seja sobre os GASTOS do mês por categoria: de qual categoria ele quer saber?',
-      criteria: { semana: 'O total gasto na SEMANA / nos últimos 7 dias / nos últimos dias.', todas: 'Todos os gastos do mês / por categoria / não especificou.', fora_mercado: 'Os gastos fora de mercado e alimentação (tudo menos comida).',
+      criteria: { hoje: 'O total gasto HOJE.', ontem: 'O total gasto ONTEM.', semana: 'O total gasto na SEMANA / nos últimos 7 dias / nos últimos dias.', todas: 'Todos os gastos do mês / por categoria / não especificou.', fora_mercado: 'Os gastos fora de mercado e alimentação (tudo menos comida).',
                   mercado_alimentacao: 'SÓ os gastos de mercado e alimentação (comida).', mercadopago: 'Os gastos do cartão ou da conta do banco MERCADO PAGO (o banco, não o supermercado).',
                   bradesco: 'Os gastos do banco Bradesco.', itau: 'Os gastos do banco Itaú.', saude: 'Saúde, farmácia, remédios.',
                   transporte: 'Transporte, uber, táxi, estacionamento.', lazer: 'Lazer, diversão, cinema.', educacao: 'Educação, escola, curso.', casa: 'Casa.', compras: 'Compras em lojas.',
@@ -1255,7 +1255,7 @@ function _rotaSemantica(mensagem, email, isOwner, opts) {
       else if (intencao === 'cad_gastos') {
         var _cg = arg('categoria_gasto', 'todas'), _MAPA_CG = { saude: 'Saúde', transporte: 'Transporte', lazer: 'Lazer', educacao: 'Educação', casa: 'Casa', compras: 'Compras', trabalho: 'Trabalho', outros: 'Outros' };
         var _MAPA_OG = { mercadopago: 'mp', bradesco: 'bd', itau: 'it' };
-        _cq = _cg === 'semana' ? { tipo: 'gastos_semana' } : _cg === 'fora_mercado' ? { tipo: 'gastos', excluir: ['Mercado', 'Alimentação'] }
+        _cq = _cg === 'semana' ? { tipo: 'gastos_semana' } : (_cg === 'hoje' || _cg === 'ontem') ? { tipo: 'gastos_dia', dia: _cg } : _cg === 'fora_mercado' ? { tipo: 'gastos', excluir: ['Mercado', 'Alimentação'] }
             : _cg === 'mercado_alimentacao' ? { tipo: 'gastos', categoria: ['Mercado', 'Alimentação'] }
             : _MAPA_OG[_cg] ? { tipo: 'gastos', origem: _MAPA_OG[_cg] }
             : (_MAPA_CG[_cg] ? { tipo: 'gastos', categoria: _MAPA_CG[_cg] } : { tipo: 'gastos' });
@@ -4186,6 +4186,18 @@ function doPost(e) {
               return { variante: v.nome, tom: tom, estilo: s2.estilo, voz: s2.voz, falou: tr && tr.texto ? tr.texto : null, erroTranscricao: (tr && tr.status !== 'success') ? (tr.erro || tr.status) : null, bytes: s2.base64.length };
             }) };
           } catch (eTe) { saida.ttsEco = { erro: eTe.message }; }
+        }
+        // Itens da categoria "Outros" (e sem categoria) do mês, maiores primeiro, com a origem pelo prefixo do id. Só leitura: base para classificar melhor.
+        if (body.outrosDiag) {
+          try {
+            var _ro = Financas.resumo(), _go = _ro.ok && _ro.dados && _ro.dados.gastosMes;
+            // com sugestão: o que o JEV diria para cada item (escolha e certeza BRUTAS, antes do limiar de 0,85), sem gravar nada
+            saida.outrosDiag = _go ? (_go.outrosItens || []).map(function (x) {
+              var pc = Financas.perguntarCategoria(x.descricao, { valor: x.valor, meio: x.meio });
+              return { descricao: x.descricao, valor: x.valor, data: x.data, meio: x.meio, origem: /^(mp|bd|it|sw|vz)_/.test(String(x.id)) ? String(x.id).slice(0, 2) : 'app',
+                       jev: pc ? pc.choice + ' ' + pc.conf.toFixed(2) : null, mudaria: !!Financas.sugerirCategoria(x.descricao, { valor: x.valor, meio: x.meio }) };
+            }) : { erro: 'sem gastosMes' };
+          } catch (eOd) { saida.outrosDiag = { erro: eOd.message }; }
         }
         // Tempo de cada etapa do buscarConhecimento (palavra-chave no Drive, semântico, rerank, leitura de páginas inteiras). Só leitura. {consulta}.
         if (body.tempoConhecimento) {

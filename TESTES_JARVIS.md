@@ -298,6 +298,10 @@ Sem você pedir, no tick de 15 min, em duas janelas: **manhã 9–11h** e **noit
 | 1.167 | "Quanto gastei essa semana" | total de TODAS as despesas dos últimos 7 dias, categorias, o maior gasto e a parte do Swile | ✅ | 15/10 ao vivo no celular |
 | 1.168 | "Quanto gastei no Swile essa semana" | continua o extrato do Swile ("No cartão Swile, nos últimos 7 dias…") | ✅ | 15/10 ao vivo |
 | 1.169 | "Quanto saiu da minha conta nos últimos dias" (paráfrase) | mesmo total da semana, pelo JEV, falado no aparelho (não pela nuvem) | ✅ | 15/10: evento `voz:entrega:local · jev` |
+| 1.170 | "Quanto gastei hoje" / "quanto gastei ontem" / "o que eu gastei ontem" | total de TODAS as despesas do dia, com categoria, o maior e a parte do Swile | ✅ | 15/10 ao vivo no celular |
+| 1.171 | "Reclassifica os gastos em Outros" | diz quantos há, o total e, sem certeza, ensina a ensinar ("Railway é Trabalho"); nunca muda sozinho | ✅ | 15/10 ao vivo: 6 gastos, R$ 305,51, nenhuma sugestão segura |
+| 1.172 | "Railway é trabalho" → "sim" | guarda a regra, troca o gasto de Outros para Trabalho e diz "diga desfaz" | ⚠️ | proposta confirmada ao vivo; cancelei com "não" para não mexer nos seus dados. Falta você confirmar |
+| 1.173 | "Desfaz" depois de ensinar uma categoria | esquece a regra e devolve o gasto para Outros | ✅ | teste automático |
 | 1.139 | Interruptores: `FERRAMENTAS_JEV`, `CONFIRMA_JEV`, `INJECAO_JEV`, `ACAO_JEV`, `CATEGORIA_JEV` = nao | volta ao comportamento anterior | ✅ | testes automáticos |
 
 ### 1g. 🔔 Notificações do celular 🗣️

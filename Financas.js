@@ -173,14 +173,17 @@ var Financas = (function () {
   /** "gastos do mês" por categoria. s = frase normalizada. → {tipo:'gastos', categoria?|excluir?} | null. PURA. */
   function _interpretarGastos(s) {
     // "lista" só vale como VERBO ("lista os gastos"); em "fora da lista" é substantivo e fazia "gastei … fora da lista" parecer pergunta
-    var pergunta = /\b(quanto|quantos|quais|qual|liste|listar|me (diga|fale|fala|conta|mostre|mostra)|fale|diga|mostre)\b|\blista (os|as|me|tudo)\b/.test(s);
+    var pergunta = /\b(quanto|quantos|quais|qual|o que|liste|listar|me (diga|fale|fala|conta|mostre|mostra)|fale|diga|mostre)\b|\blista (os|as|me|tudo)\b/.test(s);
     // Fragmento sem verbo de pergunta ("gasto em lugar fora da lista", dito logo depois de outro pedido): vale só como SUBSTANTIVO ("gasto/gastos"), com "fora" e sem número —
     // nunca "gastei 50 fora de casa", que é registro de gasto e não consulta.
     var fragmento = !pergunta && /\bgastos?\b/.test(s) && /\bfora\b/.test(s) && !/\d/.test(s);
     if ((!pergunta && !fragmento) || !/\bgast\w*\b/.test(s)) return null;
     // SEMANA (15/10): "quanto gastei essa semana" soma TODAS as despesas lançadas dos últimos 7 dias. Com Swile/voucher/mobilidade na frase continua sendo o extrato do Swile; com categoria, mercado
     // ou banco na frase não é o total da semana (ainda não há resposta por categoria na semana), então segue o caminho de antes.
-    if (/\b(semana|ultimos (7|sete) dias)\b/.test(s) && !/\b(swile|suav|voucher|vale|mobilidade|alimentacao|mercado|mercadopago|bradesco|itau)\b/.test(s) && !_CAT_FALADA.some(function (c) { return c[1].test(s); })) return { tipo: 'gastos_semana' };
+    // HOJE e ONTEM (15/10) seguem a mesma regra da semana: somam todas as despesas lançadas no dia.
+    var semFiltro = !/\b(swile|suav|voucher|vale|mobilidade|alimentacao|mercado|mercadopago|bradesco|itau)\b/.test(s) && !_CAT_FALADA.some(function (c) { return c[1].test(s); });
+    if (/\b(semana|ultimos (7|sete) dias)\b/.test(s) && semFiltro) return { tipo: 'gastos_semana' };
+    if (/\b(hoje|ontem)\b/.test(s) && semFiltro) return { tipo: 'gastos_dia', dia: /\bontem\b/.test(s) ? 'ontem' : 'hoje' };
     if (/\b(swile|suav|voucher|vale|mobilidade|semana|hoje|ontem|amanha)\b/.test(s)) return null;
     var fora = /\bfora\b/.test(s);
     if (fora) return { tipo: 'gastos', excluir: ['Mercado', 'Alimentação'] };   // "fora da lista / da categoria de mercado e alimentação"
@@ -254,15 +257,17 @@ var Financas = (function () {
       if (!configurado()) return 'A caderneta ainda não está conectada ao Jarvis.';
       var r = resumo();
       if (!r.ok) return r.codigo === 401 ? 'A caderneta recusou o acesso do Jarvis. Preciso que o acesso seja reconfigurado.' : 'Não consegui consultar a caderneta agora.';
-      if (consulta.tipo === 'gastos_semana') {
-        // Hoje e os 6 dias anteriores, atravessando a virada do mês; o Worker manda gastosMes.semana (todas as despesas lançadas, inclusive as do voucher).
-        var sm = r.dados.gastosMes && r.dados.gastosMes.semana;
-        if (!sm) return 'A caderneta ainda não informa os gastos da semana.';
-        if (!sm.n) return 'Nos últimos 7 dias não há despesas lançadas na caderneta.';
+      if (consulta.tipo === 'gastos_semana' || consulta.tipo === 'gastos_dia') {
+        // Período fechado (hoje, ontem ou os últimos 7 dias, atravessando a virada do mês); o Worker manda gastosMes.semana e gastosMes.dias.{hoje,ontem}:
+        // todas as despesas lançadas, inclusive as do voucher.
+        var gmp = r.dados.gastosMes, sm = consulta.tipo === 'gastos_semana' ? (gmp && gmp.semana) : (gmp && gmp.dias && gmp.dias[consulta.dia]);
+        var rotuloP = consulta.tipo === 'gastos_semana' ? 'Nos últimos 7 dias' : (consulta.dia === 'ontem' ? 'Ontem' : 'Hoje');
+        if (!sm) return 'A caderneta ainda não informa os gastos ' + (consulta.tipo === 'gastos_semana' ? 'da semana' : 'do dia') + '.';
+        if (!sm.n) return rotuloP + ' não há despesas lançadas na caderneta.';
         var catsS = Object.keys(sm.porCategoria || {}).map(function (k) { return { nome: k, total: Number(sm.porCategoria[k]) || 0 }; }).sort(function (a, b) { return b.total - a.total; }).slice(0, 3);
         var maiorS = (sm.maiores || [])[0];
-        return 'Nos últimos 7 dias você lançou ' + _brl(sm.total) + ' em ' + sm.n + (sm.n === 1 ? ' despesa' : ' despesas') + '. ' +
-               (catsS.length ? 'Por categoria: ' + catsS.map(function (c) { return c.nome + ' ' + _brl(c.total); }).join(', ') + '. ' : '') +
+        return rotuloP + ' você lançou ' + _brl(sm.total) + ' em ' + sm.n + (sm.n === 1 ? ' despesa' : ' despesas') + '. ' +
+               (sm.n > 1 && catsS.length ? 'Por categoria: ' + catsS.map(function (c) { return c.nome + ' ' + _brl(c.total); }).join(', ') + '. ' : '') +
                (maiorS ? 'O maior foi ' + _brl(maiorS.valor) + (maiorS.descricao ? ' em ' + maiorS.descricao : '') + '. ' : '') +
                (sm.swile && sm.swile.n ? 'Do cartão Swile foram ' + _brl(sm.swile.total) + '. ' : '') + 'São as despesas lançadas; faturas e contas fixas ficam de fora.';
       }
@@ -624,7 +629,7 @@ var Financas = (function () {
 
   /** Categoria do app (a lista do formulário de gasto) pelo nome do lugar. Palavras fixas, sem modelo; sem pista = 'Outros'. */
   var _CATEGORIAS_PALAVRAS = [
-    ['Trabalho',    /\b(google cloud|google|anthropic|claude|openai|github|vercel|cloudflare|dominio|hospedagem|aws|azure)\b/],
+    ['Trabalho',    /\b(google cloud|google|anthropic|claude|openai|github|vercel|cloudflare|dominio|hospedagem|aws|azure|railway|render|heroku|digitalocean|netlify|supabase|firebase|notion|chatgpt|copilot|namecheap|godaddy)\b/],
     ['Compras',     /\b(shopee|mercado livre|amazon|magalu|americanas|shein|aliexpress|loja\w*|roupa\w*|sapato\w*|tenis|presente\w*)\b/],
     ['Mercado',     /\b(mercado|supermercado\w*|atacad\w*|atacarejo|assai|carrefour|sam s club|sams club|epa|verdemar|hortifruti|acougue|sacolao)\b/],
     ['Alimentação', /\b(padaria|lanche\w*|restaurante|ifood|pizza\w*|lanchonete|acai|cafe|cafeteria|bar|almoco|janta\w*|sorvete\w*|hamburguer\w*|churrasc\w*|salgado\w*|marmit\w*|doceria|sushi|pastel\w*)\b/],
@@ -635,6 +640,8 @@ var Financas = (function () {
     ['Casa',        /\b(leroy|construcao|moveis|conserto\w*|eletricista|encanador|limpeza)\b/]
   ];
   function categoriaDe(texto) {
+    var ensinada = _categoriaDoUsuario(texto);   // o que o dono ensinou ("Railway é Trabalho") vale mais que qualquer palavra ou JEV
+    if (ensinada) return ensinada;
     var s = _norm(texto);
     for (var i = 0; i < _CATEGORIAS_PALAVRAS.length; i++) if (_CATEGORIAS_PALAVRAS[i][1].test(s)) return _CATEGORIAS_PALAVRAS[i][0];
     return _categoriaJev(texto) || 'Outros';
@@ -646,12 +653,17 @@ var Financas = (function () {
    *  Chave ascii na pergunta (sem acento); o mapa devolve o nome que o app usa. CATEGORIA_JEV=nao desliga. */
   var _CAT_JEV = { trabalho: 'Trabalho', compras: 'Compras', mercado: 'Mercado', alimentacao: 'Alimentação', transporte: 'Transporte',
                    saude: 'Saúde', lazer: 'Lazer', educacao: 'Educação', casa: 'Casa' };
-  function _categoriaJev(texto) {
+  /** Pergunta ao JEV a categoria. ctx = {valor, meio} (opcional) dá contexto a descrições soltas e libera textos de até 140 letras (reclassificação de lançamentos já feitos).
+   *  → {categoria|null, choice, conf} | null. Quem chama decide o limiar. */
+  function _perguntarCategoria(texto, ctx) {
     try {
       var t = String(texto || '').replace(/\s+/g, ' ').trim();
-      if (t.length < 3 || t.length > 60 || typeof TypeSafe === 'undefined' || !TypeSafe.temChave()) return null;
+      if (t.length < 3 || t.length > (ctx ? 140 : 60) || typeof TypeSafe === 'undefined' || !TypeSafe.temChave()) return null;
       if (String(PropertiesService.getScriptProperties().getProperty('CATEGORIA_JEV') || 'sim').toLowerCase() === 'nao') return null;
-      var r = TypeSafe.perguntar({ lugar_ou_descricao: t }, {
+      var estado = { lugar_ou_descricao: t };
+      if (ctx && ctx.valor != null) estado.valor_em_reais = ctx.valor;
+      if (ctx && ctx.meio) estado.forma_de_pagamento = ctx.meio;
+      var r = TypeSafe.perguntar(estado, {
         cat: {
           type: 'choice',
           instructions: 'Um brasileiro registrou um gasto neste lugar ou com esta descrição. Em qual categoria do orçamento ele cai? Se o nome não deixa claro, escolha "outros": é melhor não classificar do que classificar errado.',
@@ -670,9 +682,19 @@ var Financas = (function () {
         }
       }, { cacheSeg: 21600 });
       var a = r && r.ok && r.answers && r.answers.cat;
-      if (!a || !_CAT_JEV[a.choice] || !(a.confidence >= 0.80)) return null;
-      return _CAT_JEV[a.choice];
+      if (!a || !a.choice) return null;
+      return { categoria: _CAT_JEV[a.choice] || null, choice: a.choice, conf: Number(a.confidence) || 0 };
     } catch (e) { return null; }
+  }
+  /** Gasto NOVO (notificação de banco ou voz): só aceita com certeza ≥ 0,80. */
+  function _categoriaJev(texto) {
+    var r = _perguntarCategoria(texto, null);
+    return (r && r.categoria && r.conf >= 0.80) ? r.categoria : null;
+  }
+  /** Sugestão para um lançamento JÁ FEITO em "Outros": só o JEV, com a descrição inteira + valor + forma de pagamento. → {categoria, conf} | null (null = não vale mudar). */
+  function sugerirCategoria(descricao, ctx) {
+    var r = _perguntarCategoria(descricao, ctx || {});
+    return (r && r.categoria && r.conf >= 0.85) ? { categoria: r.categoria, conf: r.conf } : null;
   }
 
   /** Gasto geral no Worker (cartão, débito, Pix, dinheiro, boleto). g = {origem:'mp'|'bd'|'vz', chave, data, valor, meio, categoria, descricao}. */
@@ -718,6 +740,8 @@ var Financas = (function () {
       // u.acao é o que o DESFAZ faz: desfazer um fechamento = reabrir, então a ação original foi o fechamento
       case 'fecharMes': return (u.acao === 'reabrir' ? 'o fechamento de ' : 'a reabertura de ') + (u.nome || 'um mês');
       case 'saldoInvest': return 'a atualização do saldo de ' + (u.nome || 'um investimento');
+      case 'reclassificar': return 'a troca de categoria de ' + ((u.itens || []).length) + ' gasto(s) que estavam em Outros';
+      case 'ensinarCategoria': return 'a regra "' + (u.termo || '') + '" e a troca de categoria que veio com ela';
       case 'consultor': return 'o ajuste ' + (u.rotulo || 'do consultor');
       default: return 'a última ação';
     }
@@ -1413,7 +1437,129 @@ var Financas = (function () {
     }
   };
 
-  var ORDEM_ACOES = ['recarga', 'receber', 'gasto', 'receita', 'pagar', 'fecharMes', 'aporte', 'aplicar', 'saldoInvest', 'consultor', 'meta'];
+  // ── CLASSIFICAR MELHOR "OUTROS" (15/10) ─────────────────────────────────────────────────────────────────────────────────────────────────────
+  // Medido: dos 6 lançamentos em Outros, 3 eram Outros de verdade e 3 eram ambíguos sem contexto — e o JEV sozinho classificou "Railway" (hospedagem) como TRANSPORTE com 0,98 (leu ferrovia).
+  // Então ninguém adivinha: o dono ENSINA ("Railway é Trabalho") e a regra vale para os próximos gastos (categoriaDe) e oferece corrigir os que já estão em Outros. Sugestão automática só
+  // quando a regra de palavras E o JEV concordam. Tudo com "sim" e "desfaz"; o Worker só troca categoria de DESPESA que ainda está em Outros (controle otimista).
+  var _CAT_NOMES = { trabalho: 'Trabalho', compras: 'Compras', mercado: 'Mercado', alimentacao: 'Alimentação', transporte: 'Transporte', saude: 'Saúde', lazer: 'Lazer', educacao: 'Educação', casa: 'Casa' };
+  var _CAT_ALT = 'trabalho|compras|mercado|alimentacao|transporte|saude|lazer|educacao|casa';
+
+  function _lerRegrasCat() { try { var r = JSON.parse(_p('FIN_CAT_REGRAS') || '[]'); return Array.isArray(r) ? r : []; } catch (e) { return []; } }
+  function _gravarRegrasCat(r) { try { PropertiesService.getScriptProperties().setProperty('FIN_CAT_REGRAS', JSON.stringify(r.slice(-50))); return true; } catch (e) { return false; } }
+  function _casaTermo(textoNorm, termo) { return !!termo && new RegExp('(^| )' + termo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '( |$)').test(textoNorm); }
+  /** Categoria que o DONO ensinou para um termo que aparece no texto (ou null). */
+  function _categoriaDoUsuario(texto) {
+    var s = _norm(texto), regras = _lerRegrasCat();
+    for (var i = regras.length - 1; i >= 0; i--) if (_casaTermo(s, regras[i].t)) return regras[i].c;
+    return null;
+  }
+  /** Categoria pela lista de palavras (sem JEV), ou null. */
+  function _categoriaPorPalavras(texto) {
+    var s = _norm(texto);
+    for (var i = 0; i < _CATEGORIAS_PALAVRAS.length; i++) if (_CATEGORIAS_PALAVRAS[i][1].test(s)) return _CATEGORIAS_PALAVRAS[i][0];
+    return null;
+  }
+  /** Sugestão para um lançamento já feito em Outros: regra do dono, ou lista de palavras CONFIRMADA pelo JEV (≥ 0,85, mesma categoria). → {categoria, via} | null. */
+  function _sugestaoOutros(item) {
+    var u = _categoriaDoUsuario(item.descricao);
+    if (u) return { categoria: u, via: 'regra do dono' };
+    var pal = _categoriaPorPalavras(item.descricao);
+    if (!pal) return null;
+    var j = sugerirCategoria(item.descricao, { valor: item.valor, meio: item.meio });
+    return (j && j.categoria === pal) ? { categoria: pal, via: 'palavras + JEV' } : null;
+  }
+  function _curto(txt, n) { var t = String(txt || '').replace(/\s*\(.*$/, '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n - 1) + '…' : t; }
+  /** Palavra que parece nome de lugar ou serviço (não "Gastos", "Compra", "Pagamento"…), para o exemplo da dica de ensino. */
+  function _exemploEnsino(itens) {
+    var generico = /^(gastos?|compras?|pagamentos?|transferencias?|diversos?|despesas?|saque|dinheiro)$/;
+    for (var i = 0; i < itens.length; i++) {
+      var w = String(itens[i].descricao || '').split(/[\s:]+/)[0];
+      if (w.length >= 4 && !generico.test(_norm(w))) return w;
+    }
+    return 'Railway';
+  }
+  function _listaFalada(itens, max) {
+    var p = itens.slice(0, max).map(function (i) { return i.descricao + (i.para ? ' para ' + i.para : ' ' + _brl(i.valor)); });
+    return p.join(', ') + (itens.length > max ? ' e mais ' + (itens.length - max) : '');
+  }
+  function _trocarCategorias(itens) {   // [{id, de, para}] → {ok, mudou:[ids], ignorados:[ids]}
+    var x = _post('/api/jarvis/categoria', { itens: itens.map(function (i) { return { id: i.id, de: i.de, para: i.para }; }) });
+    return x.ok ? { ok: true, mudou: x.dados.mudou || [], ignorados: x.dados.ignorados || [] } : { ok: false, erro: x.erro };
+  }
+
+  ACOES.reclassificar = {
+    propor: function (msg) {
+      var s = _norm(msg);
+      if (!(/\b(reclassific\w*|classific\w*|categoriz\w*|arrum\w*|organiz\w*)\b/.test(s) && /\boutros\b/.test(s))) return null;
+      var r = resumo();
+      var itens = (r.ok && r.dados && r.dados.gastosMes && r.dados.gastosMes.outrosItens) || [];
+      if (!r.ok || !r.dados.gastosMes) return { resp: 'Não consegui consultar a caderneta agora.' };
+      if (!itens.length) return { resp: 'Não há gastos em Outros neste mês.' };
+      var com = [], sem = [];
+      itens.forEach(function (i) { var sg = _sugestaoOutros(i); var it = { id: i.id, descricao: _curto(i.descricao, 40), valor: i.valor, de: 'Outros' }; if (sg) { it.para = sg.categoria; com.push(it); } else sem.push(it); });
+      var total = itens.reduce(function (a, i) { return a + (Number(i.valor) || 0); }, 0);
+      if (!com.length) {
+        return { resp: 'Tenho ' + itens.length + (itens.length === 1 ? ' gasto' : ' gastos') + ' em Outros, ' + _brl(total) + ', e não tenho certeza da categoria de nenhum: ' + _listaFalada(sem, 3) +
+                       '. Para eu aprender, diga por exemplo: "' + _exemploEnsino(sem) + ' é Trabalho".' };
+      }
+      var p = { tipo: 'reclassificar', itens: com };
+      return { pend: p, resp: 'Posso mudar ' + com.length + (com.length === 1 ? ' gasto' : ' gastos') + ' de Outros: ' + _listaFalada(com, 4) + '.' + (sem.length ? ' Os outros ' + sem.length + ' ficam em Outros.' : '') + ' Aplico? Diga sim ou não.' };
+    },
+    executar: function (p) {
+      var x = _trocarCategorias(p.itens);
+      if (!x.ok) return { resp: 'Não consegui trocar as categorias agora. Não mudei nada.' };
+      var feitos = p.itens.filter(function (i) { return x.mudou.indexOf(i.id) !== -1; });
+      if (!feitos.length) return { resp: 'Nada mudou: essas categorias já tinham sido alteradas no app.' };
+      return { resp: 'Troquei a categoria de ' + feitos.length + (feitos.length === 1 ? ' gasto' : ' gastos') + ': ' + _listaFalada(feitos, 4) + '. Para desfazer, diga desfaz.',
+               desfazer: { tipo: 'reclassificar', itens: feitos.map(function (i) { return { id: i.id, de: i.para, para: i.de, descricao: i.descricao, valor: i.valor }; }) } };
+    },
+    desfazer: function (u) {
+      var x = _trocarCategorias(u.itens);
+      return (x.ok && x.mudou.length) ? 'Desfeito: ' + x.mudou.length + (x.mudou.length === 1 ? ' gasto voltou' : ' gastos voltaram') + ' para Outros.' : 'Não consegui desfazer. Ajuste na caderneta.';
+    }
+  };
+
+  ACOES.ensinarCategoria = {
+    propor: function (msg) {
+      var s = _norm(msg), m = s.match(new RegExp('^(?:classifica|categoriza|coloca|poe|marca|muda)\\w*\\s+(?:o |a |os |as )?(.+?)\\s+(?:como|em|para|pra|na categoria(?: de)?)\\s+(?:categoria\\s+)?(' + _CAT_ALT + ')$'))
+             || s.match(new RegExp('^(?:o |a |os |as )?(.+?)\\s+(?:e|eh|vai em|vai para|vai pra|fica em|conta como|entra em|sempre e)\\s+(?:a |o )?(?:categoria\\s+)?(' + _CAT_ALT + ')$'));
+      if (!m) return null;
+      var termo = m[1].trim(), cat = _CAT_NOMES[m[2]];
+      // termo de lugar/serviço: curto, sem número, e que não seja conversa ("minha meta é casa", "isso é trabalho")
+      if (termo.length < 3 || termo.length > 40 || termo.split(' ').length > 4 || /\d/.test(termo) || new RegExp('^(' + _CAT_ALT + ')$').test(termo) ||
+          /\b(meta|minha|meu|seu|sua|eu|voce|isso|isto|aquilo|esse|essa|ele|ela|que|quanto|qual|hoje|ontem|gasto|gastos|conta|contas)\b/.test(termo)) return null;
+      var r = resumo();
+      var itens = ((r.ok && r.dados && r.dados.gastosMes && r.dados.gastosMes.outrosItens) || []).filter(function (i) { return _casaTermo(_norm(i.descricao), termo); })
+        .map(function (i) { return { id: i.id, descricao: _curto(i.descricao, 40), valor: i.valor, de: 'Outros', para: cat }; });
+      var soma = itens.reduce(function (a, i) { return a + (Number(i.valor) || 0); }, 0);
+      var p = { tipo: 'ensinarCategoria', termo: termo, categoria: cat, itens: itens };
+      return { pend: p, resp: 'Entendi: gasto com "' + termo + '" é ' + cat + '. Guardo isso para os próximos' +
+                       (itens.length ? ' e mudo ' + itens.length + (itens.length === 1 ? ' gasto' : ' gastos') + ' de Outros (' + _brl(soma) + ') para ' + cat : '') + '? Diga sim ou não.' };
+    },
+    executar: function (p) {
+      var regras = _lerRegrasCat(), anterior = null;
+      regras = regras.filter(function (x) { if (x.t === p.termo) { anterior = x.c; return false; } return true; });
+      regras.push({ t: p.termo, c: p.categoria });
+      if (!_gravarRegrasCat(regras)) return { resp: 'Não consegui guardar a regra agora. Não mudei nada.' };
+      var feitos = [];
+      if (p.itens && p.itens.length) {
+        var x = _trocarCategorias(p.itens);
+        if (x.ok) feitos = p.itens.filter(function (i) { return x.mudou.indexOf(i.id) !== -1; });
+      }
+      return { resp: 'Guardei: "' + p.termo + '" é ' + p.categoria + '.' + (feitos.length ? ' Troquei ' + feitos.length + (feitos.length === 1 ? ' gasto' : ' gastos') + ' de Outros.' : '') + ' Para desfazer, diga desfaz.',
+               desfazer: { tipo: 'ensinarCategoria', termo: p.termo, anterior: anterior, itens: feitos.map(function (i) { return { id: i.id, de: i.para, para: i.de, descricao: i.descricao, valor: i.valor }; }) } };
+    },
+    desfazer: function (u) {
+      var regras = _lerRegrasCat().filter(function (x) { return x.t !== u.termo; });
+      if (u.anterior) regras.push({ t: u.termo, c: u.anterior });
+      _gravarRegrasCat(regras);
+      var voltou = 0;
+      if (u.itens && u.itens.length) { var x = _trocarCategorias(u.itens); if (x.ok) voltou = x.mudou.length; }
+      return 'Desfeito: ' + (u.anterior ? 'a regra de "' + u.termo + '" voltou a ' + u.anterior : 'esqueci a regra de "' + u.termo + '"') + (voltou ? ' e ' + voltou + (voltou === 1 ? ' gasto voltou' : ' gastos voltaram') + ' para Outros' : '') + '.';
+    }
+  };
+
+  var ORDEM_ACOES = ['recarga', 'receber', 'gasto', 'receita', 'pagar', 'fecharMes', 'aporte', 'aplicar', 'saldoInvest', 'consultor', 'meta', 'reclassificar', 'ensinarCategoria'];
 
   var _SIM = /^(sim|isso|isso mesmo|confirmo|confirma|confirmado|pode|pode registrar|pode confirmar|pode gravar|esta certo|ta certo|certo|correto|exato|positivo|com certeza|claro)\b/;
   var _NAO = /^(nao|negativo|cancela|cancelar|cancelado|deixa|deixa pra la|esquece|errado|nao precisa|para|pare)\b/;
@@ -1543,7 +1689,7 @@ var Financas = (function () {
            registrarGastoSwile: registrarGastoSwile, desfazerGastoSwile: desfazerGastoSwile, falarSaldoSwile: falarSaldoSwile,
            interpretarRecarga: interpretarRecarga, conversar: conversar, registrarRecarga: registrarRecarga, desfazerRecarga: desfazerRecarga,
            interpretarGasto: interpretarGasto, categoriaDe: categoriaDe, registrarGasto: registrarGasto, desfazerGasto: desfazerGasto, guardarDesfazer: guardarDesfazer,
-           _postBruto: _post, ehDoDono: ehDoDono, proporEntrada: proporEntrada, proporBancoGenerico: proporBancoGenerico, proporPagamentoFatura: proporPagamentoFatura, registrarReceita: registrarReceita, desfazerReceita: desfazerReceita };
+           _postBruto: _post, ehDoDono: ehDoDono, proporEntrada: proporEntrada, proporBancoGenerico: proporBancoGenerico, proporPagamentoFatura: proporPagamentoFatura, sugerirCategoria: sugerirCategoria, perguntarCategoria: _perguntarCategoria, registrarReceita: registrarReceita, desfazerReceita: desfazerReceita };
 })();
 
 /** Diagnóstico no editor: mostra se está conectado e o que ele responderia, sem falar no celular. */

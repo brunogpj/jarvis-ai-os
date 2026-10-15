@@ -5909,6 +5909,14 @@ function _bancoParse(app, titulo, texto) {
       var credito = /fatura/i.test(x);
       return { origem: 'mp', valor: _finNum(m[1]), estabelecimento: m[2].trim(), meio: credito ? 'Cartão de crédito' : 'Pix / débito', auto: credito };
     }
+    // FORMATO 2 (REAL, 15/10 12:52, compra que ficou sem registro): título "Você pagou <ESTABELECIMENTO>" (sem valor) e corpo "Debitamos R$ 32,99 da sua conta." = saída do saldo da conta
+    // (débito/Pix/QR). O valor vem do CORPO; "fatura" no corpo com valor = cartão de crédito. Estabelecimento truncado pelo push ("Divino fogao-comi") fica como veio.
+    m = t.match(/^voc[eê] pagou\s+(?!R\$)(.+?)\.?$/i);
+    if (m) {
+      var dbt = x.match(/debitamos\s+R\$\s*([\d.,]*\d)\s+da sua conta/i), fat = /fatura/i.test(x) ? x.match(/R\$\s*([\d.,]*\d)/) : null;
+      if (dbt) return { origem: 'mp', valor: _finNum(dbt[1]), estabelecimento: m[1].trim(), meio: 'Pix / débito', auto: true };
+      if (fat) return { origem: 'mp', valor: _finNum(fat[1]), estabelecimento: m[1].trim(), meio: 'Cartão de crédito', auto: true };
+    }
   }
   // ITAÚ. Os textos abaixo são REAIS, lidos na caixa de notificações do app do Itaú (14/10/2026; título + corpo):
   //   "Pix recebido | Você recebeu R$ 115,00 de BRUNO, CPF XXX.057.876-XX."

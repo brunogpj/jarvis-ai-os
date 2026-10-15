@@ -48,6 +48,15 @@ test('_bancoParse: os formatos reais do Mercado Pago e do Bradesco', function ()
   assert.deepStrictEqual([d.valor, d.auto], [80, false]);
 });
 
+test('_bancoParse: Mercado Pago formato 2 (REAL 15/10): título só com o estabelecimento e "Debitamos R$ X da sua conta" no corpo registra sozinho como débito', function () {
+  var s = sb();
+  var a = J(s._bancoParse('Mercado Pago', 'Você pagou Divino fogao-comi', 'Debitamos R$ 32,99 da sua conta.'));
+  assert.deepStrictEqual([a.origem, a.valor, a.estabelecimento, a.meio, a.auto], ['mp', 32.99, 'Divino fogao-comi', 'Pix / débito', true]);
+  var b = J(s._bancoParse('Mercado Pago', 'Você pagou Loja Exemplo', 'O valor de R$ 1.200,50 vai entrar na próxima fatura.'));
+  assert.deepStrictEqual([b.valor, b.meio, b.auto], [1200.5, 'Cartão de crédito', true]);
+  assert.strictEqual(s._bancoParse('Mercado Pago', 'Você pagou Loja Exemplo', 'Obrigado por usar o Mercado Pago.'), null, 'sem valor no corpo não vira gasto');
+});
+
 test('_bancoParse: Pix recebido é ENTRADA (nunca gasto nem automática)', function () {
   var e = J(sb()._bancoParse('Bradesco', 'BRADESCO', 'Você recebeu um Pix de R$ 63,00 de Iago, da Instituição BANCO PAN'));
   assert.deepStrictEqual([e.entrada, e.auto, e.valor, e.remetente, e.instituicao], [true, false, 63, 'Iago', 'BANCO PAN']);

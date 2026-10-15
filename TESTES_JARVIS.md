@@ -284,6 +284,12 @@ Sem você pedir, no tick de 15 min, em duas janelas: **manhã 9–11h** e **noit
 | 1.153 | "Acha o documento sobre inteligência artificial" | `buscarArquivosDrive` devolve nomes e links de arquivos do Drive | ✅ | 14/10 ao vivo (`buscaDrive`): os 4 primeiros eram sobre IA; 120 arquivos indexados |
 | 1.154 | Busca de um assunto que não há no Drive ("investimentos e aposentadoria") | scores baixos (~0,1), sem inventar; o agente deve dizer que não há um claramente melhor | ⚠️ | scores medidos; falta ver a frase do agente |
 | 1.155 | `BUSCA_DRIVE_ATIVA=sim` e esperar alguns ticks | o índice cresce sozinho (`buscaDrive:true` mostra `indexados` subindo) e arquivo novo aparece na busca | ⏳ | desligada por padrão; ligar é decisão do dono |
+| 1.156 | "Liste os gastos do mês fora de mercado e alimentação" | "Neste mês, fora de Mercado e Alimentação, você lançou R$ … em despesas: …" (categorias do maior para o menor) | ✅ | 15/10 ao vivo no celular |
+| 1.157 | "Quanto gastei com saúde esse mês" | total, nº de lançamentos e o maior; categoria sem gasto diz isso | ✅ | 15/10 ao vivo ("lazer": sem gastos) |
+| 1.158 | "Em que mais botei dinheiro além da comida" (paráfrase) | mesma resposta, pelo JEV (`cad_gastos`) | ✅ | 15/10 ao vivo |
+| 1.159 | "O que falta eu fazer" (pergunta simples) | lista tarefas rápido, sem demorar na busca de conhecimento | ⚠️ | a varredura de 13 s foi eliminada (35 ms); o agente ainda pode chamar buscarConhecimento por escolha própria (~2 s de páginas) |
+| 1.160 | Falar um endereço e o reconhecimento repetir "rota para" no meio | traça a rota só para o endereço final | ⚠️ | teste automático; falta acontecer de novo |
+| 1.161 | Compra no Swile (carteira Refeição/Alimentação) | gasto no voucher da caderneta, aviso "Registrei R$ …", saldo atualizado | ✅ | 15/10 de manhã, compra real de pequeno valor: registrada na caderneta e conferida pelo dono |
 | 1.139 | Interruptores: `FERRAMENTAS_JEV`, `CONFIRMA_JEV`, `INJECAO_JEV`, `ACAO_JEV`, `CATEGORIA_JEV` = nao | volta ao comportamento anterior | ✅ | testes automáticos |
 
 ### 1g. 🔔 Notificações do celular 🗣️

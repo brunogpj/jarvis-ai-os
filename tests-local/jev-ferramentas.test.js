@@ -86,7 +86,7 @@ test('Pré-filtro: cada domínio da tabela está ligado a um grupo real (renomea
   while ((m = re.exec(src))) reps.push({ id: m[1], rep: m[2] });
   assert.ok(reps.length >= 15, 'tabela lida: ' + reps.length);
   var grupoNomes = src.slice(src.indexOf('var grupos = ['), src.indexOf('// Testa cada grupo contra a mensagem normalizada.'));
-  reps.forEach(function (d) { assert.ok(grupoNomes.indexOf("'" + d.rep + "'") !== -1, 'domínio ' + d.id + ': ferramenta ' + d.rep + ' não está em nenhum grupo'); });
+  reps.forEach(function (d) { if (d.rep === '__sem_grupo__') return; assert.ok(grupoNomes.indexOf("'" + d.rep + "'") !== -1, 'domínio ' + d.id + ': ferramenta ' + d.rep + ' não está em nenhum grupo'); });
 });
 
 // ───────────────────────── sim/não por intenção ─────────────────────────

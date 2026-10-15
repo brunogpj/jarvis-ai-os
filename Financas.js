@@ -166,6 +166,22 @@ var Financas = (function () {
    * roubar frases do Swile ("saldo do voucher", "quanto gastei essa semana") nem de outras rotas.
    * "caderneta" sem pergunta reconhecida → {tipo:'ajuda'}, em vez de deixar o modelo inventar número.
    */
+  // Palavra dita → categoria do app. Mercado e Alimentação ficam de fora de propósito: têm resposta própria (orçamento do mercado) e só entram como EXCLUSÃO.
+  var _CAT_FALADA = [['Saúde', /\b(saude|farmacia|remedios?|medic\w+)\b/], ['Transporte', /\b(transporte|uber|taxi|gasolina|pedagio|estacionamento)\b/], ['Lazer', /\b(lazer|diversao|cinema|streaming)\b/],
+                     ['Educação', /\b(educacao|escola|curso|cursos|faculdade)\b/], ['Casa', /\bcasa\b/], ['Compras', /\bcompras\b/], ['Trabalho', /\btrabalho\b/], ['Outros', /\boutros\b/]];
+
+  /** "gastos do mês" por categoria. s = frase normalizada. → {tipo:'gastos', categoria?|excluir?} | null. PURA. */
+  function _interpretarGastos(s) {
+    var pergunta = /\b(quanto|quantos|quais|qual|liste|lista|listar|me (diga|fale|fala|conta|mostre|mostra)|fale|diga|mostre)\b/.test(s);
+    if (!pergunta || !/\bgast\w*\b/.test(s)) return null;
+    if (/\b(swile|suav|voucher|vale|mobilidade|semana|hoje|ontem|amanha)\b/.test(s)) return null;
+    var fora = /\bfora\b/.test(s);
+    if (fora) return { tipo: 'gastos', excluir: ['Mercado', 'Alimentação'] };   // "fora da lista / da categoria de mercado e alimentação"
+    for (var i = 0; i < _CAT_FALADA.length; i++) if (_CAT_FALADA[i][1].test(s)) return { tipo: 'gastos', categoria: _CAT_FALADA[i][0] };
+    if (/\bcategorias?\b/.test(s) || /\b(liste|lista|listar)\b/.test(s) || /\bgastos? d[eoa]s? (esse|este|neste|nesse)? ?mes\b/.test(s) || /\bgastos? (esse|este|neste|nesse) mes\b/.test(s) || /\btodos os gastos\b/.test(s)) return { tipo: 'gastos' };
+    return null;
+  }
+
   function interpretar(msg) {
     var s = String(msg || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[?!.,;:]/g, ' ').replace(/\s+/g, ' ').trim();
     if (!s) return null;
@@ -175,6 +191,11 @@ var Financas = (function () {
       var cs = Consultor.interpretar(_norm(msg));
       if (cs) return cs;
     }
+    // GASTOS DO MÊS por categoria (15/10): "liste os gastos fora de mercado e alimentação", "quanto gastei com saúde", "gastos por categoria".
+    // Vem ANTES da exclusão do Swile, porque "fora da categoria de alimentação" contém a palavra. Só entra com sinal explícito (categoria, "fora de",
+    // "liste", "gastos do mês"): "quanto gastei essa semana" e "onde gastei" continuam sendo do Swile.
+    var gq = _interpretarGastos(s);
+    if (gq) return gq;
     // Swile / vale: é da outra rota (_interpretarFinanceiro)
     if (/\b(swile|suav|suail|voucher|vale|mobilidade|alimentacao|refeicao|combustivel)\b/.test(s)) return null;
     // comando/ação que não é consulta (registrar, criar, cancelar...): fica para fases seguintes / modelo
@@ -218,6 +239,26 @@ var Financas = (function () {
       if (!configurado()) return 'A caderneta ainda não está conectada ao Jarvis.';
       var r = resumo();
       if (!r.ok) return r.codigo === 401 ? 'A caderneta recusou o acesso do Jarvis. Preciso que o acesso seja reconfigurado.' : 'Não consegui consultar a caderneta agora.';
+      if (consulta.tipo === 'gastos') {
+        // Despesas LANÇADAS no mês, por categoria (o Worker manda resumo.gastosMes). Faturas de cartão e contas fixas têm resposta própria.
+        var gm = r.dados.gastosMes;
+        if (!gm || !gm.porCategoria) return 'A caderneta ainda não informa os gastos por categoria.';
+        var cats = Object.keys(gm.porCategoria).map(function (k) { return { nome: k, total: Number(gm.porCategoria[k].total) || 0, n: Number(gm.porCategoria[k].n) || 0, maior: gm.porCategoria[k].maior }; });
+        if (consulta.categoria) {
+          var alvoC = cats.filter(function (c) { return _norm(c.nome) === _norm(consulta.categoria); })[0];
+          if (!alvoC || !alvoC.total) return 'Neste mês não há gastos lançados em ' + consulta.categoria + '.';
+          return 'Em ' + alvoC.nome + ' você lançou ' + _brl(alvoC.total) + ' neste mês, em ' + alvoC.n + (alvoC.n === 1 ? ' lançamento' : ' lançamentos') +
+                 (alvoC.maior && alvoC.maior.valor ? '. O maior foi ' + _brl(alvoC.maior.valor) + (alvoC.maior.descricao ? ' em ' + alvoC.maior.descricao : '') : '') + '.';
+        }
+        var excl = (consulta.excluir || []).map(_norm);
+        var lista = cats.filter(function (c) { return c.total > 0 && excl.indexOf(_norm(c.nome)) === -1; }).sort(function (a, b) { return b.total - a.total; });
+        var rotuloFora = excl.length ? ', fora de ' + consulta.excluir.join(' e ') + ',' : '';
+        if (!lista.length) return 'Neste mês não há gastos lançados' + (excl.length ? ' fora de ' + consulta.excluir.join(' e ') : '') + '.';
+        var somaL = lista.reduce(function (s, c) { return s + c.total; }, 0);
+        var partes = lista.slice(0, 5).map(function (c) { return c.nome + ' ' + _brl(c.total); });
+        return 'Neste mês' + rotuloFora + ' você lançou ' + _brl(somaL) + ' em despesas: ' + partes.join(', ') + (lista.length > 5 ? ' e mais ' + (lista.length - 5) + ' categorias' : '') +
+               '. São as despesas lançadas; faturas e contas fixas ficam de fora.';
+      }
       if (consulta.tipo === 'mes') {
         // "como foi o mês" (ou "como foi setembro"): o resumo do mês pedido e, para comparar, o do mês anterior
         var alvoMes = r.dados;

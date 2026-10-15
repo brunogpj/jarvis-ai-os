@@ -195,8 +195,17 @@ const WikiMemoryService = {
         return _r1;
       }
 
+      // FRASE inteira ("o que falta eu fazer") nunca casa por indexOf nem por fullText de frase: a varredura abaixo (30 arquivos lidos um a um)
+      // custava ~13 s na 1ª chamada e não podia achar nada (medido em 15/10 pelo diag tempoConhecimento). Linguagem natural é trabalho do
+      // semântico, que o buscarConhecimento chama em seguida. A varredura fica para termos curtos (até 4 palavras), onde a palavra-chave faz sentido.
+      if (termoLower.split(/\s+/).filter(Boolean).length > 4) {
+        var _rL = { status: 'success', termo: termo, total_encontrados: 0, resultados: [], via: 'frase-longa-sem-varredura' };
+        try { _cache.put(_ck, JSON.stringify(_rL), 1800); } catch (ePL) {}
+        return _rL;
+      }
+
       // ── 2) Fallback: varredura recursiva (se a busca nativa não retornou nada) ──
-      const MAX_ARQUIVOS = 30;       // limite de varredura (cada leitura é uma chamada ao Drive → mantém rápido)
+      const MAX_ARQUIVOS = 30;      // limite de varredura (cada leitura é uma chamada ao Drive → mantém rápido)
       const estado = { lidos: 0 };
 
       const _buscarEmPasta = function(folder, prefixo) {

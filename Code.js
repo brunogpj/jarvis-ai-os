@@ -967,6 +967,10 @@ function _destinoDoPedido(msg) {
   var d = String(msg || '').trim().replace(/[\s.!?]+$/, '');
   d = d.replace(/^(?:(?:por favor|jarvis)[\s,]+)?(?:(?:eu\s+)?(?:quero|preciso|vou|vamos)\s+)?(?:ir\s+|chegar\s+)?(?:tra[çc]ar?\s+(?:a\s+)?rota\s+|rota\s+|navegue?\s+|navegar\s+|me\s+lev[ae]\s+|me\s+direcion[ae]r?\s+|direcion[ae]-?me\s+|me\s+gui[ae]\s+|dire[çc][õo]es\s+|como\s+(?:eu\s+)?(?:ir|chego)\s+)?(?:para|pra|pro|até|ate|a|ao)\s+(?:o\s+|a\s+)?/i, '');
   d = d.trim();
+  // O reconhecimento de voz às vezes REPETE o pedido no meio da frase (15/10: "Rua José rota para Rua José Pereira 185 no Estoril" virou o destino inteiro).
+  // Se sobrou um "rota/ir/navegar/me leva … para" depois de outras palavras, o destino é o que vem depois do ÚLTIMO desses marcadores.
+  var _rep = d.match(/^.+\b(?:rota|navegar|navegue|ir|me\s+lev[ae]|direc\w+|dire[cç][õo]es)\s+(?:para|pra|pro|at[eé])\s+(?:o\s+|a\s+)?(.{3,})$/i);
+  if (_rep) d = _rep[1].trim();
   if (d.length < 3 || d.split(/\s+/).length > 12) return null;
   if (/^(para|pra|pro|at[ée]|ao|ir|rota|dire[çc][õo]es|navegar|navegue)$/i.test(d)) return null;   // sobrou só a palavra de pedido
   if (/^(trabalho|servi[çc]o|firma|emprego)$/i.test(d)) return 'Trabalho';
@@ -1051,6 +1055,9 @@ function _rotaSemantica(mensagem, email, isOwner, opts) {
         cad_indices:      { what: 'Perguntar se os investimentos estão RENDENDO mais ou menos que a inflação (IPCA), o CDI ou a poupança, ou quanto RENDEU no ano.',
                             not_for: 'Só quanto tem investido — isso é cad_investido; pedir qual investimento comprar — isso é nenhuma.',
                             examples: ['meus investimentos estão ganhando da inflação', 'bati o CDI esse ano', 'quanto rendeu minha carteira esse ano'] },
+        cad_gastos:       { what: 'Perguntar quanto ele GASTOU neste mês por CATEGORIA (saúde, transporte, lazer, casa, compras…), listar os gastos do mês, ou os gastos FORA de mercado e alimentação — as despesas lançadas na caderneta, o dinheiro do dia a dia.',
+                            not_for: 'Só o mercado/comida — isso é cad_mercado; o cartão de benefícios (Swile) — isso é gastos_swile; o resumo geral do mês (renda, sobra) — isso é cad_mes; REGISTRAR um gasto — isso é nenhuma.',
+                            examples: ['liste os gastos desse mês', 'quanto gastei com saúde', 'onde mais gastei fora do mercado', 'gastos por categoria', 'e os gastos de lazer'] },
         cad_mes:          { what: 'Pedir o RESUMO / balanço do MÊS: como foi o mês (renda, saídas, sobra, quanto aplicou), do mês atual ou de um mês passado.',
                             not_for: 'Só o livre de hoje — isso é cad_livre; só o que falta pagar — isso é cad_falta_pagar; FECHAR, ENCERRAR ou REABRIR o mês (uma ordem, não uma pergunta) — isso é nenhuma.',
                             examples: ['como foi o mês', 'me dá o balanço do mês', 'como foi setembro'] },
@@ -1145,6 +1152,13 @@ function _rotaSemantica(mensagem, email, isOwner, opts) {
       instructions: 'SUPONDO que o pedido seja sobre investimentos: ele quer saber o total investido ou a reserva de emergência?',
       criteria: { investido: 'O total investido / o patrimônio, ou não especificou.', reserva: 'A reserva de emergência / quantos meses de reserva.' }
     },
+    categoria_gasto: {
+      type: 'choice',
+      instructions: 'SUPONDO que o pedido seja sobre os GASTOS do mês por categoria: de qual categoria ele quer saber?',
+      criteria: { todas: 'Todos os gastos / por categoria / não especificou.', fora_mercado: 'Os gastos fora de mercado e alimentação (tudo menos comida).', saude: 'Saúde, farmácia, remédios.',
+                  transporte: 'Transporte, uber, táxi, estacionamento.', lazer: 'Lazer, diversão, cinema.', educacao: 'Educação, escola, curso.', casa: 'Casa.', compras: 'Compras em lojas.',
+                  trabalho: 'Trabalho.', outros: 'Outros.' }
+    },
     dia_folga: {
       type: 'choice',
       instructions: 'SUPONDO que o pedido seja avisar que NÃO vai trabalhar: em qual dia?',
@@ -1167,7 +1181,7 @@ function _rotaSemantica(mensagem, email, isOwner, opts) {
   var pFin = (r.answers && r.answers.financas && typeof r.answers.financas.noul === 'number') ? r.answers.financas.noul : 0;
   // DIAGNÓSTICO: devolve o julgamento cru, SEM executar nenhum handler (usado por ler_debug.rotaJev para medir o acerto).
   if (opts.diag) return { intencao: intencao, conf: isFinite(conf) ? Math.round(conf * 1000) / 1000 : null, financas: Math.round(pFin * 1000) / 1000,
-                          args: { periodo_livre: arg0('periodo_livre'), periodo_venc: arg0('periodo_venc'), foco_invest: arg0('foco_invest'), dia_folga: arg0('dia_folga'), nivel_volume: arg0('nivel_volume') } };
+                          args: { periodo_livre: arg0('periodo_livre'), periodo_venc: arg0('periodo_venc'), foco_invest: arg0('foco_invest'), dia_folga: arg0('dia_folga'), nivel_volume: arg0('nivel_volume'), categoria_gasto: arg0('categoria_gasto') } };
   function arg0(id) { var x = r.answers && r.answers[id]; return (x && x.type === 'choice') ? x.choice : null; }
 
   // Interruptor das intenções novas (caderneta, folga, repetir briefing, rota): ROTA_JEV_NOVAS=nao devolve null para elas,
@@ -1236,6 +1250,10 @@ function _rotaSemantica(mensagem, email, isOwner, opts) {
       else if (intencao === 'cad_vencimentos') _cq = { tipo: 'vencimentos', periodo: arg('periodo_venc', 'semana') };
       else if (intencao === 'cad_falta_pagar') _cq = { tipo: 'falta_pagar' };
       else if (intencao === 'cad_mercado') _cq = { tipo: 'orcamento' };
+      else if (intencao === 'cad_gastos') {
+        var _cg = arg('categoria_gasto', 'todas'), _MAPA_CG = { saude: 'Saúde', transporte: 'Transporte', lazer: 'Lazer', educacao: 'Educação', casa: 'Casa', compras: 'Compras', trabalho: 'Trabalho', outros: 'Outros' };
+        _cq = _cg === 'fora_mercado' ? { tipo: 'gastos', excluir: ['Mercado', 'Alimentação'] } : (_MAPA_CG[_cg] ? { tipo: 'gastos', categoria: _MAPA_CG[_cg] } : { tipo: 'gastos' });
+      }
       else if (intencao === 'cad_investido') _cq = { tipo: arg('foco_invest', 'investido') === 'reserva' ? 'reserva' : 'investido' };
       else if (intencao === 'cad_carteira') _cq = { tipo: 'carteira' };
       else if (intencao === 'cad_aporte') _cq = { tipo: 'aporte' };
@@ -3157,7 +3175,7 @@ function doPost(e) {
       var _PERMITIDAS_CF = {
         FALA_PROATIVA_LOCAL: /^(sim|nao)$/, FALA_RESPOSTAS_LOCAL: /^(sim|nao)$/,
         MODO_FALA_VOZ: /^(nuvem|auto|local)$/, FALA_VOLUME_DB: /^(1[0-6]|[0-9])$/,
-        FALA_FORMATO: /^(ogg|wav)$/, FALA_ARQUIVO_UNICO: /^(sim|nao)$/, ROTA_JEV_NOVAS: /^(sim|nao)$/, FERRAMENTAS_JEV: /^(nao|adiciona|sim)$/, INJECAO_JEV: /^(sim|nao)$/, ACAO_JEV: /^(sim|nao)$/, CATEGORIA_JEV: /^(sim|nao)$/, FERRAMENTAS_JEV_ADD: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE: /^0?\.\d{1,2}$/, CONFIRMA_JEV: /^(sim|nao)$/, MONITOR_GMAIL_JEV: /^(sim|nao)$/, BUSCA_DRIVE_ATIVA: /^(sim|nao)$/, BUSCA_DRIVE_MAX: /^\d{2,4}$/, WEB_MONITOR_JEV: /^(sim|nao)$/, WEB_MONITOR_JEV_CORTE: /^0?\.\d{1,2}$/, MONITOR_GMAIL_JEV_CORTE: /^0?\.\d{1,2}$/, FIN_AVISOS_ATIVO: /^(sim|nao)$/, FIN_NOME_DONO: /^[a-zà-ÿ ]{3,80}$/, FIN_CPF_DONO: /^\d{3}\.\d{3}$/,
+        FALA_FORMATO: /^(ogg|wav)$/, FALA_ARQUIVO_UNICO: /^(sim|nao)$/, ROTA_JEV_NOVAS: /^(sim|nao)$/, FERRAMENTAS_JEV: /^(nao|adiciona|sim)$/, INJECAO_JEV: /^(sim|nao)$/, ACAO_JEV: /^(sim|nao)$/, CATEGORIA_JEV: /^(sim|nao)$/, FERRAMENTAS_JEV_ADD: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE_CONH: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE: /^0?\.\d{1,2}$/, CONFIRMA_JEV: /^(sim|nao)$/, MONITOR_GMAIL_JEV: /^(sim|nao)$/, BUSCA_DRIVE_ATIVA: /^(sim|nao)$/, BUSCA_DRIVE_MAX: /^\d{2,4}$/, WEB_MONITOR_JEV: /^(sim|nao)$/, WEB_MONITOR_JEV_CORTE: /^0?\.\d{1,2}$/, MONITOR_GMAIL_JEV_CORTE: /^0?\.\d{1,2}$/, FIN_AVISOS_ATIVO: /^(sim|nao)$/, FIN_NOME_DONO: /^[a-zà-ÿ ]{3,80}$/, FIN_CPF_DONO: /^\d{3}\.\d{3}$/,
         // consultor (fase 4): margem na conta (R$), taxa ao mês (decimal), reserva-alvo (meses) e pausa do rebalanceamento (data)
         CONSULTOR_MARGEM: /^\d{1,6}$/, CONSULTOR_TAXA_MES: /^0?\.\d{1,4}$/, CONSULTOR_RESERVA_ALVO: /^\d{1,2}$/, CONSULTOR_PAUSA_ATE: /^\d{4}-\d{2}-\d{2}$/, CONSULTOR_AVISO_ATIVO: /^(sim|nao)$/, CONSULTOR_AVISO_MIN: /^\d{1,6}$/
       };
@@ -4137,6 +4155,19 @@ function doPost(e) {
             }
             saida.occProva = _o;
           } catch (eOcc) { saida.occProva = { erro: eOcc.message }; }
+        }
+        // Tempo de cada etapa do buscarConhecimento (palavra-chave no Drive, semântico, rerank, leitura de páginas inteiras). Só leitura. {consulta}.
+        if (body.tempoConhecimento) {
+          try {
+            var _q = String(body.tempoConhecimento === true ? 'o que falta eu fazer' : body.tempoConhecimento), _t = {}, _m0 = Date.now(), _kw, _sm, _rr2;
+            _kw = WikiMemoryService.buscarNoWiki(_q); _t.palavraChaveMs = Date.now() - _m0; _m0 = Date.now();
+            _sm = Semantica.buscar(_q, 6) || []; _t.semanticoMs = Date.now() - _m0; _m0 = Date.now();
+            var _cands = _sm.map(function (r) { return { caminho: r.caminho, trecho: r.trecho, score: r.score }; });
+            _rr2 = Semantica.rerank ? Semantica.rerank(_q, _cands) : null; _t.rerankMs = Date.now() - _m0; _m0 = Date.now();
+            var _paginas = (_cands.slice(0, 3)).map(function (r) { try { return WikiMemoryService.lerWiki(r.caminho); } catch (eL) { return null; } }); _t.leituraPaginasMs = Date.now() - _m0;
+            _t.achadosPalavraChave = (_kw && _kw.resultados || []).length; _t.achadosSemantico = _sm.length; _t.indice = Semantica.status ? Semantica.status() : null;
+            saida.tempoConhecimento = _t;
+          } catch (eTc) { saida.tempoConhecimento = { erro: eTc.message }; }
         }
         // Busca semântica de ARQUIVOS do Drive. {} → status · {consulta,k,tipo} → busca · {rodar:true,maxArquivos} → indexa um lote · {simular:true} → conta sem gravar · {limpar:true}.
         if (body.buscaDrive) {

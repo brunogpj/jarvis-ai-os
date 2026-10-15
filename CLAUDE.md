@@ -25,7 +25,7 @@ Projeto Google Apps Script gerenciado localmente via clasp.
 
 | Deployment ID | Versão | Descrição |
 |---|---|---|
-| `<DEPLOYMENT_ID>` | **@509** | **ATIVA** — "busca semântica no Drive, modo privacidade, controle otimista" |
+| `<DEPLOYMENT_ID>` | **@514** | **ATIVA** — "correções dos logs de 15/10 e gastos por categoria" |
 | `<DEPLOYMENT_ID>` | @25 | Antiga — "TesteJobs" |
 | `<DEPLOYMENT_ID>` | @HEAD | Cabeça (muda a cada push, não é a de produção) |
 
@@ -426,6 +426,18 @@ com `BUSCA_DRIVE_EXCLUIR` (regex em Script Property). **Privacidade:** o texto v
 Indexação: `BuscaDrive.tick()` no tick de 15 min (Agenda.js), **desligada por padrão** (`BUSCA_DRIVE_ATIVA=sim` liga, via `config_fala`); lote de ~40 arquivos / 70 s, RESUMÍVEL por token do iterador, incremental por `modifiedDate`, com varredura completa a cada 7 dias que remove o que saiu do Drive.
 Medido ao vivo: ~6 s por arquivo (leitura do Workspace + embedding), então um Drive de milhares de arquivos leva dias no tick; 120 arquivos indexados à mão em 14/10. Sem índice, a ferramenta cai na busca de texto do próprio Drive e avisa que é por palavra-chave. `ler_debug` com `buscaDrive`:
 `true` (status) · `{consulta,k,tipo}` (busca) · `{rodar:true,maxArquivos}` (indexa um lote) · `{simular:true}` (conta sem gravar) · `{limpar:true}`.
+
+**Correções achadas nos logs reais de 14–15/10 (primeira compra do Swile depois da migração: registrou certo; o resto do log mostrou isto).**
+- **`buscarConhecimento` levava 13–16 s** em perguntas simples ("o que falta eu fazer"): o agente passava a FRASE inteira como termo, o Drive não a achava e `WikiMemoryService.buscarNoWiki` caía numa varredura recursiva de 30 arquivos que nunca poderia
+  casá-la (12,9 s medidos por `ler_debug` com `tempoConhecimento`). Frase de mais de 4 palavras agora volta vazia SEM varrer (35 ms); o semântico cobre linguagem natural.
+- **Ferramentas de conhecimento fora do núcleo quando o JEV tem certeza** (modo `sim`): nova pergunta "precisa consultar o que ele guardou?"; com probabilidade ≤ `FERRAMENTAS_JEV_REMOVE_CONH` (0,15 em produção) saem `buscarConhecimento`,
+  `buscarSemantico`, `lembrarDeConversas` e `buscarNoWiki`. Medido em 18 frases: nenhuma pergunta sobre o que ele anotou/guardou perdeu a ferramenta; pedidos de agenda, spotify, lanterna e hora perderam. "o que falta eu fazer" ainda não é cortada (o JEV a acha ambígua).
+- **Rota com o pedido repetido pelo reconhecimento de voz** ("Rua José rota para Rua José Pereira 185 no Estoril" virou o destino inteiro): `_destinoDoPedido` agora usa o que vem depois do ÚLTIMO "rota/ir/me leva … para".
+- **Monitor de páginas:** título decodificado ("&amp;" → "&") e resumo da notificação com as linhas mais informativas (a notificação veio com três datas, "Sep 15, 2026 | …").
+- **Gastos por categoria na caderneta** (pedido real que caiu em "Ainda não sei responder" e depois no modelo): o Worker passou a mandar `resumo.gastosMes` (total, por categoria com quantidade e maior lançamento, 5 maiores; só DESPESAS lançadas no mês, inclusive as pagas no voucher; faturas e contas fixas ficam de fora).
+  O Jarvis responde "liste os gastos fora de mercado e alimentação", "quanto gastei com saúde", "gastos por categoria" (padrão em `Financas._interpretarGastos`, antes da exclusão do Swile, só com sinal explícito) e, por paráfrase, a intenção JEV `cad_gastos` com a categoria numa pergunta própria.
+  "Quanto gastei essa semana" e "onde gastei" continuam sendo do Swile; mercado continua no orçamento.
+- **Instrumentação:** `Heartbeat.medir` guarda QUANDO foi o pico de cada gatilho (`maxEm`). Ontem o `tickAlertasVoz` teve um pico de 220 s sem causa conhecida; compare `maxEm` com os eventos.
 
 **Acompanhar o JEV na produção:** `ler_debug` com `n:200` e filtrar os eventos `gate:jev:ferramentas`, `gate:jev:agenda`, `confirma:jev`, `hook:acao_sem_fonte`, `hook:injecao_conteudo`, `monitor:triagem`, `web:triagem`, `rota:jev:*`
 (os `hook:acao_sem_fonte` de 14/10 22:02 são do ensaio `acaoJev`, não de uso real).

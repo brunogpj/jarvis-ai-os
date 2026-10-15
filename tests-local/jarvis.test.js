@@ -566,7 +566,7 @@ test('Rota JEV: UMA requisição carrega seletor + argumentos de todos os ramos 
   });
   s._rotaSemantica('qualquer coisa', 'dono@exemplo.com', true);
   assert.strictEqual(chamadas, 1, 'duas idas à rede seria o dobro da latência pela mesma informação');
-  assert.deepStrictEqual(Object.keys(corpo.questions).sort(), ['carteira', 'dia_folga', 'financas', 'foco_invest', 'intencao', 'nivel_volume', 'periodo', 'periodo_agenda', 'periodo_livre', 'periodo_venc', 'relogio', 'turno']);
+  assert.deepStrictEqual(Object.keys(corpo.questions).sort(), ['carteira', 'categoria_gasto', 'dia_folga', 'financas', 'foco_invest', 'intencao', 'nivel_volume', 'periodo', 'periodo_agenda', 'periodo_livre', 'periodo_venc', 'relogio', 'turno']);
   assert.ok(corpo.questions.intencao.criteria.nenhuma, 'a opção de escape TEM que existir');
 });
 

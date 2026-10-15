@@ -58,7 +58,9 @@ var Web = (function () {
     var ct = String((res.getHeaders() || {})['Content-Type'] || (res.getHeaders() || {})['content-type'] || '');
     var body = res.getContentText();
     if (/json/i.test(ct)) return { status: 'success', tipo: 'json', url: url, conteudo: String(body).substring(0, 8000) };
-    var titulo = ((body.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || '').replace(/\s+/g, ' ').trim();
+    // título com entidade HTML decodificada ("Introducing System One Models &amp; Jev" aparecia assim na notificação do monitor, 14/10)
+    var titulo = ((body.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || '').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')
+      .replace(/&quot;/gi, '"').replace(/&#39;|&apos;/gi, "'").replace(/\s+/g, ' ').trim();
     return { status: 'success', tipo: 'html', url: url, titulo: titulo, texto: _htmlParaTexto(body).substring(0, 8000) };
   }
 
@@ -114,7 +116,11 @@ var Web = (function () {
     try {
       if (!textoAntigo || !textoNovo) return r0;
       var df = _diffLinhas(textoAntigo, textoNovo);
-      var resumo = df.novas.slice(0, 3).join(' | ').slice(0, 200);
+      // O resumo vai na notificação: linhas que são só data, número ou rótulo curto ("Sep 15, 2026") não dizem o que mudou (14/10: a notificação veio
+      // com três datas). Mostra as mais informativas (com palavras, mais longas primeiro); se não houver nenhuma, cai nas primeiras linhas.
+      var informativas = df.novas.filter(function (l) { return l.length >= 15 && /[A-Za-zÀ-ú]{4,}\s+[A-Za-zÀ-ú]{3,}/.test(l.replace(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}\b/gi, '')); })
+        .sort(function (a, b) { return b.length - a.length; });
+      var resumo = (informativas.length ? informativas : df.novas).slice(0, 3).join(' | ').slice(0, 200);
       r0.resumo = resumo;
       if (typeof TypeSafe === 'undefined' || !TypeSafe.temChave() || String(_p('WEB_MONITOR_JEV') || 'sim').toLowerCase() === 'nao') return r0;
       if (!df.novas.length && !df.removidas.length) return r0;   // hash mudou mas as linhas não: espaço/ordem, deixa avisar

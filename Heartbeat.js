@@ -50,8 +50,10 @@ var Heartbeat = (function () {
       if (d.dia !== dia) d = { dia: dia, ontem: d.dia ? { dia: d.dia, h: d.h } : null, h: {} };
       var x = d.h[nome] || (d.h[nome] = { n: 0, ms: 0, max: 0, erros: 0 });
       var ms = Date.now() - t0;
-      x.n++; x.ms += ms; if (ms > x.max) x.max = ms;
+      x.n++; x.ms += ms;
       x.fim = Utilities.formatDate(new Date(), 'America/Sao_Paulo', 'HH:mm:ss');
+      // guarda QUANDO foi o pico: ontem o tickAlertasVoz teve um de 220 s e não dava para saber o que o causou (só o tamanho ficava registrado)
+      if (ms > x.max) { x.max = ms; x.maxEm = x.fim; }
       if (erro) { x.erros++; x.ultErro = String(erro).slice(0, 160); }
       P.setProperty('DIARIO_GATILHOS', JSON.stringify(d));
     } catch (e) {}

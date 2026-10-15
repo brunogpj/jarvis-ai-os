@@ -1192,6 +1192,12 @@ var Jarvis = (function () {
       i: 'Para atender o pedido, o assistente precisa definir, listar ou cancelar um OBJETIVO de médio/longo prazo que ele planeja e executa em segundo plano?',
       s: 'quero um objetivo de pesquisar plano de saúde e me trazer um comparativo; como andam meus objetivos; cancela o objetivo de viagem',
       n: 'meta financeira da caderneta; tarefa simples; pergunta rápida' },
+    // Não é um grupo de ferramentas: decide se as ferramentas de CONHECIMENTO do núcleo (buscarConhecimento, buscarSemantico, lembrarDeConversas, buscarNoWiki) saem.
+    // Medido em 15/10: "o que falta eu fazer" e "e sobre a agenda" chamavam buscarConhecimento (14–16 s) e lembrarDeConversas (4 s) ANTES da ferramenta certa.
+    { id: 'conhecimento', rep: '__sem_grupo__',
+      i: 'Para atender o pedido, o assistente precisa CONSULTAR o que o dono guardou: notas e páginas da wiki dele, documentos pessoais ou memórias de conversas passadas?',
+      s: 'o que eu anotei sobre o projeto X; lembra o que conversamos sobre o plano de saúde; o que o contrato diz sobre reajuste; o que eu sei guardado sobre RAG; qual era a ideia que tive para o app',
+      n: 'o que falta eu fazer; e sobre a agenda; que horas são; abre o spotify; quanto eu tenho livre; liga a lanterna; resuma meus e-mails; quais são minhas tarefas' },
     { id: 'wiki', rep: 'escreverWiki', reps: ['escreverWiki', 'capturarConhecimento'],   // cobre os dois grupos do segundo cérebro
       i: 'Para atender o pedido, o assistente precisa GRAVAR algo novo no segundo cérebro (wiki de notas pessoais): anotar uma informação, registrar uma ideia, guardar ou ingerir uma fonte? (Só LER notas já guardadas NÃO conta.)',
       s: 'anota que o código do portão mudou; registra no meu cérebro essa ideia; guarda esse artigo no meu cérebro; ingere essa fonte',
@@ -1416,6 +1422,13 @@ var Jarvis = (function () {
         g.nomes.forEach(function (n) { permitidas[n] = true; });
       }
     });
+    // Ferramentas de conhecimento do núcleo: saem só no modo 'sim' e com certeza alta (≤ 0,05) de que o pedido não precisa do que ele guardou.
+    var _limConh = Number(_prop('FERRAMENTAS_JEV_REMOVE_CONH') || 0.05);
+    if (!isFinite(_limConh) || _limConh <= 0 || _limConh >= 0.5) _limConh = 0.05;
+    if (_pJev && _modoFerr === 'sim' && _pJev.conhecimento != null && _pJev.conhecimento <= _limConh) {
+      ['buscarConhecimento', 'buscarSemantico', 'lembrarDeConversas', 'buscarNoWiki'].forEach(function (n) { delete permitidas[n]; });
+      _perdeu.push('conhecimento ' + _pJev.conhecimento.toFixed(2));
+    }
     if (_pJev) {
       _ultimoGate = { modo: _modoFerr, regex: _tRegex, jev: _pJev, ganhou: _ganhou, perdeu: _perdeu, ms: Date.now() - _t0Ferr };
       if (_ganhou.length || _perdeu.length) {

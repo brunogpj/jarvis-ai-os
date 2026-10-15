@@ -1002,9 +1002,9 @@ function _rotaSemantica(mensagem, email, isOwner, opts) {
         saldo_swile:      { what: 'Consultar quanto AINDA TEM no cartão de benefícios (Swile): voucher/alimentação ou mobilidade.',
                             not_for: 'Quanto já gastou — isso é gastos_swile. Dinheiro livre na conta — isso é cad_livre.',
                             examples: ['quanto tenho no alimentação', 'qual o saldo do swile', 'sobrou quanto na mobilidade'] },
-        gastos_swile:     { what: 'Consultar quanto JÁ GASTOU no cartão de benefícios num período, ou onde gastou.',
-                            not_for: 'Saldo restante — isso é saldo_swile.',
-                            examples: ['quanto gastei essa semana', 'onde gastei esse mês', 'meus maiores gastos'] },
+        gastos_swile:     { what: 'Consultar quanto JÁ GASTOU NO CARTÃO DE BENEFÍCIOS (Swile / voucher / vale / mobilidade) num período, ou onde gastou com ele. Só quando ele fala do cartão de benefícios.',
+                            not_for: 'Saldo restante — isso é saldo_swile. Gastos em geral da semana ou do mês, sem citar o cartão de benefícios — isso é cad_gastos.',
+                            examples: ['quanto gastei no swile essa semana', 'onde gastei com o voucher', 'meus maiores gastos no cartão de benefícios'] },
         turno_consultar:  { what: 'PERGUNTAR qual é o turno de trabalho vigente e/ou os horários de ponto de hoje.',
                             not_for: 'Mudar o turno — isso é turno_definir.',
                             examples: ['qual meu turno atual', 'que horas eu bato o ponto', 'to na manhã ou na tarde?'] },
@@ -1055,9 +1055,9 @@ function _rotaSemantica(mensagem, email, isOwner, opts) {
         cad_indices:      { what: 'Perguntar se os investimentos estão RENDENDO mais ou menos que a inflação (IPCA), o CDI ou a poupança, ou quanto RENDEU no ano.',
                             not_for: 'Só quanto tem investido — isso é cad_investido; pedir qual investimento comprar — isso é nenhuma.',
                             examples: ['meus investimentos estão ganhando da inflação', 'bati o CDI esse ano', 'quanto rendeu minha carteira esse ano'] },
-        cad_gastos:       { what: 'Perguntar quanto ele GASTOU neste mês por CATEGORIA (saúde, transporte, lazer, casa, compras…), listar os gastos do mês, ou os gastos FORA de mercado e alimentação — as despesas lançadas na caderneta, o dinheiro do dia a dia.',
+        cad_gastos:       { what: 'Perguntar quanto ele GASTOU no total na SEMANA (últimos 7 dias) ou neste mês, por CATEGORIA (saúde, transporte, lazer, casa, compras…), listar os gastos do mês, ou os gastos FORA de mercado e alimentação — as despesas lançadas na caderneta, o dinheiro do dia a dia.',
                             not_for: 'Só o mercado/comida — isso é cad_mercado; o cartão de benefícios (Swile) — isso é gastos_swile; o resumo geral do mês (renda, sobra) — isso é cad_mes; REGISTRAR um gasto — isso é nenhuma.',
-                            examples: ['liste os gastos desse mês', 'quanto gastei com saúde', 'onde mais gastei fora do mercado', 'gastos por categoria', 'e os gastos de lazer'] },
+                            examples: ['quanto gastei essa semana', 'quanto saiu da minha conta nos últimos dias', 'liste os gastos desse mês', 'quanto gastei com saúde', 'onde mais gastei fora do mercado', 'gastos por categoria', 'e os gastos de lazer'] },
         cad_mes:          { what: 'Pedir o RESUMO / balanço do MÊS: como foi o mês (renda, saídas, sobra, quanto aplicou), do mês atual ou de um mês passado.',
                             not_for: 'Só o livre de hoje — isso é cad_livre; só o que falta pagar — isso é cad_falta_pagar; FECHAR, ENCERRAR ou REABRIR o mês (uma ordem, não uma pergunta) — isso é nenhuma.',
                             examples: ['como foi o mês', 'me dá o balanço do mês', 'como foi setembro'] },
@@ -1155,7 +1155,7 @@ function _rotaSemantica(mensagem, email, isOwner, opts) {
     categoria_gasto: {
       type: 'choice',
       instructions: 'SUPONDO que o pedido seja sobre os GASTOS do mês por categoria: de qual categoria ele quer saber?',
-      criteria: { todas: 'Todos os gastos / por categoria / não especificou.', fora_mercado: 'Os gastos fora de mercado e alimentação (tudo menos comida).',
+      criteria: { semana: 'O total gasto na SEMANA / nos últimos 7 dias / nos últimos dias.', todas: 'Todos os gastos do mês / por categoria / não especificou.', fora_mercado: 'Os gastos fora de mercado e alimentação (tudo menos comida).',
                   mercado_alimentacao: 'SÓ os gastos de mercado e alimentação (comida).', mercadopago: 'Os gastos do cartão ou da conta do banco MERCADO PAGO (o banco, não o supermercado).',
                   bradesco: 'Os gastos do banco Bradesco.', itau: 'Os gastos do banco Itaú.', saude: 'Saúde, farmácia, remédios.',
                   transporte: 'Transporte, uber, táxi, estacionamento.', lazer: 'Lazer, diversão, cinema.', educacao: 'Educação, escola, curso.', casa: 'Casa.', compras: 'Compras em lojas.',
@@ -1255,7 +1255,7 @@ function _rotaSemantica(mensagem, email, isOwner, opts) {
       else if (intencao === 'cad_gastos') {
         var _cg = arg('categoria_gasto', 'todas'), _MAPA_CG = { saude: 'Saúde', transporte: 'Transporte', lazer: 'Lazer', educacao: 'Educação', casa: 'Casa', compras: 'Compras', trabalho: 'Trabalho', outros: 'Outros' };
         var _MAPA_OG = { mercadopago: 'mp', bradesco: 'bd', itau: 'it' };
-        _cq = _cg === 'fora_mercado' ? { tipo: 'gastos', excluir: ['Mercado', 'Alimentação'] }
+        _cq = _cg === 'semana' ? { tipo: 'gastos_semana' } : _cg === 'fora_mercado' ? { tipo: 'gastos', excluir: ['Mercado', 'Alimentação'] }
             : _cg === 'mercado_alimentacao' ? { tipo: 'gastos', categoria: ['Mercado', 'Alimentação'] }
             : _MAPA_OG[_cg] ? { tipo: 'gastos', origem: _MAPA_OG[_cg] }
             : (_MAPA_CG[_cg] ? { tipo: 'gastos', categoria: _MAPA_CG[_cg] } : { tipo: 'gastos' });
@@ -3955,7 +3955,10 @@ function doPost(e) {
          * Bruno ouve bem ("ok", hora, data). Quando a macro Conversa está esperando a resposta, ela fala o
          * texto — mais alto e sem os 8-15 s de síntese + Drive. FALA_RESPOSTAS_LOCAL=nao volta ao antigo. */
         var _respLocal = String(PropertiesService.getScriptProperties().getProperty('FALA_RESPOSTAS_LOCAL') || 'sim').toLowerCase() !== 'nao';
-        var _falarLocal = (_modoCfg === 'local') || (_respLocal && _modoCfg !== 'nao') || (_modoCfg === 'auto' && _rotaEhLocal && (_curto || _viaBase === 'caderneta' || _viaBase === 'caderneta_acao'));
+        // Resposta financeira ENTREGUE PELO JEV (rota 'jev' com intenção cad_*) também fica sempre no aparelho: em 15/10 uma de 305 caracteres ("quanto saiu da minha conta…") passou do limite
+        // curto e foi sintetizada na nuvem (7,8 s, valores num arquivo de áudio no Drive), furando a regra que as rotas 'caderneta' já cumpriam.
+        var _financeiraJev = (_viaBase === 'jev' && /^cad_/.test(String(typeof _ROTA_ULTIMA !== 'undefined' ? _ROTA_ULTIMA : '')));
+        var _falarLocal = (_modoCfg === 'local') || (_respLocal && _modoCfg !== 'nao') || (_modoCfg === 'auto' && _rotaEhLocal && (_curto || _viaBase === 'caderneta' || _viaBase === 'caderneta_acao' || _financeiraJev));
         // (resposta financeira fica SEMPRE no aparelho, mesmo longa: a nuvem gravaria o valor num arquivo de áudio no Drive e levaria 15–25 s)
         var _falarNuvem = (_modoCfg !== 'local' && _modoCfg !== 'nao' && !_falarLocal);
 

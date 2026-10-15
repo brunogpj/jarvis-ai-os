@@ -43,7 +43,9 @@ test('Interpretar: o que NÃO mudou — mercado, Swile, semana e registro de gas
   var s = sb();
   assert.strictEqual(s.Financas.interpretar('quanto gastei no mercado esse mês').tipo, 'orcamento');
   assert.strictEqual(s.Financas.interpretar('como estão os gastos de supermercado').tipo, 'orcamento');
-  assert.strictEqual(s.Financas.interpretar('quanto gastei essa semana'), null, 'semana é do Swile');
+  assert.deepStrictEqual(J(s.Financas.interpretar('quanto gastei essa semana')), { tipo: 'gastos_semana' }, 'agora soma todas as despesas da semana');
+  assert.strictEqual(s.Financas.interpretar('quanto gastei no swile essa semana'), null, 'com Swile na frase continua sendo o extrato do Swile');
+  assert.strictEqual(s.Financas.interpretar('quanto gastei com saúde essa semana'), null, 'categoria na frase não é o total da semana (segue o caminho de antes)');
   assert.strictEqual(s.Financas.interpretar('onde gastei no swile'), null);
   assert.strictEqual(s.Financas.interpretar('gastei 35 reais no mercado no débito'), null, 'registrar gasto é ação, não consulta');
   assert.strictEqual(s.Financas.interpretar('quanto eu tenho livre').tipo, 'livre_hoje');
@@ -122,4 +124,41 @@ test('Fragmento "gasto em lugar fora da lista" (sem pergunta) é consulta; "gast
   assert.deepStrictEqual(J(s.Financas.interpretar('gasto em lugar fora da lista')), { tipo: 'gastos', excluir: ['Mercado', 'Alimentação'] });
   assert.strictEqual(s.Financas.interpretar('gastei 50 reais fora de casa'), null);
   assert.strictEqual(s.Financas.interpretar('gastei fora da lista'), null, 'verbo no passado em 1ª pessoa não é consulta');
+});
+
+// ── "quanto gastei essa semana" soma TODAS as despesas (15/10) ────────────────────────────────────
+var DADOS3 = JSON.parse(JSON.stringify(DADOS));
+DADOS3.gastosMes.semana = { de: '2026-10-09', ate: '2026-10-15', total: 187.32, n: 7,
+  porCategoria: { Mercado: 90, Alimentação: 41.5, Compras: 30.82, Transporte: 25 },
+  maiores: [{ descricao: 'Atacadão Exemplo', categoria: 'Mercado', valor: 64.9, data: '2026-10-12' }], swile: { total: 105.4, n: 4 } };
+
+test('Semana: soma todas as despesas lançadas (não só o Swile), com categorias, o maior e a parte do Swile', function () {
+  var s = sb(DADOS3);
+  assert.strictEqual(s.Financas.responder({ tipo: 'gastos_semana' }),
+    'Nos últimos 7 dias você lançou R$ 187,32 em 7 despesas. Por categoria: Mercado R$ 90,00, Alimentação R$ 41,50, Compras R$ 30,82. O maior foi R$ 64,90 em Atacadão Exemplo. Do cartão Swile foram R$ 105,40. São as despesas lançadas; faturas e contas fixas ficam de fora.');
+  var vazio = JSON.parse(JSON.stringify(DADOS)); vazio.gastosMes.semana = { de: 'a', ate: 'b', total: 0, n: 0, porCategoria: {}, maiores: [], swile: { total: 0, n: 0 } };
+  assert.strictEqual(sb(vazio).Financas.responder({ tipo: 'gastos_semana' }), 'Nos últimos 7 dias não há despesas lançadas na caderneta.');
+  var antigo = JSON.parse(JSON.stringify(DADOS)); delete antigo.gastosMes.semana;
+  assert.strictEqual(sb(antigo).Financas.responder({ tipo: 'gastos_semana' }), 'A caderneta ainda não informa os gastos da semana.');
+});
+
+test('Semana: as variações de pergunta entram; Swile, categoria e hoje/ontem seguem os caminhos de antes', function () {
+  var s = sb(DADOS3);
+  ['quanto gastei essa semana', 'quanto eu gastei nesta semana', 'quanto gastei nos últimos 7 dias', 'quanto gastei na semana'].forEach(function (f) {
+    assert.deepStrictEqual(J(s.Financas.interpretar(f)), { tipo: 'gastos_semana' }, f);
+  });
+  assert.strictEqual(s.Financas.interpretar('quanto gastei no voucher essa semana'), null);
+  assert.strictEqual(s.Financas.interpretar('quanto gastei hoje'), null);
+  assert.strictEqual(s.Financas.interpretar('gastei 50 reais essa semana'), null, 'registro de gasto não é consulta');
+});
+
+test('JEV: "quanto saiu da minha conta nos últimos dias" vira o total da semana (cad_gastos/semana); gastos_swile só quando fala do cartão de benefícios', function () {
+  var s = sb(DADOS3, jev('cad_gastos', 0.93, { categoria_gasto: 'semana' }));
+  assert.match(String(s._rotaSemantica('quanto saiu da minha conta nos últimos dias', 'dono@exemplo.com', true, { canal: 'voz' })), /^Nos últimos 7 dias você lançou R\$ 187,32/);
+});
+
+test('Resposta financeira do JEV (intenção cad_*) fica SEMPRE no aparelho, mesmo acima do limite curto (15/10: uma de 305 caracteres foi sintetizada na nuvem e gravada no Drive)', function () {
+  var src = require('fs').readFileSync(require('path').join(__dirname, '..', 'Code.js'), 'utf8');
+  assert.match(src, /var _financeiraJev = \(_viaBase === 'jev' && \/\^cad_\/\.test\(String\(typeof _ROTA_ULTIMA/);
+  assert.match(src, /_viaBase === 'caderneta_acao' \|\| _financeiraJev\)\)/, 'entra na condição de falar local');
 });

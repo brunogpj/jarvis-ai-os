@@ -295,6 +295,9 @@ Sem você pedir, no tick de 15 min, em duas janelas: **manhã 9–11h** e **noit
 | 1.164 | "Quais foram os gastos do cartão Mercado Pago" | só os lançamentos registrados pela notificação do Mercado Pago (não o supermercado) | ✅ | 15/10 ao vivo; hoje só 1 lançamento vem desse banco |
 | 1.165 | "Gasto em lugar fora da lista" (fragmento) | gastos fora de Mercado e Alimentação | ✅ | 15/10 ao vivo |
 | 1.166 | "Quanto gastei essa semana" | resposta do Swile dizendo "No cartão Swile, nos últimos 7 dias…" | ✅ | 15/10 ao vivo |
+| 1.167 | "Quanto gastei essa semana" | total de TODAS as despesas dos últimos 7 dias, categorias, o maior gasto e a parte do Swile | ✅ | 15/10 ao vivo no celular |
+| 1.168 | "Quanto gastei no Swile essa semana" | continua o extrato do Swile ("No cartão Swile, nos últimos 7 dias…") | ✅ | 15/10 ao vivo |
+| 1.169 | "Quanto saiu da minha conta nos últimos dias" (paráfrase) | mesmo total da semana, pelo JEV, falado no aparelho (não pela nuvem) | ✅ | 15/10: evento `voz:entrega:local · jev` |
 | 1.139 | Interruptores: `FERRAMENTAS_JEV`, `CONFIRMA_JEV`, `INJECAO_JEV`, `ACAO_JEV`, `CATEGORIA_JEV` = nao | volta ao comportamento anterior | ✅ | testes automáticos |
 
 ### 1g. 🔔 Notificações do celular 🗣️

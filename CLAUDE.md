@@ -25,7 +25,7 @@ Projeto Google Apps Script gerenciado localmente via clasp.
 
 | Deployment ID | Versão | Descrição |
 |---|---|---|
-| `<DEPLOYMENT_ID>` | **@520** | **ATIVA** — "gastos por banco e categorias inclusivas" |
+| `<DEPLOYMENT_ID>` | **@522** | **ATIVA** — "semana soma todas as despesas; resposta financeira do JEV sempre local" |
 | `<DEPLOYMENT_ID>` | @25 | Antiga — "TesteJobs" |
 | `<DEPLOYMENT_ID>` | @HEAD | Cabeça (muda a cada push, não é a de produção) |
 
@@ -200,7 +200,7 @@ mercado, investido e reserva. **O número vem do código**: a caderneta calcula 
 (`src/calculos.js`, igual ao `app.js`, com teste de paridade) e o Jarvis só formata a frase.
 Nenhuma resposta passa pelo Gemini e o modelo não ganhou ferramenta financeira. A rota de voz
 `caderneta` vem ANTES do Swile e só pega o inequívoco ("livre", "vence", "falta pagar",
-"orçamento do mercado", "investido"); "saldo do voucher" e "quanto gastei essa semana" seguem no
+"orçamento do mercado", "investido"); "saldo do voucher" e "quanto gastei no swile essa semana" seguem no
 Swile. Fala no aparelho (`caderneta` está em `FALA_LOCAL_ROTAS`) e o log guarda
 "[resposta financeira não registrada]", sem o valor. Endereço e token ficam em Script Properties
 (`FIN_API_URL`, `FIN_API_TOKEN`), gravados pela rota `config_financas` (token da voz) a partir do
@@ -436,11 +436,16 @@ Medido ao vivo: ~6 s por arquivo (leitura do Workspace + embedding), então um D
 - **Monitor de páginas:** título decodificado ("&amp;" → "&") e resumo da notificação com as linhas mais informativas (a notificação veio com três datas, "Sep 15, 2026 | …").
 - **Gastos por categoria na caderneta** (pedido real que caiu em "Ainda não sei responder" e depois no modelo): o Worker passou a mandar `resumo.gastosMes` (total, por categoria com quantidade e maior lançamento, 5 maiores; só DESPESAS lançadas no mês, inclusive as pagas no voucher; faturas e contas fixas ficam de fora).
   O Jarvis responde "liste os gastos fora de mercado e alimentação", "quanto gastei com saúde", "gastos por categoria" (padrão em `Financas._interpretarGastos`, antes da exclusão do Swile, só com sinal explícito) e, por paráfrase, a intenção JEV `cad_gastos` com a categoria numa pergunta própria.
-  "Quanto gastei essa semana" e "onde gastei" continuam sendo do Swile; mercado continua no orçamento.
+  "Onde gastei" e "quanto gastei no swile essa semana" continuam sendo do Swile; mercado continua no orçamento. "Quanto gastei essa semana" agora soma TUDO (ver abaixo).
 - **Gastos por BANCO e categorias inclusivas (15/10, dos testes que ele fez às 08:41).** "Liste os gastos da categoria mercado alimentação" devolvia TODAS as categorias; agora pede só essas (`categoria:[…]`, o contrário de "fora de"). "Gastos do cartão **Mercado Pago**" caía no orçamento do SUPERMERCADO:
   "mercado pago" agora é normalizado para o banco antes de qualquer regra (`mercadopago`) e vira `{tipo:'gastos', origem:'mp'}` (também `bd` Bradesco e `it` Itaú). O Worker manda `gastosMes.porOrigem` por prefixo do id do lançamento (`mp_/bd_/it_` = notificação do banco, `sw_` Swile, `vz_` voz,
   o resto = digitado no app); só entra o que o Jarvis registrou, e a resposta diz isso. O JEV ganhou as escolhas `mercadopago`, `bradesco`, `itau` e `mercado_alimentacao` na pergunta `categoria_gasto`. O fragmento "gasto em lugar fora da lista" (sem verbo de pergunta, dito logo depois de outro pedido) vale como consulta
   só no SUBSTANTIVO "gasto(s)", com "fora" e sem número (nunca "gastei 50 fora de casa"); "lista" só conta como verbo ("lista os/as/me"). "Quanto gastei essa semana" continua sendo do Swile, mas agora diz "No cartão Swile, nos últimos 7 dias…" (a frase solta soava como o gasto total).
+- **"Quanto gastei essa semana" soma TODAS as despesas (15/10, pedido do dono).** Antes era só o extrato do Swile ("R$ 187,32 no total", que soava como o gasto total). Agora `Financas` responde `{tipo:'gastos_semana'}` com o Worker mandando `gastosMes.semana`: hoje e os 6 dias anteriores
+  (atravessa a virada do mês), total, nº de despesas, 3 maiores categorias, o maior gasto e quanto foi pago no cartão Swile (todo lançamento com meio Voucher/Mobilidade, inclusive o digitado no app). Variações: "nesta semana", "nos últimos 7 dias", "quanto saiu da minha conta nos últimos dias" (JEV: `cad_gastos` com
+  `categoria_gasto: semana`). Com Swile/voucher/mobilidade, categoria, mercado ou banco na frase NÃO é o total da semana: Swile segue no extrato do Swile ("No cartão Swile, nos últimos 7 dias…"). `gastos_swile` no JEV passou a exigir que ele fale do cartão de benefícios. "Quanto gastei hoje" ainda é do Swile.
+- **Resposta financeira do JEV sempre no aparelho (15/10).** A regra "financeiro fica local mesmo longo" só cobria as rotas `caderneta`/`caderneta_acao`: uma resposta do JEV (rota `jev`, intenção `cad_*`) de 305 caracteres passou do limite curto e foi sintetizada na nuvem (7,8 s, valores gravados num arquivo de áudio no Drive).
+  Agora `_financeiraJev` (rota `jev` + `_ROTA_ULTIMA` começando em `cad_`) entra na condição de falar local. Verificado nos eventos: `voz:entrega:local · jev · 306 car.`.
 - **Instrumentação:** `Heartbeat.medir` guarda QUANDO foi o pico de cada gatilho (`maxEm`). Ontem o `tickAlertasVoz` teve um pico de 220 s sem causa conhecida; compare `maxEm` com os eventos.
 
 **O Gemini TTS FALAVA a instrução de estilo (15/10).** O briefing da manhã abria com "Leia em voz alta em tom de narrador sério estilo jornalista de telejornal. Bom dia, Bruno…". `Voz.sintetizarGemini` montava `'Leia em voz alta em ' + estilo + ': ' + texto` e o modelo lite lia o prefixo

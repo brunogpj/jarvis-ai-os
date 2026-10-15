@@ -178,6 +178,9 @@ var Financas = (function () {
     // nunca "gastei 50 fora de casa", que é registro de gasto e não consulta.
     var fragmento = !pergunta && /\bgastos?\b/.test(s) && /\bfora\b/.test(s) && !/\d/.test(s);
     if ((!pergunta && !fragmento) || !/\bgast\w*\b/.test(s)) return null;
+    // SEMANA (15/10): "quanto gastei essa semana" soma TODAS as despesas lançadas dos últimos 7 dias. Com Swile/voucher/mobilidade na frase continua sendo o extrato do Swile; com categoria, mercado
+    // ou banco na frase não é o total da semana (ainda não há resposta por categoria na semana), então segue o caminho de antes.
+    if (/\b(semana|ultimos (7|sete) dias)\b/.test(s) && !/\b(swile|suav|voucher|vale|mobilidade|alimentacao|mercado|mercadopago|bradesco|itau)\b/.test(s) && !_CAT_FALADA.some(function (c) { return c[1].test(s); })) return { tipo: 'gastos_semana' };
     if (/\b(swile|suav|voucher|vale|mobilidade|semana|hoje|ontem|amanha)\b/.test(s)) return null;
     var fora = /\bfora\b/.test(s);
     if (fora) return { tipo: 'gastos', excluir: ['Mercado', 'Alimentação'] };   // "fora da lista / da categoria de mercado e alimentação"
@@ -251,6 +254,18 @@ var Financas = (function () {
       if (!configurado()) return 'A caderneta ainda não está conectada ao Jarvis.';
       var r = resumo();
       if (!r.ok) return r.codigo === 401 ? 'A caderneta recusou o acesso do Jarvis. Preciso que o acesso seja reconfigurado.' : 'Não consegui consultar a caderneta agora.';
+      if (consulta.tipo === 'gastos_semana') {
+        // Hoje e os 6 dias anteriores, atravessando a virada do mês; o Worker manda gastosMes.semana (todas as despesas lançadas, inclusive as do voucher).
+        var sm = r.dados.gastosMes && r.dados.gastosMes.semana;
+        if (!sm) return 'A caderneta ainda não informa os gastos da semana.';
+        if (!sm.n) return 'Nos últimos 7 dias não há despesas lançadas na caderneta.';
+        var catsS = Object.keys(sm.porCategoria || {}).map(function (k) { return { nome: k, total: Number(sm.porCategoria[k]) || 0 }; }).sort(function (a, b) { return b.total - a.total; }).slice(0, 3);
+        var maiorS = (sm.maiores || [])[0];
+        return 'Nos últimos 7 dias você lançou ' + _brl(sm.total) + ' em ' + sm.n + (sm.n === 1 ? ' despesa' : ' despesas') + '. ' +
+               (catsS.length ? 'Por categoria: ' + catsS.map(function (c) { return c.nome + ' ' + _brl(c.total); }).join(', ') + '. ' : '') +
+               (maiorS ? 'O maior foi ' + _brl(maiorS.valor) + (maiorS.descricao ? ' em ' + maiorS.descricao : '') + '. ' : '') +
+               (sm.swile && sm.swile.n ? 'Do cartão Swile foram ' + _brl(sm.swile.total) + '. ' : '') + 'São as despesas lançadas; faturas e contas fixas ficam de fora.';
+      }
       if (consulta.tipo === 'gastos') {
         // Despesas LANÇADAS no mês, por categoria (o Worker manda resumo.gastosMes). Faturas de cartão e contas fixas têm resposta própria.
         var gm = r.dados.gastosMes;

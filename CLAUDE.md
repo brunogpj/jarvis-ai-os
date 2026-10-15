@@ -25,7 +25,7 @@ Projeto Google Apps Script gerenciado localmente via clasp.
 
 | Deployment ID | Versão | Descrição |
 |---|---|---|
-| `<DEPLOYMENT_ID>` | **@514** | **ATIVA** — "correções dos logs de 15/10 e gastos por categoria" |
+| `<DEPLOYMENT_ID>` | **@518** | **ATIVA** — "TTS: estilo da voz deixa de ser falado" |
 | `<DEPLOYMENT_ID>` | @25 | Antiga — "TesteJobs" |
 | `<DEPLOYMENT_ID>` | @HEAD | Cabeça (muda a cada push, não é a de produção) |
 
@@ -438,6 +438,16 @@ Medido ao vivo: ~6 s por arquivo (leitura do Workspace + embedding), então um D
   O Jarvis responde "liste os gastos fora de mercado e alimentação", "quanto gastei com saúde", "gastos por categoria" (padrão em `Financas._interpretarGastos`, antes da exclusão do Swile, só com sinal explícito) e, por paráfrase, a intenção JEV `cad_gastos` com a categoria numa pergunta própria.
   "Quanto gastei essa semana" e "onde gastei" continuam sendo do Swile; mercado continua no orçamento.
 - **Instrumentação:** `Heartbeat.medir` guarda QUANDO foi o pico de cada gatilho (`maxEm`). Ontem o `tickAlertasVoz` teve um pico de 220 s sem causa conhecida; compare `maxEm` com os eventos.
+
+**O Gemini TTS FALAVA a instrução de estilo (15/10).** O briefing da manhã abria com "Leia em voz alta em tom de narrador sério estilo jornalista de telejornal. Bom dia, Bruno…". `Voz.sintetizarGemini` montava `'Leia em voz alta em ' + estilo + ': ' + texto` e o modelo lite lia o prefixo
+como se fosse texto. Provado transcrevendo o áudio com Cloud Speech (`ler_debug` com `ttsEco`, que sintetiza a abertura com variantes de prompt, transcreve e, com `julgarTom:true`, pede ao Gemini que OUÇA e classifique o tom). Medido: "Leia em voz alta em …:" e "Diga em …:" → falados;
+"Say in …:" → falado e deturpado; `[tag]` → não fala mas o tom é inconstante; `systemInstruction` → HTTP 400 neste modelo; **perfil + transcrição** (`# PERFIL DE ÁUDIO
+Estilo: …
+
+## TRANSCRIÇÃO
+<texto>`) → não fala E o tom obedece. Agora é o formato de `_promptTts`; vale para TODA fala pelo Gemini TTS
+(briefings, despertador, lembrete de ponto e o que mais usar o motor gemini), que tinham o mesmo prefixo. Sem estilo, a voz Iapetus já soa séria; o `TTS_STYLE` em produção era "tom de narrador serio, estilo jornalista de telejornal" e passou a "caloroso, simpático e acolhedor, como quem dá bom dia a um amigo"
+(`config_fala` aceita `TTS_STYLE`, até 120 letras; voltar é só gravar o texto antigo). O conteúdo do briefing (a 1ª frase sobre tempo e alertas) não foi mexido.
 
 **Acompanhar o JEV na produção:** `ler_debug` com `n:200` e filtrar os eventos `gate:jev:ferramentas`, `gate:jev:agenda`, `confirma:jev`, `hook:acao_sem_fonte`, `hook:injecao_conteudo`, `monitor:triagem`, `web:triagem`, `rota:jev:*`
 (os `hook:acao_sem_fonte` de 14/10 22:02 são do ensaio `acaoJev`, não de uso real).

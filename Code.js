@@ -3175,7 +3175,7 @@ function doPost(e) {
       var _PERMITIDAS_CF = {
         FALA_PROATIVA_LOCAL: /^(sim|nao)$/, FALA_RESPOSTAS_LOCAL: /^(sim|nao)$/,
         MODO_FALA_VOZ: /^(nuvem|auto|local)$/, FALA_VOLUME_DB: /^(1[0-6]|[0-9])$/,
-        FALA_FORMATO: /^(ogg|wav)$/, FALA_ARQUIVO_UNICO: /^(sim|nao)$/, ROTA_JEV_NOVAS: /^(sim|nao)$/, FERRAMENTAS_JEV: /^(nao|adiciona|sim)$/, INJECAO_JEV: /^(sim|nao)$/, ACAO_JEV: /^(sim|nao)$/, CATEGORIA_JEV: /^(sim|nao)$/, FERRAMENTAS_JEV_ADD: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE_CONH: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE: /^0?\.\d{1,2}$/, CONFIRMA_JEV: /^(sim|nao)$/, MONITOR_GMAIL_JEV: /^(sim|nao)$/, BUSCA_DRIVE_ATIVA: /^(sim|nao)$/, BUSCA_DRIVE_MAX: /^\d{2,4}$/, WEB_MONITOR_JEV: /^(sim|nao)$/, WEB_MONITOR_JEV_CORTE: /^0?\.\d{1,2}$/, MONITOR_GMAIL_JEV_CORTE: /^0?\.\d{1,2}$/, FIN_AVISOS_ATIVO: /^(sim|nao)$/, FIN_NOME_DONO: /^[a-zà-ÿ ]{3,80}$/, FIN_CPF_DONO: /^\d{3}\.\d{3}$/,
+        FALA_FORMATO: /^(ogg|wav)$/, FALA_ARQUIVO_UNICO: /^(sim|nao)$/, ROTA_JEV_NOVAS: /^(sim|nao)$/, FERRAMENTAS_JEV: /^(nao|adiciona|sim)$/, INJECAO_JEV: /^(sim|nao)$/, ACAO_JEV: /^(sim|nao)$/, CATEGORIA_JEV: /^(sim|nao)$/, TTS_STYLE: /^[A-Za-zÀ-ÿ ,.\-]{0,120}$/, FERRAMENTAS_JEV_ADD: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE_CONH: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE: /^0?\.\d{1,2}$/, CONFIRMA_JEV: /^(sim|nao)$/, MONITOR_GMAIL_JEV: /^(sim|nao)$/, BUSCA_DRIVE_ATIVA: /^(sim|nao)$/, BUSCA_DRIVE_MAX: /^\d{2,4}$/, WEB_MONITOR_JEV: /^(sim|nao)$/, WEB_MONITOR_JEV_CORTE: /^0?\.\d{1,2}$/, MONITOR_GMAIL_JEV_CORTE: /^0?\.\d{1,2}$/, FIN_AVISOS_ATIVO: /^(sim|nao)$/, FIN_NOME_DONO: /^[a-zà-ÿ ]{3,80}$/, FIN_CPF_DONO: /^\d{3}\.\d{3}$/,
         // consultor (fase 4): margem na conta (R$), taxa ao mês (decimal), reserva-alvo (meses) e pausa do rebalanceamento (data)
         CONSULTOR_MARGEM: /^\d{1,6}$/, CONSULTOR_TAXA_MES: /^0?\.\d{1,4}$/, CONSULTOR_RESERVA_ALVO: /^\d{1,2}$/, CONSULTOR_PAUSA_ATE: /^\d{4}-\d{2}-\d{2}$/, CONSULTOR_AVISO_ATIVO: /^(sim|nao)$/, CONSULTOR_AVISO_MIN: /^\d{1,6}$/
       };
@@ -4155,6 +4155,28 @@ function doPost(e) {
             }
             saida.occProva = _o;
           } catch (eOcc) { saida.occProva = { erro: eOcc.message }; }
+        }
+        // O que o Gemini TTS REALMENTE fala no começo: sintetiza a abertura de um briefing com cada variante de estilo/prompt e TRANSCREVE o áudio (Cloud Speech). Não toca no celular.
+        // {texto?, variantes?:[{nome, estilo?, voz?}]}. A variante 'atual' usa o TTS_STYLE de produção. Custa centavos (síntese curta + reconhecimento).
+        if (body.ttsEco) {
+          try {
+            var _te = body.ttsEco === true ? {} : body.ttsEco, _pp = PropertiesService.getScriptProperties();
+            var _txt = String(_te.texto || 'Bom dia, Bruno. Em Belo Horizonte, o dia pede atenção com o tempo. A temperatura mínima fica perto dos 18 graus e a máxima pode chegar aos 32.');
+            var _vars = _te.variantes || [{ nome: 'atual' }, { nome: 'sem_estilo', estilo: '' }];
+            saida.ttsEco = { config: { TTS_STYLE: _pp.getProperty('TTS_STYLE'), TTS_VOICE_GEMINI: _pp.getProperty('TTS_VOICE_GEMINI'), TTS_ENGINE: _pp.getProperty('TTS_ENGINE'), TTS_ENGINE_BRIEFING: _pp.getProperty('TTS_ENGINE_BRIEFING'),
+                                      TTS_GEMINI_MODEL: _pp.getProperty('TTS_GEMINI_MODEL') }, texto: _txt, resultados: _vars.map(function (v) {
+              var o = {}; if (v.estilo !== undefined) o.estilo = v.estilo; if (v.voz) o.voz = v.voz; if (v.promptModelo) o.promptModelo = v.promptModelo; if (v.instrucaoSistema) o.instrucaoSistema = v.instrucaoSistema;
+              var s2 = Voz.sintetizarGemini(_txt, o);
+              if (s2.status !== 'success') return { variante: v.nome, erro: s2.erro };
+              var tr = Voz.transcrever(s2.base64, 'audio/wav', {});
+              var tom = null;
+              if (_te.julgarTom) {   // o Gemini OUVE o áudio e classifica o tom (a transcrição só prova o que foi falado, não como)
+                try { var jt = Gemini.gerar({ contents: [{ role: 'user', parts: [{ inlineData: { mimeType: 'audio/wav', data: s2.base64 } }, { text: 'Ouça o áudio. Responda em JSON puro: {"tom":"serio"|"neutro"|"caloroso", "ritmo":"lento"|"normal"|"rapido", "motivo":"uma frase"}. "serio" = narrador de telejornal, formal, grave; "caloroso" = simpático, acolhedor, sorridente.' }] }], generationConfig: { temperature: 0 } });
+                  tom = (((((jt.json.candidates || [])[0] || {}).content || {}).parts || []).map(function (q) { return q.text || ''; }).join('')) || null; } catch (eJt) { tom = 'erro: ' + eJt.message.slice(0, 120); }
+              }
+              return { variante: v.nome, tom: tom, estilo: s2.estilo, voz: s2.voz, falou: tr && tr.texto ? tr.texto : null, erroTranscricao: (tr && tr.status !== 'success') ? (tr.erro || tr.status) : null, bytes: s2.base64.length };
+            }) };
+          } catch (eTe) { saida.ttsEco = { erro: eTe.message }; }
         }
         // Tempo de cada etapa do buscarConhecimento (palavra-chave no Drive, semântico, rerank, leitura de páginas inteiras). Só leitura. {consulta}.
         if (body.tempoConhecimento) {

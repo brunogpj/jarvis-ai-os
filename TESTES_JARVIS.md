@@ -290,6 +290,7 @@ Sem você pedir, no tick de 15 min, em duas janelas: **manhã 9–11h** e **noit
 | 1.159 | "O que falta eu fazer" (pergunta simples) | lista tarefas rápido, sem demorar na busca de conhecimento | ⚠️ | a varredura de 13 s foi eliminada (35 ms); o agente ainda pode chamar buscarConhecimento por escolha própria (~2 s de páginas) |
 | 1.160 | Falar um endereço e o reconhecimento repetir "rota para" no meio | traça a rota só para o endereço final | ⚠️ | teste automático; falta acontecer de novo |
 | 1.161 | Compra no Swile (carteira Refeição/Alimentação) | gasto no voucher da caderneta, aviso "Registrei R$ …", saldo atualizado | ✅ | 15/10 de manhã, compra real de pequeno valor: registrada na caderneta e conferida pelo dono |
+| 1.162 | Ouvir o briefing da manhã e o despertador | a fala começa em "Bom dia, Bruno", sem instrução falada antes, e o tom é caloroso | ⚠️ | transcrição do áudio sintetizado confirma (15/10, `ttsEco`); falta ouvir de verdade no briefing de amanhã |
 | 1.139 | Interruptores: `FERRAMENTAS_JEV`, `CONFIRMA_JEV`, `INJECAO_JEV`, `ACAO_JEV`, `CATEGORIA_JEV` = nao | volta ao comportamento anterior | ✅ | testes automáticos |
 
 ### 1g. 🔔 Notificações do celular 🗣️

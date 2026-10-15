@@ -353,6 +353,15 @@ var Voz = (function () {
    * @param {Object} [opts] { voz (ex.:'Enceladus'), estilo (ex.:'tom caloroso e acolhedor'), idioma, model }
    * @return { status:'success', base64(WAV), mime:'audio/wav', ext:'wav' } | { status:'error', erro }
    */
+  /** Prompt do Gemini TTS. O estilo vai num PERFIL antes da transcrição, e o modelo não o lê. Medido em 15/10 com ler_debug ttsEco (transcrevendo o áudio):
+   *   "Leia em voz alta em <estilo>: texto" → FALADO ("Leia em voz alta em tom de narrador sério… Bom dia, Bruno"); "Diga em <estilo>: …" → falado; "Say in …:" → falado e deturpado;
+   *   [tag] → não fala, mas o tom é inconstante; systemInstruction → HTTP 400 neste modelo; perfil + transcrição → não fala E o tom obedece (sério→sério, caloroso→caloroso).
+   *   Sem estilo a voz Iapetus já soa séria. */
+  function _promptTts(estilo, conteudo) {
+    var e = String(estilo || '').replace(/[\s.]+$/, '').trim();
+    return e ? ('# PERFIL DE ÁUDIO\nEstilo: ' + e + '.\n\n## TRANSCRIÇÃO\n' + conteudo) : conteudo;
+  }
+
   function sintetizarGemini(texto, opts) {
     opts = opts || {};
     var key = _keyGemini();
@@ -363,11 +372,14 @@ var Voz = (function () {
     var estilo = (opts.estilo != null ? opts.estilo : _p('TTS_STYLE')) || '';
     // 14/10: o gemini-2.5-flash-preview-tts desliga em 17/11/2026.
     var model = opts.model || _p('TTS_GEMINI_MODEL') || 'gemini-3.8-flash-lite-tts';   // lite: ~30% mais barata; aprovada de ouvido em 14/10
-    var prompt = estilo ? ('Leia em voz alta em ' + estilo + ': ' + conteudo) : conteudo;
+    // opts.promptModelo ({t} = o texto) e opts.instrucaoSistema existem para EXPERIMENTAR formas de passar o estilo (ler_debug ttsEco): em 15/10 o prefixo
+    // "Leia em voz alta em <estilo>:" foi FALADO pelo modelo lite ("Leia em voz alta em tom de narrador sério… Bom dia, Bruno"). O padrão novo vem de _promptTts().
+    var prompt = opts.promptModelo ? String(opts.promptModelo).replace('{t}', conteudo) : _promptTts(estilo, conteudo);
     var payload = {
       contents: [{ parts: [{ text: prompt }] }],
       generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voz } } } }
     };
+    if (opts.instrucaoSistema) payload.systemInstruction = { parts: [{ text: String(opts.instrucaoSistema) }] };
     var url = 'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + encodeURIComponent(key);
     var res = UrlFetchApp.fetch(url, { method: 'post', contentType: 'application/json', payload: JSON.stringify(payload), muteHttpExceptions: true });
     var code = res.getResponseCode();

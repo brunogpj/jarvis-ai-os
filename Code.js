@@ -5962,8 +5962,20 @@ function _bancoParse(app, titulo, texto) {
     m = junto.match(/voc[eê] fez um pix de R\$\s*([\d.,]*\d)\s+(?:para|pra)\s+(.+?)\.?$/i);
     if (m) return { origem: 'bd', valor: _finNum(m[1]), estabelecimento: m[2].trim(), meio: 'Pix / débito', auto: false };
   }
+  // FORMATO NOVO (16/10): o Mercado Pago mudou o texto em 15/10 e a compra sumiu sem rastro. Valor em R$ + verbo de transação que nenhum formato acima conhece = guarda o
+  // texto bruto e avisa (mesmo caminho do Itaú), em vez de cair nas regras de sempre sem ninguém saber. Promoção, limite, fatura e rendimento ficam de fora.
+  if (/mercado ?pago|bradesco/.test(a) && _pareceTransacao(junto)) return { desconhecido: true, origem: /bradesco/.test(a) ? 'bd' : 'mp', auto: false };
   return null;
 }
+
+/** Texto de notificação de banco que PARECE uma transação (valor + verbo de movimentação) e não é propaganda nem aviso de fatura. PURA. */
+function _pareceTransacao(s) {
+  s = String(s || '');
+  if (!/R\$\s*\d/.test(s)) return false;
+  if (/\b(saque|oferta|promo\w*|ganhe|cashback|desconto|cupom|sorteio|limite|dispon[ií]vel|simul\w*|empr[eé]stimo|invest\w*|rendimento|rendeu|vence|vencimento|boleto|fatura (fechou|vence|dispon\w*))\b/i.test(s)) return false;
+  return /\b(pagou|pagamento|compra|d[eé]bit\w*|cr[eé]dit\w*|pix|enviou|recebeu|recebido|transfer\w*|saque|cobran[çc]a|estorn\w*)\b/i.test(s);
+}
+
 
 /** Notificação do banco → gasto na caderneta. → resultado de regra ({regra,acao,...}) se era gasto de banco, senão null. Nunca lança. */
 function _bancoParaCaderneta(d, opts) {
@@ -5983,7 +5995,7 @@ function _bancoParaCaderneta(d, opts) {
       var docU = { app: d.app || '', pacote: d.pacote || '', titulo: d.titulo || '', texto: d.texto || '', bruto: ((d.titulo || '') + ' | ' + (d.texto || '')).trim(),
                    em: em, dia: dia, tipo: 'banco_desconhecido', origem: p.origem, parseado: false, versaoParser: 0, caderneta: 'formato_desconhecido' };
       if (!opts.simular) Firestore.setDoc(_FIN_COL, idFin, docU);
-      _finAvisarCaderneta('Itaú', 'Chegou uma notificação do Itaú com valor que eu ainda não sei interpretar: ' + String(docU.bruto).slice(0, 140) + '. Guardei o texto para aprender o formato.', 'desconhecido');
+      _finAvisarCaderneta(_nomeBanco(p.origem), 'Chegou uma notificação do ' + _nomeBanco(p.origem) + ' com valor que eu ainda não sei interpretar: ' + String(docU.bruto).slice(0, 140) + '. Guardei o texto para aprender o formato.', 'desconhecido');
       return { regra: 'gasto_banco', acao: 'banco_desconhecido', status: 'formato_desconhecido' };
     }
     if (p.pagamentoFatura) {
@@ -6087,6 +6099,7 @@ function _finParaCaderneta(doc, p, idFin) {
     return { status: r.criado ? 'registrado' : 'duplicado' };
   } catch (e) { return { status: 'pendente', erro: String(e.message).substring(0, 120) }; }
 }
+function _nomeBanco(o) { return o === 'mp' ? 'Mercado Pago' : (o === 'bd' ? 'Bradesco' : 'Itaú'); }
 function _fmtBRL(v) { return 'R$ ' + Number(v).toFixed(2).replace('.', ','); }
 
 /** Aviso financeiro: notificação do MacroDroid E o MESMO texto falado pela voz do celular (14/10: ele recebeu o aviso e o Jarvis não falou).
@@ -9650,4 +9663,86 @@ function _geminiTesteVivo() {
   passo('embedding', function () { var v = Gemini.embeddar('teste de embedding do Jarvis', { tipo: 'RETRIEVAL_QUERY' }); return { dimensoes: v.length }; });
   if (typeof GastoIA !== 'undefined') { var d = GastoIA.estado(); out.gasto = { totalMesBRL: d.gastoBRL, esteEnsaioBRL: Math.round((d.gastoBRL - antes) * 10000) / 10000, tetoBRL: d.tetoBRL, pct: d.pct }; }
   return out;
+}
+
+
+/* ===================== DASHBOARD: FINANÇAS + CAIXA DE NOTIFICAÇÕES DO CELULAR (16/10) =====================
+ * A compra de R$ 32,99 do Mercado Pago de 15/10 não entrou na caderneta porque o formato do push era novo, e NINGUÉM soube: a notificação caiu nas regras comuns.
+ * A caixa mostra o que o Jarvis ENTENDEU de cada notificação financeira (registrada, aguardando você, pendente, recusada) e põe em vermelho a que tem valor e que ele
+ * não reconheceu ou reconheceu mas não registrou. "Reprocessar" refaz o registro (idempotente pelo conteúdo: não duplica). */
+var _APPS_FIN = /swile|mercado ?pago|bradesco|ita[uú]/i;
+
+/** Classifica UMA notificação. n = {app,titulo,texto}; finMap = {'app|titulo|texto': docDoFinanceiro}. → null se não é de app financeiro. PURA (usa os parsers). */
+function _notifFinClassificar(n, finMap) {
+  var app = String(n.app || '');
+  if (!_APPS_FIN.test(app) || /investiment/i.test(app)) return null;
+  var d = (finMap || {})[app + '|' + (n.titulo || '') + '|' + (n.texto || '')];
+  var R = function (classe, rotulo, alerta, extra) { var o = { classe: classe, rotulo: rotulo, alerta: !!alerta }; if (extra) for (var k in extra) o[k] = extra[k]; return o; };
+  if (d) {
+    var st = String(d.caderneta || '');
+    var v = d.valor != null ? Number(d.valor) : null;
+    if (st === 'registrado' || st === 'duplicado' || st === 'duplicado_manual') return R('registrada', st === 'registrado' ? 'Registrada na caderneta' : 'Já estava na caderneta', false, { valor: v });
+    if (st === 'aguarda_validacao') return R('aguarda', 'Não registrei sozinho: diga o gasto por voz', false, { valor: v });
+    if (st === 'aguarda_confirmacao') return R('aguarda', 'Aguardando o seu "sim"', false, { valor: v });
+    if (st === 'pendente') return R('pendente', 'Caderneta fora do ar: reenvio automático', true, { valor: v });
+    if (st === 'recusado') return R('recusado', 'A caderneta recusou: registre à mão', true, { valor: v });
+    if (st === 'transferencia_propria') return R('informativa', 'Transferência entre as suas contas (não é gasto)', false, { valor: v });
+    if (st === 'estorno_manual') return R('aguarda', 'Estorno: ajuste o gasto na caderneta', false, { valor: v });
+    if (st === 'formato_desconhecido' || d.tipo === 'banco_desconhecido') return R('nao_reconhecida', 'Formato não reconhecido', true, { valor: null });
+    return R('informativa', d.tipo === 'recarga' ? 'Recarga: diga os valores' : 'Guardada', false, { valor: v });
+  }
+  var p = null;
+  try { p = /swile/i.test(app) ? _finParse(n.titulo, n.texto) : _bancoParse(app, n.titulo, n.texto); } catch (e) { p = null; }
+  if (p && p.desconhecido) return R('nao_reconhecida', 'Formato não reconhecido', true, { valor: null });
+  if (p && (p.valor > 0)) return R('sem_registro', 'Reconheci, mas não há registro: reprocesse', true, { valor: Number(p.valor), reprocessavel: !/swile/i.test(app) });
+  var junto = (n.titulo || '') + ' ' + (n.texto || '');
+  if (_pareceTransacao(junto)) return R('nao_reconhecida', 'Formato não reconhecido', true, { valor: null });
+  return R('informativa', 'Informativa', false, { valor: null });
+}
+
+function _dashDono(token) {
+  var s = getSessionUser(token);
+  return (s && Jarvis._isOwner(s.email)) ? s : null;
+}
+
+/** Cartão "Finanças" do Dashboard. */
+function dashboardFinancas(token) {
+  if (!_dashDono(token)) return { ok: false, erro: 'Apenas o proprietário pode ver o painel.' };
+  if (typeof Financas === 'undefined' || !Financas.configurado()) return { ok: false, erro: 'A caderneta não está conectada.' };
+  return Financas.painel();
+}
+
+/** Caixa de notificações do celular (as últimas 40), com o que o Jarvis entendeu de cada financeira. */
+function dashboardNotificacoes(token) {
+  if (!_dashDono(token)) return { ok: false, erro: 'Apenas o proprietário pode ver o painel.' };
+  var TZ = 'America/Sao_Paulo', agora = Date.now();
+  var notifs = [], fin = [];
+  try { notifs = Firestore.listDocs(_NOTIF_COL, 60) || []; } catch (e) { return { ok: false, erro: 'Não consegui ler as notificações: ' + e.message }; }
+  try { fin = Firestore.listDocs(_FIN_COL, 120) || []; } catch (e2) { fin = []; }
+  var finMap = {};
+  fin.forEach(function (x) { var d = x.dados || x; var k = (d.app || '') + '|' + (d.titulo || '') + '|' + (d.texto || ''); if (!finMap[k]) finMap[k] = d; });
+  var hoje = Utilities.formatDate(new Date(agora), TZ, 'yyyy-MM-dd');
+  var itens = notifs.slice(0, 40).map(function (x) {
+    var d = x.dados || x, em = Number(d.em) || 0, dia = em ? Utilities.formatDate(new Date(em), TZ, 'yyyy-MM-dd') : '';
+    var c = null;
+    try { c = _notifFinClassificar({ app: d.app, titulo: d.titulo, texto: d.texto }, finMap); } catch (e3) { c = null; }
+    return { id: x.id, app: String(d.app || ''), titulo: String(d.titulo || '').slice(0, 120), texto: String(d.texto || '').slice(0, 400), em: em,
+             quando: em ? Utilities.formatDate(new Date(em), TZ, dia === hoje ? 'HH:mm' : 'dd/MM HH:mm') : '',
+             financeira: !!c, classe: c ? c.classe : 'comum', rotulo: c ? c.rotulo : '', alerta: !!(c && c.alerta), valor: c && c.valor != null ? c.valor : null, reprocessavel: !!(c && c.reprocessavel) };
+  });
+  return { ok: true, itens: itens, resumo: { total: itens.length, financeiras: itens.filter(function (i) { return i.financeira; }).length, alertas: itens.filter(function (i) { return i.alerta; }).length }, geradoEm: agora };
+}
+
+/** "Reprocessar": refaz o registro de uma notificação de banco que o Jarvis reconhece mas não registrou. Idempotente (o id vem do conteúdo + dia). */
+function reprocessarNotificacao(token, id) {
+  if (!_dashDono(token)) return { ok: false, erro: 'Apenas o proprietário pode fazer isso.' };
+  var d = null;
+  try { d = Firestore.getDoc(_NOTIF_COL, String(id || '')); } catch (e) { d = null; }
+  if (!d) return { ok: false, erro: 'Notificação não encontrada (talvez já tenha expirado).' };
+  d = d.dados || d;
+  if (!/mercado ?pago|bradesco|ita[uú]/i.test(String(d.app || '')) || /investiment/i.test(String(d.app || ''))) return { ok: false, erro: 'Só reprocesso notificações de banco (Mercado Pago, Bradesco, Itaú).' };
+  var r = _bancoParaCaderneta({ app: d.app, pacote: d.pacote || '', titulo: d.titulo, texto: d.texto, em: Number(d.em) || Date.now() });
+  if (!r) return { ok: false, erro: 'Não reconheço esse formato: nada foi registrado.' };
+  if (r.jaRegistrado) return { ok: true, status: 'ja_registrado', msg: 'Já estava registrada.' };
+  return { ok: true, status: r.status || r.acao || 'feito', msg: 'Reprocessada: ' + (r.status || r.acao || 'feito') + '.' };
 }

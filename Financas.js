@@ -1968,7 +1968,25 @@ var Financas = (function () {
     }
   }
 
-  return { configurado: configurado, resumo: resumo, falar: falar, interpretar: interpretar, responder: responder, AJUDA: AJUDA,
+  /** Dados do cartão "Finanças" do Dashboard (16/10): tudo do resumo da caderneta, calculado lá; aqui só se escolhe o que mostrar. Nunca lança. */
+  function painel() {
+    try {
+      var r = resumo();
+      if (!r.ok) return { ok: false, erro: r.erro || 'não consegui consultar a caderneta' };
+      var d = r.dados, pend = _pendentes(d), hojeDia = _diaDe(d.hoje), inv = d.investimentos || {}, g = d.gastosMes || {};
+      var tot = function (x) { return x && x.total != null ? Number(x.total) : null; };
+      var ult = [];
+      try { ult = _logRecente().slice(-3).reverse().map(function (x) { return { desc: x.desc, quando: _quando(x.em) }; }); } catch (e1) {}
+      return { ok: true, cache: !!r.cache, mes: d.mes, hoje: d.hoje,
+        livreHoje: Number(d.livreHoje), livreFim: Number(d.livreFim), aPagar: Number(d.aPagar) || 0, nPendentes: pend.length,
+        vencimentos: pend.slice(0, 5).map(function (o) { return { nome: o.nome, dia: o.dia || null, valor: Number(o.valor), atrasada: !!(o.dia && o.dia < hojeDia), hoje: o.dia === hojeDia }; }),
+        investido: inv.total != null ? Number(inv.total) : null, rendimentoAno: inv.rendimentoAno != null ? Number(inv.rendimentoAno) : null, reservaMeses: d.reservaMeses != null ? Number(d.reservaMeses) : null,
+        gastos: { hoje: tot(g.dias && g.dias.hoje), semana: tot(g.semana), mes: tot(g) },
+        ultimas: ult };
+    } catch (e) { return { ok: false, erro: 'falha ao montar o painel' }; }
+  }
+
+  return { painel: painel, configurado: configurado, resumo: resumo, falar: falar, interpretar: interpretar, responder: responder, AJUDA: AJUDA,
            avisos: avisos, verificarAvisos: verificarAvisos,
            registrarGastoSwile: registrarGastoSwile, desfazerGastoSwile: desfazerGastoSwile, falarSaldoSwile: falarSaldoSwile,
            interpretarRecarga: interpretarRecarga, conversar: conversar, registrarRecarga: registrarRecarga, desfazerRecarga: desfazerRecarga,

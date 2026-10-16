@@ -1543,6 +1543,7 @@
         wireAtividadeCard(cards);
         wireRevisaoCard(cards);
         wireProvedoresCard(cards);
+        montarCardsFinNotif(cards);   // Finanças e Notificações: carregam sozinhos, no topo
 
         /* subtítulo (agregado) abaixo do título de um card identificado pelo seu data-ask */
         function subDoCard(ask, texto) {
@@ -1563,6 +1564,119 @@
           if (q && !c.classList.contains("dash-card--info")) c.addEventListener("click", function () { perguntarAoJarvis(q); });
         });
       }
+
+      /* ===== 💰 FINANÇAS e 📲 NOTIFICAÇÕES DO CELULAR (cartões do Dashboard, 16/10) =====
+         Cada cartão carrega SOZINHO (google.script.run próprio): o resto do painel não espera por ele e uma falha aparece só nele. */
+      /*DASH_FIN_INI*/
+      function brlFmt(v) { return (v == null || isNaN(v)) ? "—" : Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }); }
+      function montarCardsFinNotif(cards) {
+        ["dashFinCard", "dashNotifCard"].forEach(function (id) { var o = document.getElementById(id); if (o) o.remove(); });
+        var n = document.createElement("div"); n.className = "dash-card dash-card--info dash-wide"; n.id = "dashNotifCard";
+        n.innerHTML = '<div class="dash-card__head"><span class="dash-card__icon">📲</span><h3>Notificações do celular</h3><span class="dash-card__count" id="dashNotifBadge">…</span></div><p class="dash-empty">Carregando…</p>';
+        var f = document.createElement("div"); f.className = "dash-card dash-card--info dash-wide"; f.id = "dashFinCard";
+        f.innerHTML = '<div class="dash-card__head"><span class="dash-card__icon">💰</span><h3>Finanças</h3></div><p class="dash-empty">Carregando…</p>';
+        cards.insertBefore(n, cards.firstChild); cards.insertBefore(f, cards.firstChild);
+        carregarCardFin(); carregarCardNotif();
+      }
+      function carregarCardFin() {
+        var el = document.getElementById("dashFinCard"); if (!el || !hasBackend || !authToken) return;
+        google.script.run
+          .withSuccessHandler(function (d) { renderCardFin(el, d); })
+          .withFailureHandler(function (e) { renderCardFin(el, { ok: false, erro: e && e.message }); })
+          .dashboardFinancas(authToken);
+      }
+      function renderCardFin(el, d) {
+        var head = '<div class="dash-card__head"><span class="dash-card__icon">💰</span><h3>Finanças' + (d && d.mes ? ' · ' + escapeHtml(d.mes) : '') + '</h3>' +
+          '<button type="button" class="dash-card-btn" id="finRefresh" title="Atualizar">↻</button></div>';
+        if (!d || !d.ok) { el.innerHTML = head + '<p class="dash-empty">⚠️ ' + escapeHtml((d && d.erro) || "Não consegui carregar.") + '</p>'; wireFinCard(el); return; }
+        function kpi(rot, val, sub, neg) { return '<div class="fin-kpi"><span>' + rot + '</span><b class="' + (neg ? "neg" : "") + '">' + val + '</b>' + (sub ? '<small>' + sub + '</small>' : '') + '</div>'; }
+        var k = '<div class="fin-kpis">' +
+          kpi("Livre hoje", brlFmt(d.livreHoje), "", d.livreHoje < 0) +
+          kpi("Previsão fim do mês", brlFmt(d.livreFim), "", d.livreFim < 0) +
+          kpi("A pagar", brlFmt(d.aPagar), d.nPendentes + (d.nPendentes === 1 ? " conta" : " contas")) +
+          kpi("Investido", brlFmt(d.investido), d.rendimentoAno != null ? "rendeu " + brlFmt(d.rendimentoAno) + " no ano" : "") +
+          (d.reservaMeses != null ? kpi("Reserva", String(Math.round(d.reservaMeses * 10) / 10).replace(".", ",") + " meses", "com resgate diário") : "") +
+          kpi("Gastos", brlFmt(d.gastos && d.gastos.mes), "hoje " + brlFmt(d.gastos && d.gastos.hoje) + " · semana " + brlFmt(d.gastos && d.gastos.semana)) + '</div>';
+        var v = (d.vencimentos || []).map(function (o) {
+          var cl = o.atrasada ? "bad" : (o.hoje ? "warn" : "mute"), tag = o.atrasada ? "atrasada" : (o.hoje ? "hoje" : (o.dia ? "dia " + o.dia : ""));
+          return '<li><span class="fin-chip ' + cl + '">' + escapeHtml(tag) + '</span> ' + escapeHtml(o.nome) + ' <b>' + brlFmt(o.valor) + '</b></li>';
+        }).join("");
+        var u = (d.ultimas || []).map(function (x) { return '<li>' + escapeHtml(String(x.desc || '').charAt(0).toUpperCase() + String(x.desc || '').slice(1)) + ' <small>· ' + escapeHtml(x.quando) + '</small></li>'; }).join("");
+        el.innerHTML = head + k +
+          '<div class="fin-cols"><div><div class="fin-sub">Próximos vencimentos</div>' + (v ? '<ul class="fin-lista">' + v + '</ul>' : '<p class="dash-empty">Nada a pagar ✅</p>') + '</div>' +
+          '<div><div class="fin-sub">Últimas ações do Jarvis na caderneta</div>' + (u ? '<ul class="fin-lista">' + u + '</ul>' : '<p class="dash-empty">Nenhuma nos últimos dias.</p>') + '</div></div>' +
+          '<div class="fin-acoes"><button type="button" class="dash-card-btn" data-q="Execute a automação: Relatório de Investimentos">📈 Relatório de investimentos</button>' +
+          '<button type="button" class="dash-card-btn" data-q="Execute a automação: Relatório de FIIs">🏢 FIIs com mercado</button>' +
+          '<button type="button" class="dash-card-btn" data-q="Como foi o mês?">🗓️ Como foi o mês</button></div>' +
+          (d.cache ? '<div class="dash-card__sub">dados em cache (até 5 min) · toque em ↻ para atualizar</div>' : '');
+        wireFinCard(el);
+      }
+      function wireFinCard(el) {
+        var r = el.querySelector("#finRefresh");
+        if (r) r.addEventListener("click", function (ev) { ev.stopPropagation(); el.innerHTML = '<div class="dash-card__head"><span class="dash-card__icon">💰</span><h3>Finanças</h3></div><p class="dash-empty">Atualizando…</p>'; carregarCardFin(); });
+        el.querySelectorAll("[data-q]").forEach(function (b) { b.addEventListener("click", function (ev) { ev.stopPropagation(); perguntarAoJarvis(b.getAttribute("data-q")); }); });
+      }
+
+      var notifFiltro = "fin";
+      try { notifFiltro = localStorage.getItem("jarvis-notif-filtro") || "fin"; } catch (e) {}
+      var notifUltimo = null;
+      var notifVistas = {};
+      try { notifVistas = JSON.parse(localStorage.getItem("jarvis-notif-vistas") || "{}") || {}; } catch (e) { notifVistas = {}; }
+      function salvarVistas() { try { var ks = Object.keys(notifVistas); if (ks.length > 80) ks.slice(0, ks.length - 80).forEach(function (k) { delete notifVistas[k]; }); localStorage.setItem("jarvis-notif-vistas", JSON.stringify(notifVistas)); } catch (e) {} }
+      function carregarCardNotif() {
+        var el = document.getElementById("dashNotifCard"); if (!el || !hasBackend || !authToken) return;
+        google.script.run
+          .withSuccessHandler(function (d) { notifUltimo = d; renderCardNotif(el, d); })
+          .withFailureHandler(function (e) { renderCardNotif(el, { ok: false, erro: e && e.message }); })
+          .dashboardNotificacoes(authToken);
+      }
+      function renderCardNotif(el, d) {
+        var badge = '';
+        if (!d || !d.ok) { el.innerHTML = '<div class="dash-card__head"><span class="dash-card__icon">📲</span><h3>Notificações do celular</h3></div><p class="dash-empty">⚠️ ' + escapeHtml((d && d.erro) || "Não consegui carregar.") + '</p>'; return; }
+        // alerta que ele já olhou ("Visto") sai da contagem e do vermelho neste navegador; o dado no servidor não muda
+        (d.itens || []).forEach(function (i) { if (i.alerta && notifVistas[i.id]) { i.alerta = false; i.rotulo = i.rotulo + " · visto"; i.classe = "informativa"; } });
+        var al = (d.itens || []).filter(function (i) { return i.alerta; }).length;
+        badge = '<span class="dash-card__count' + (al ? " fin-bad" : "") + '" title="' + (al ? al + " precisam de atenção" : "tudo certo") + '">' + (al ? "⚠ " + al : "✓") + '</span>';
+        var lista = (d.itens || []).filter(function (i) { return notifFiltro === "todas" ? true : (notifFiltro === "alertas" ? i.alerta : i.financeira); });
+        var filtros = [["fin", "Financeiras (" + d.resumo.financeiras + ")"], ["alertas", "Alertas (" + al + ")"], ["todas", "Todas (" + d.resumo.total + ")"]].map(function (f) {
+          return '<button type="button" class="fin-filtro' + (notifFiltro === f[0] ? " on" : "") + '" data-f="' + f[0] + '">' + escapeHtml(f[1]) + '</button>';
+        }).join("");
+        var rows = lista.map(function (i) {
+          var cl = { registrada: "ok", aguarda: "warn", pendente: "bad", recusado: "bad", nao_reconhecida: "bad", sem_registro: "bad", informativa: "mute" }[i.classe] || "mute";
+          return '<li class="nt-row' + (i.alerta ? " nt-alerta" : "") + '" data-id="' + escapeHtml(i.id) + '">' +
+            '<div class="nt-top"><span class="nt-hora">' + escapeHtml(i.quando) + '</span><span class="nt-app">' + escapeHtml(i.app) + '</span>' +
+            (i.valor != null ? '<b class="nt-valor">' + brlFmt(i.valor) + '</b>' : '') +
+            (i.financeira ? '<span class="fin-chip ' + cl + '">' + escapeHtml(i.rotulo) + '</span>' : '') + '</div>' +
+            '<div class="nt-txt"><b>' + escapeHtml(i.titulo) + '</b> ' + escapeHtml(i.texto) + '</div>' +
+            '<div class="nt-acoes">' + (i.reprocessavel ? '<button type="button" class="dash-card-btn nt-repro" data-id="' + escapeHtml(i.id) + '">↻ Reprocessar</button>' : '') +
+            (i.alerta ? '<button type="button" class="dash-card-btn nt-copiar" data-id="' + escapeHtml(i.id) + '">📋 Copiar texto</button><button type="button" class="dash-card-btn nt-visto" data-id="' + escapeHtml(i.id) + '">✓ Visto</button>' : '') + '</div></li>';
+        }).join("");
+        el.innerHTML = '<div class="dash-card__head"><span class="dash-card__icon">📲</span><h3>Notificações do celular</h3>' + badge + '<button type="button" class="dash-card-btn" id="ntRefresh" title="Atualizar">↻</button></div>' +
+          '<div class="dash-card__sub">O que o Jarvis entendeu de cada notificação financeira. Vermelho = tem valor e não foi registrado na caderneta.</div>' +
+          '<div class="fin-filtros">' + filtros + '</div>' +
+          (rows ? '<ul class="nt-lista">' + rows + '</ul>' : '<p class="dash-empty">' + (notifFiltro === "alertas" ? "Nenhum alerta ✅" : "Nada por aqui.") + '</p>');
+        el.querySelector("#ntRefresh").addEventListener("click", function (ev) { ev.stopPropagation(); carregarCardNotif(); });
+        el.querySelectorAll(".fin-filtro").forEach(function (b) { b.addEventListener("click", function (ev) {
+          ev.stopPropagation(); notifFiltro = b.getAttribute("data-f"); try { localStorage.setItem("jarvis-notif-filtro", notifFiltro); } catch (e) {} renderCardNotif(el, notifUltimo); }); });
+        el.querySelectorAll(".nt-row").forEach(function (r) { r.addEventListener("click", function () { r.classList.toggle("aberto"); }); });
+        el.querySelectorAll(".nt-visto").forEach(function (b) { b.addEventListener("click", function (ev) { ev.stopPropagation(); notifVistas[b.getAttribute("data-id")] = Date.now(); salvarVistas(); renderCardNotif(el, notifUltimo); }); });
+        el.querySelectorAll(".nt-copiar").forEach(function (b) { b.addEventListener("click", function (ev) {
+          ev.stopPropagation();
+          var it = ((notifUltimo && notifUltimo.itens) || []).filter(function (x) { return x.id === b.getAttribute("data-id"); })[0]; if (!it) return;
+          var txt = it.app + " | " + it.titulo + " | " + it.texto;
+          try { navigator.clipboard.writeText(txt).then(function () { toast("📋 Texto copiado"); }, function () { toast("⚠️ Não consegui copiar"); }); } catch (e) { toast("⚠️ Não consegui copiar"); }
+        }); });
+        el.querySelectorAll(".nt-repro").forEach(function (b) { b.addEventListener("click", function (ev) {
+          ev.stopPropagation();
+          if (!confirm("Reprocessar esta notificação e registrar o gasto na caderneta? (Não duplica se já estiver registrada.)")) return;
+          b.disabled = true; b.textContent = "Reprocessando…";
+          google.script.run
+            .withSuccessHandler(function (r) { toast(r && r.ok ? "✅ " + (r.msg || "Feito") : "⚠️ " + ((r && r.erro) || "Falhou")); carregarCardNotif(); carregarCardFin(); })
+            .withFailureHandler(function (e) { toast("⚠️ " + (e && e.message)); b.disabled = false; b.textContent = "↻ Reprocessar"; })
+            .reprocessarNotificacao(authToken, b.getAttribute("data-id"));
+        }); });
+      }
+      /*DASH_FIN_FIM*/
 
       /* ===== 🔔 ALERTAS DE VOZ (card interativo no Dashboard) ===== */
       function toast(msg) {

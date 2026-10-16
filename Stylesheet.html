@@ -1125,6 +1125,37 @@
     }
     .dash-list li::before { content: "•"; position: absolute; left: 2px; color: var(--accent); }
     .dash-empty { font-size: 12.5px; color: var(--text-mute); }
+    /* cartões Finanças e Notificações do Dashboard (16/10) */
+    .dash-wide { grid-column: 1 / -1; }
+    .fin-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 6px 0 12px; }
+    .fin-kpi { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border-radius: 12px; background: var(--accent-soft); border: 1px solid var(--glass-border); }
+    .fin-kpi span { font-size: 11px; color: var(--text-mute); text-transform: uppercase; letter-spacing: .4px; }
+    .fin-kpi b { font-size: 18px; color: var(--text); } .fin-kpi b.neg { color: #d64545; }
+    .fin-kpi small { font-size: 11px; color: var(--text-mute); }
+    .fin-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+    .fin-sub { font-size: 11.5px; font-weight: 700; color: var(--text-mute); margin-bottom: 6px; }
+    .fin-lista { list-style: none; display: grid; gap: 5px; font-size: 12.5px; color: var(--text-soft); }
+    .fin-acoes { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .fin-chip { display: inline-block; font-size: 10.5px; font-weight: 700; padding: 2px 8px; border-radius: 999px; border: 1px solid transparent; }
+    .fin-chip.ok { color: #1c8a4e; background: rgba(46,174,98,.14); } .fin-chip.warn { color: #b27800; background: rgba(245,185,60,.2); }
+    .fin-chip.bad { color: #c93636; background: rgba(214,69,69,.14); } .fin-chip.mute { color: var(--text-mute); background: rgba(128,128,128,.14); }
+    .dash-card__count.fin-bad { color: #c93636; background: rgba(214,69,69,.14); }
+    .fin-filtros { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
+    .fin-filtro { font-size: 11.5px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--glass-border); background: transparent; color: var(--text-soft); cursor: pointer; }
+    .fin-filtro.on { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); font-weight: 700; }
+    .nt-lista { list-style: none; display: grid; gap: 6px; max-height: 420px; overflow-y: auto; }
+    .nt-row { padding: 8px 10px; border-radius: 10px; border: 1px solid var(--glass-border); cursor: pointer; display: grid; gap: 4px; }
+    .nt-row.nt-alerta { border-color: rgba(214,69,69,.55); background: rgba(214,69,69,.06); }
+    .nt-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 11.5px; }
+    .nt-hora { color: var(--text-mute); } .nt-app { font-weight: 700; } .nt-valor { margin-left: auto; }
+    .nt-txt { font-size: 12.5px; color: var(--text-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .nt-row.aberto .nt-txt { white-space: normal; }
+    .nt-acoes { display: flex; flex-wrap: wrap; gap: 6px; } .nt-acoes:empty { display: none; }
+    .dash-card__head .dash-card__count { white-space: nowrap; flex-shrink: 0; }
+    #dashFinCard .dash-card__head, #dashNotifCard .dash-card__head { flex-wrap: wrap; }
+    #dashFinCard .dash-card__head h3, #dashNotifCard .dash-card__head h3 { flex: 1 1 150px; }
+    .nt-acoes .dash-card-btn, .fin-acoes .dash-card-btn, #dashFinCard .dash-card__head .dash-card-btn, #dashNotifCard .dash-card__head .dash-card-btn { width: auto; margin-top: 0; padding: 5px 12px; }
+
     @media (max-width: 860px) { .dash-view { padding: 16px; } .dash-grid { grid-template-columns: 1fr; } }
 
     /* ===== 🔔 Card de Alertas de Voz (interativo) ===== */

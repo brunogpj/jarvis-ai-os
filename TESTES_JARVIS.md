@@ -310,6 +310,10 @@ Sem você pedir, no tick de 15 min, em duas janelas: **manhã 9–11h** e **noit
 | 1.179 | Botão **Cofrinhos** | tabela dos cofrinhos do Mercado Pago + pesquisa na web com fontes (ou aviso se não achar) | ⚠️ | código e teste automático; falta ver a pesquisa ao vivo (30–120 s) |
 | 1.180 | "Tenho 5 cotas do KNRI11 e 65 do MXRF11" → "sim" → "desfaz" | repete, só o sim grava, desfaz devolve; vale para vários fundos numa frase | ⚠️ | teste automático e Worker implantado; falta você dizer as suas cotas reais por voz |
 | 1.181 | "Lança os proventos dos fundos" → "sim" | soma cotas × valor do último rendimento só dos fundos que já pagaram e não foram lançados; não mexe no saldo nem no livre | ⚠️ | teste automático; depende das cotas (1.180) |
+| 1.182 | Dashboard → cartão **Finanças** | livre hoje, previsão do fim do mês, a pagar, investido, reserva, gastos (hoje/semana/mês), vencimentos, últimas ações do Jarvis na caderneta e atalhos para os relatórios; carrega sozinho | ✅ | 16/10 ao vivo no web app |
+| 1.183 | Dashboard → **Notificações do celular** | últimas 40 do celular; as financeiras mostram o que o Jarvis entendeu (registrada, aguardando, pendente, recusada, formato não reconhecido); filtros Financeiras/Alertas/Todas; clicar na linha mostra o texto inteiro | ✅ | 16/10 ao vivo |
+| 1.184 | Notificação de teste de formato novo (Mercado Pago, R$ 1,23, marcada TESTE) pelo webhook real | guarda o texto bruto, avisa pelo celular, a linha fica vermelha com "Formato não reconhecido" e o selo ⚠ 1 | ✅ | 16/10: `notif:processada · banco_desconhecido` + aviso falado; "Visto" zerou o selo |
+| 1.185 | Botão **Reprocessar** numa notificação que o Jarvis reconhece mas não registrou | refaz o registro sem duplicar | ⚠️ | teste automático; sem caso real aberto para clicar |
 | 1.139 | Interruptores: `FERRAMENTAS_JEV`, `CONFIRMA_JEV`, `INJECAO_JEV`, `ACAO_JEV`, `CATEGORIA_JEV` = nao | volta ao comportamento anterior | ✅ | testes automáticos |
 
 ### 1g. 🔔 Notificações do celular 🗣️

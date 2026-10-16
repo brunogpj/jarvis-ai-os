@@ -127,6 +127,14 @@
             <span class="nav__icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></span>
             <span class="nav__text">Dashboard</span>
           </a></li>
+          <li><a class="nav__item" data-tip="Automações" id="automacoesNav" tabindex="0">
+            <span class="nav__icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span>
+            <span class="nav__text">Automações</span>
+          </a></li>
+          <li><a class="nav__item" data-tip="Laboratório" id="laboratorioNav" tabindex="0">
+            <span class="nav__icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6"/><path d="M10 3v6l-5.5 9.5A1.5 1.5 0 0 0 5.8 21h12.4a1.5 1.5 0 0 0 1.3-2.5L14 9V3"/><path d="M7.5 15h9"/></svg></span>
+            <span class="nav__text">Laboratório</span>
+          </a></li>
           <li><a class="nav__item" data-tip="Dispositivo" id="dispositivoNav" tabindex="0">
             <span class="nav__icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg></span>
             <span class="nav__text">Dispositivo</span>
@@ -273,6 +281,67 @@
           </button>
         </div>
         <div class="dash-grid" id="dashCards"><div class="conv-empty">Carregando…</div></div>
+      </section>
+
+      <!-- ===================== AUTOMAÇÕES · galeria de fluxos (16/10) ===================== -->
+      <section class="dash-view glass" id="automacoesView" hidden>
+        <div class="dash-head">
+          <div>
+            <h2>Automações</h2>
+            <p>Fluxos prontos e os seus. Executar roda o pedido; duplicar copia para você ajustar.</p>
+          </div>
+          <button type="button" class="btn-ghost" id="autNova">+ Nova automação</button>
+        </div>
+        <form class="aut-editor glass" id="autEditor" hidden autocomplete="off">
+          <div class="aut-editor__linha">
+            <label class="aut-icone">Ícone<input type="text" id="autIcone" maxlength="4" value="⚡"></label>
+            <label class="aut-nome">Nome<input type="text" id="autNome" maxlength="60" placeholder="Ex.: Resumo do meu dia"></label>
+          </div>
+          <label>Descrição (opcional)<input type="text" id="autDesc" maxlength="200" placeholder="Para que serve"></label>
+          <label><span id="autTextoRotulo">O que o Jarvis deve fazer</span><textarea id="autTexto" rows="4" maxlength="4000" placeholder="Escreva como se estivesse falando com o Jarvis no chat"></textarea></label>
+          <p class="aut-nota" id="autNotaLab" hidden>Esta automação roda no Laboratório; modelo, ferramentas e demais ajustes ficam como foram salvos. Para mudá-los, abra no Laboratório e salve de novo.</p>
+          <div class="aut-editor__acoes"><button type="submit" class="btn-ghost aut-primario" id="autSalvar">Salvar</button><button type="button" class="btn-ghost" id="autCancelar">Cancelar</button></div>
+        </form>
+        <div class="aut-grid" id="autGrid"><div class="conv-empty">Carregando…</div></div>
+      </section>
+
+      <!-- ===================== LABORATÓRIO · playground do Gemini (16/10) ===================== -->
+      <section class="dash-view glass" id="laboratorioView" hidden>
+        <div class="dash-head">
+          <div>
+            <h2>Laboratório</h2>
+            <p>Teste modelos, instruções e ferramentas do Gemini, como no AI Studio. Aqui o modelo só responde: não mexe no seu e-mail, agenda, celular nem caderneta.</p>
+          </div>
+        </div>
+        <div class="lab-layout">
+          <div class="lab-form">
+            <div class="lab-presets" id="labPresets"></div>
+            <label>Modelo<select id="labModeloA"></select></label>
+            <label class="lab-check"><input type="checkbox" id="labComparar"> Comparar com um segundo modelo</label>
+            <label id="labModeloBWrap" hidden>Modelo B<select id="labModeloB"></select></label>
+            <label>Instrução de sistema (opcional)<textarea id="labSistema" rows="2" maxlength="4000" placeholder="Ex.: Responda sempre em português, em até 3 linhas."></textarea></label>
+            <label>Pedido<textarea id="labPrompt" rows="6" maxlength="8000" placeholder="O que você quer perguntar ou pedir ao modelo"></textarea></label>
+            <div class="lab-linha">
+              <label>Temperatura: <b id="labTempVal">1</b><input type="range" id="labTemp" min="0" max="2" step="0.1" value="1"></label>
+              <label>Raciocínio<select id="labPensar"><option value="padrao">Padrão</option><option value="baixo">Baixo</option><option value="alto">Alto</option></select></label>
+              <label>Máx. de tokens<select id="labMaxTok"><option>512</option><option selected>1024</option><option>2048</option><option>4096</option></select></label>
+            </div>
+            <div class="lab-ferr">
+              <label class="lab-check"><input type="checkbox" id="labBusca"> 🔎 Busca no Google</label>
+              <label class="lab-check"><input type="checkbox" id="labUrl"> 🔗 Leitura de URL</label>
+              <label class="lab-check"><input type="checkbox" id="labCodigo"> 🧮 Execução de código</label>
+              <label class="lab-check"><input type="checkbox" id="labJson"> 🧩 Saída em JSON</label>
+            </div>
+            <label id="labSchemaWrap" hidden>Esquema JSON (opcional)<textarea id="labSchema" rows="4" placeholder='{"type":"object","properties":{"titulo":{"type":"string"}},"required":["titulo"]}'></textarea></label>
+            <div class="lab-acoes">
+              <button type="button" class="btn-ghost lab-primario" id="labRodar">▶ Executar</button>
+              <button type="button" class="btn-ghost" id="labSalvar">💾 Salvar na galeria</button>
+              <button type="button" class="btn-ghost" id="labLimpar">Limpar</button>
+            </div>
+            <p class="lab-aviso">Ctrl+Enter executa. Cada execução usa a chave paga, conta no gasto do mês e tem um limite por hora.</p>
+          </div>
+          <div class="lab-saida" id="labSaida"><p class="dash-empty">O resultado aparece aqui.</p></div>
+        </div>
       </section>
 
       <section class="wpp-view glass" id="whatsappView" hidden>

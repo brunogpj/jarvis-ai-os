@@ -9841,3 +9841,29 @@ function dashboardSaude(token) {
     return _saudeMontar({ agora: Date.now(), hb: Heartbeat.status(), diario: Heartbeat.diario(), triggers: triggers, ub: ub, eventos: eventos, drive: drive });
   } catch (e) { return { ok: false, erro: 'Não consegui montar a saúde do sistema: ' + e.message }; }
 }
+
+
+/* ===================== LABORATÓRIO e AUTOMAÇÕES (16/10) — ver Laboratorio.js ===================== */
+function laboratorioConfig(token) {
+  if (!_dashDono(token)) return { ok: false, erro: 'Apenas o proprietário pode usar o Laboratório.' };
+  return Laboratorio.config();
+}
+function laboratorioExecutar(token, req) {
+  if (!_dashDono(token)) return { ok: false, erro: 'Apenas o proprietário pode usar o Laboratório.' };
+  var r = Laboratorio.executar(req);
+  try { if (typeof Jarvis !== 'undefined' && Jarvis.registrarEvento) Jarvis.registrarEvento({ tool: 'laboratorio:executar', ok: !!r.ok, ms: r.ms || 0, resumo: (r.ok ? (r.modelo || '') : String(r.erro || '').slice(0, 80)) + ' [texto não registrado]' }); } catch (e) {}
+  return r;
+}
+function automacoesListar(token) {
+  if (!_dashDono(token)) return { ok: false, erro: 'Apenas o proprietário pode ver as automações.' };
+  var l = Laboratorio.listarAutomacoes();
+  return { ok: true, base: l.base, minhas: l.minhas, modelos: Laboratorio.modelosPermitidos() };
+}
+function automacaoSalvar(token, a) {
+  if (!_dashDono(token)) return { ok: false, erro: 'Apenas o proprietário pode salvar automações.' };
+  return Laboratorio.salvarAutomacao(a);
+}
+function automacaoExcluir(token, id) {
+  if (!_dashDono(token)) return { ok: false, erro: 'Apenas o proprietário pode excluir automações.' };
+  return Laboratorio.excluirAutomacao(id);
+}

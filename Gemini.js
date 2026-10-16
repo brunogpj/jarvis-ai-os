@@ -122,6 +122,11 @@ var Gemini = (function () {
     throw new Error('Gemini indisponível em todas as chaves:\n' + erros.join('\n') + ctx);
   }
 
+  /** Laboratório (16/10): UM modelo escolhido pelo dono, com as ferramentas nativas e o `_thinking` já no payload. Mesma cascata de chaves e o mesmo registro de gasto do resto. → {data, model, tier} */
+  function gerarComModelo(payload, modelo) {
+    return _fetchComCascata('laboratorio', _comThinking(payload, modelo), [modelo]);
+  }
+
   /**
    * Gera uma IMAGEM a partir de um prompt (modelo "nano banana" = gemini-2.5-flash-image).
    * Usa a chave de FATURAMENTO (GEMINI_API_KEY) — o free tier costuma recusar image-gen.
@@ -524,7 +529,7 @@ var Gemini = (function () {
     return null;
   }
 
-  return { gerar: gerar, temChave: temChave, gerarImagem: gerarImagem, pesquisarWeb: pesquisarWeb, pesquisarWebVarias: pesquisarWebVarias, registrarUso: registrarUso, chaveDireta: chaveDireta, lerUrl: lerUrl, embeddar: embeddar, gerarTextoFallback: gerarTextoFallback };
+  return { gerar: gerar, gerarComModelo: gerarComModelo, temChave: temChave, gerarImagem: gerarImagem, pesquisarWeb: pesquisarWeb, pesquisarWebVarias: pesquisarWebVarias, registrarUso: registrarUso, chaveDireta: chaveDireta, lerUrl: lerUrl, embeddar: embeddar, gerarTextoFallback: gerarTextoFallback };
 })();
 
 /** Diagnóstico do MODO RESERVA: testa os provedores alternativos (Anthropic/OpenRouter/NVIDIA). Rode no editor. */

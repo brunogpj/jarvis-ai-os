@@ -1407,6 +1407,8 @@
         chat:        ["Chat IA", "Assistente · Soft Web App Application"],
         dashboard:   ["Dashboard", "Visão geral do seu dia"],
         dispositivo: ["Dispositivo", "Controle do seu Android"],
+        automacoes:  ["Automações", "Fluxos prontos e os seus"],
+        laboratorio: ["Laboratório", "Teste modelos e ferramentas do Gemini"],
         whatsapp:    ["WhatsApp", "Conexões da sua instância"]
       };
       function setViewHeading(v) {
@@ -1421,7 +1423,10 @@
         if (!chatSection || !whatsappView) return;
         var dash = document.getElementById("dashboardView");
         var disp = document.getElementById("dispositivoView");
-        chatSection.style.display = (v === "whatsapp" || v === "dashboard" || v === "dispositivo") ? "none" : "";
+        chatSection.style.display = (v === "whatsapp" || v === "dashboard" || v === "dispositivo" || v === "automacoes" || v === "laboratorio") ? "none" : "";
+        var aut = document.getElementById("automacoesView"), lab = document.getElementById("laboratorioView");
+        if (aut) aut.hidden = (v !== "automacoes");
+        if (lab) lab.hidden = (v !== "laboratorio");
         whatsappView.hidden = (v !== "whatsapp");
         if (dash) dash.hidden = (v !== "dashboard");
         if (disp) {
@@ -1763,6 +1768,178 @@
         el.querySelectorAll("[data-q]").forEach(function (x) { x.addEventListener("click", function (ev) { ev.stopPropagation(); perguntarAoJarvis(x.getAttribute("data-q")); }); });
       }
       /*DASH_CS_FIM*/
+      /*LAB_INI*/
+      /* ===== 🧪 LABORATÓRIO e ⚡ AUTOMAÇÕES (16/10) ===== */
+      var labCfg = null, labUltimaReq = null;
+      var LAB_PRESETS = [
+        { nome: "Resumir", sistema: "Você resume textos em português, em até 4 linhas, sem inventar nada.", prompt: "Resuma o texto abaixo:\n\n(cole o texto aqui)", busca: false },
+        { nome: "Extrair JSON", sistema: "", prompt: "Extraia nome, valor e data deste texto: \"Paguei R$ 89,90 ao João em 12/10.\"", json: true, schema: '{"type":"object","properties":{"nome":{"type":"string"},"valor":{"type":"number"},"data":{"type":"string"}},"required":["nome","valor","data"]}' },
+        { nome: "Com busca na web", sistema: "Responda em português e cite a data das fontes.", prompt: "Qual a cotação atual do dólar e o que mexeu nela esta semana?", busca: true },
+        { nome: "Cálculo com código", sistema: "", prompt: "Qual o total de 12 aportes mensais de R$ 500 a 0,8% ao mês, com o aporte no fim de cada mês?", codigo: true },
+        { nome: "Ler uma página", sistema: "", prompt: "Resuma em 3 pontos o que diz esta página: https://ai.google.dev/gemini-api/docs/live-api", url: true }
+      ];
+      function abrirLaboratorio(depois) {
+        showView("laboratorio");
+        if (labCfg) { if (depois) depois(); return; }
+        google.script.run.withSuccessHandler(function (c) {
+          if (!c || !c.ok) { document.getElementById("labSaida").innerHTML = '<p class="dash-empty">⚠️ ' + escapeHtml((c && c.erro) || "Não consegui abrir o Laboratório.") + '</p>'; return; }
+          labCfg = c;
+          ["labModeloA", "labModeloB"].forEach(function (id) {
+            var s = document.getElementById(id); s.innerHTML = c.modelos.map(function (m) { return '<option value="' + escapeHtml(m) + '">' + escapeHtml(m) + '</option>'; }).join("");
+          });
+          if (c.padrao) document.getElementById("labModeloA").value = c.padrao;
+          if (c.modelos.length > 1) document.getElementById("labModeloB").value = c.modelos.filter(function (m) { return m !== c.padrao; })[0] || c.modelos[0];
+          if (depois) depois();
+        }).withFailureHandler(function (e) { document.getElementById("labSaida").innerHTML = '<p class="dash-empty">⚠️ ' + escapeHtml(e && e.message) + '</p>'; }).laboratorioConfig(authToken);
+      }
+      function labForm() {
+        var v = function (id) { return document.getElementById(id); };
+        return { modelo: v("labModeloA").value, prompt: v("labPrompt").value, sistema: v("labSistema").value, temperatura: Number(v("labTemp").value), pensamento: v("labPensar").value, maxTokens: Number(v("labMaxTok").value),
+                 ferramentas: { busca: v("labBusca").checked, url: v("labUrl").checked, codigo: v("labCodigo").checked }, json: v("labJson").checked, schema: v("labSchema").value };
+      }
+      function labPreencher(c, prompt) {
+        var v = function (id) { return document.getElementById(id); };
+        c = c || {};
+        if (c.modelo && labCfg && labCfg.modelos.indexOf(c.modelo) !== -1) v("labModeloA").value = c.modelo;
+        v("labSistema").value = c.sistema || ""; v("labPrompt").value = prompt != null ? prompt : (c.prompt || "");
+        v("labTemp").value = c.temperatura != null ? c.temperatura : 1; v("labTempVal").textContent = v("labTemp").value;
+        v("labPensar").value = c.pensamento || "padrao"; v("labMaxTok").value = String(c.maxTokens || 1024);
+        var f = c.ferramentas || {}; v("labBusca").checked = !!(f.busca || c.busca); v("labUrl").checked = !!(f.url || c.url); v("labCodigo").checked = !!(f.codigo || c.codigo);
+        v("labJson").checked = !!c.json; v("labSchema").value = c.schema || ""; v("labSchemaWrap").hidden = !c.json; labAjustarFerr();
+      }
+      function labAjustarFerr() {
+        var v = function (id) { return document.getElementById(id); }, json = v("labJson").checked, ferr = v("labBusca").checked || v("labUrl").checked || v("labCodigo").checked;
+        v("labSchemaWrap").hidden = !json;
+        ["labBusca", "labUrl", "labCodigo"].forEach(function (id) { v(id).disabled = json; });
+        v("labJson").disabled = ferr;
+      }
+      function labTextoHtml(s) {
+        var partes = String(s || "").split("```"), h = "";
+        partes.forEach(function (p, i) {
+          if (i % 2) h += '<pre class="lab-code">' + escapeHtml(p.replace(/^[a-zA-Z0-9_+-]*\n/, "")) + '</pre>';
+          else if (p.trim()) h += mdSeguro(p);   // a resposta de um modelo quase sempre vem em markdown: negrito, listas, títulos
+        });
+        return h;
+      }
+      function labRender(el, r, titulo) {
+        if (!r || !r.ok) { el.innerHTML = '<div class="lab-res__head"><b>' + escapeHtml(titulo) + '</b></div><p class="dash-empty">⚠️ ' + escapeHtml((r && r.erro) || "Falhou.") + '</p>'; return; }
+        var corpo = (r.partes || []).map(function (p) {
+          if (p.t === "texto" && r.jsonValido === true) { var bonito = p.v; try { bonito = JSON.stringify(JSON.parse(p.v), null, 2); } catch (e) {} return '<pre class="lab-code">' + escapeHtml(bonito) + '</pre>'; }
+          if (p.t === "texto") return labTextoHtml(p.v);
+          if (p.t === "codigo") return '<div class="lab-rot">Código executado (' + escapeHtml(p.lang) + ')</div><pre class="lab-code">' + escapeHtml(p.v) + '</pre>';
+          return '<div class="lab-rot">Resultado da execução' + (p.ok ? "" : " (com erro)") + '</div><pre class="lab-code">' + escapeHtml(p.v) + '</pre>';
+        }).join("");
+        var u = r.uso || {}, meta = [escapeHtml(r.modelo || ""), r.tier ? escapeHtml(r.tier) : "", fmtMs(r.ms || 0), u.entrada + " ↓ / " + u.saida + " ↑" + (u.pensamento ? " / " + u.pensamento + " pensando" : "") + " tokens", r.custoBRL != null ? "≈ R$ " + (r.custoBRL < 0.1 ? Number(r.custoBRL).toFixed(4) : Number(r.custoBRL).toFixed(2)).replace(".", ",") : ""].filter(Boolean).join(" · ");
+        var fontes = (r.fontes || []).filter(function (f) { return /^https?:\/\//.test(f.url); }).map(function (f) { return '<li><a href="' + escapeHtml(f.url) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(f.titulo) + '</a></li>'; }).join("");
+        var urls = (r.urls || []).map(function (u2) { return '<li>' + escapeHtml(u2.url) + ' <small>' + escapeHtml(u2.status) + '</small></li>'; }).join("");
+        el.innerHTML = '<div class="lab-res__head"><b>' + escapeHtml(titulo) + '</b>' + (r.jsonValido === true ? '<span class="fin-chip ok">JSON válido</span>' : (r.jsonValido === false ? '<span class="fin-chip bad">JSON inválido</span>' : "")) +
+          '<button type="button" class="dash-card-btn lab-copiar" title="Copiar o texto">📋</button></div><div class="lab-corpo">' + corpo + '</div>' +
+          ((r.buscas || []).length ? '<div class="lab-rot">Buscas feitas: ' + r.buscas.map(escapeHtml).join(" · ") + '</div>' : "") +
+          (fontes ? '<div class="lab-rot">Fontes</div><ul class="fin-lista">' + fontes + '</ul>' : "") + (urls ? '<div class="lab-rot">URLs lidas</div><ul class="fin-lista">' + urls + '</ul>' : "") +
+          '<div class="dash-card__sub">' + meta + (r.fim && r.fim !== "STOP" ? ' · fim: ' + escapeHtml(r.fim) : "") + '</div>';
+        var cp = el.querySelector(".lab-copiar");
+        if (cp) cp.addEventListener("click", function () { try { navigator.clipboard.writeText(r.texto || "").then(function () { toast("📋 Copiado"); }, function () { toast("⚠️ Não consegui copiar"); }); } catch (e) { toast("⚠️ Não consegui copiar"); } });
+      }
+      function labExecutar() {
+        var req = labForm(); if (!req.prompt.trim()) { toast("Escreva um pedido."); return; }
+        var btn = document.getElementById("labRodar"), saida = document.getElementById("labSaida"), comparar = document.getElementById("labComparar").checked;
+        labUltimaReq = req;
+        btn.disabled = true; btn.textContent = "Executando…";
+        var slots = [{ req: req, titulo: comparar ? "A · " + req.modelo : req.modelo }];
+        if (comparar) { var b = JSON.parse(JSON.stringify(req)); b.modelo = document.getElementById("labModeloB").value; slots.push({ req: b, titulo: "B · " + b.modelo }); }
+        saida.className = "lab-saida" + (comparar ? " lab-dupla" : "");
+        saida.innerHTML = slots.map(function () { return '<div class="lab-res"><p class="dash-empty">Executando…</p></div>'; }).join("");
+        var feitos = 0, els = saida.querySelectorAll(".lab-res");
+        slots.forEach(function (s, i) {
+          google.script.run.withSuccessHandler(function (r) { labRender(els[i], r, s.titulo); if (++feitos === slots.length) { btn.disabled = false; btn.textContent = "▶ Executar"; } })
+            .withFailureHandler(function (e) { labRender(els[i], { ok: false, erro: e && e.message }, s.titulo); if (++feitos === slots.length) { btn.disabled = false; btn.textContent = "▶ Executar"; } })
+            .laboratorioExecutar(authToken, s.req);
+        });
+      }
+      function labSalvarGaleria() {
+        var req = labForm(); if (!req.prompt.trim()) { toast("Escreva um pedido antes de salvar."); return; }
+        var nome = prompt("Nome da automação:", req.prompt.trim().slice(0, 40)); if (!nome) return;
+        var cfg = { modelo: req.modelo, sistema: req.sistema, temperatura: req.temperatura, pensamento: req.pensamento, maxTokens: req.maxTokens, ferramentas: req.ferramentas, json: req.json, schema: req.schema };
+        google.script.run.withSuccessHandler(function (r) { toast(r && r.ok ? "💾 Salva na galeria de Automações" : "⚠️ " + ((r && r.erro) || "Falhou")); })
+          .withFailureHandler(function (e) { toast("⚠️ " + (e && e.message)); })
+          .automacaoSalvar(authToken, { nome: nome, icone: "🧪", desc: req.modelo + (req.ferramentas.busca ? " · busca" : "") + (req.json ? " · JSON" : ""), tipo: "lab", texto: req.prompt, config: cfg });
+      }
+      function wireLaboratorio() {
+        var v = function (id) { return document.getElementById(id); };
+        if (!v("labRodar") || v("labRodar").getAttribute("data-w")) return; v("labRodar").setAttribute("data-w", "1");
+        v("labPresets").innerHTML = LAB_PRESETS.map(function (p, i) { return '<button type="button" class="fin-filtro" data-p="' + i + '">' + escapeHtml(p.nome) + '</button>'; }).join("");
+        v("labPresets").querySelectorAll("[data-p]").forEach(function (b) { b.addEventListener("click", function () { labPreencher(LAB_PRESETS[Number(b.getAttribute("data-p"))]); }); });
+        v("labTemp").addEventListener("input", function () { v("labTempVal").textContent = v("labTemp").value; });
+        v("labComparar").addEventListener("change", function () { v("labModeloBWrap").hidden = !v("labComparar").checked; });
+        ["labJson", "labBusca", "labUrl", "labCodigo"].forEach(function (id) { v(id).addEventListener("change", labAjustarFerr); });
+        v("labRodar").addEventListener("click", labExecutar); v("labSalvar").addEventListener("click", labSalvarGaleria);
+        v("labLimpar").addEventListener("click", function () { labPreencher({}, ""); v("labSaida").className = "lab-saida"; v("labSaida").innerHTML = '<p class="dash-empty">O resultado aparece aqui.</p>'; });
+        v("labPrompt").addEventListener("keydown", function (e) { if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); labExecutar(); } });
+      }
+
+      /* --- Automações --- */
+      var autDados = null, autEditandoId = "", autEditandoLab = null;
+      function carregarAutomacoes() {
+        var g = document.getElementById("autGrid"); if (!g) return;
+        g.innerHTML = '<div class="conv-empty">Carregando…</div>';
+        google.script.run.withSuccessHandler(function (d) {
+          if (!d || !d.ok) { g.innerHTML = '<div class="conv-empty">⚠️ ' + escapeHtml((d && d.erro) || "Falha ao carregar.") + '</div>'; return; }
+          autDados = d; renderAutomacoes();
+        }).withFailureHandler(function (e) { g.innerHTML = '<div class="conv-empty">⚠️ ' + escapeHtml(e && e.message) + '</div>'; }).automacoesListar(authToken);
+      }
+      function autCard(a, propria) {
+        var sel = (a.tipo === "lab") ? "Laboratório" : "Chat do Jarvis";
+        return '<div class="aut-card" data-id="' + escapeHtml(a.id) + '"><div class="aut-card__topo"><span class="aut-card__icone">' + escapeHtml(a.icone || "⚡") + '</span><b>' + escapeHtml(a.nome) + '</b></div>' +
+          '<p>' + escapeHtml(a.desc || a.texto.slice(0, 110)) + '</p><div class="aut-card__selos"><span class="fin-chip mute">' + sel + '</span>' + (a.semIA ? '<span class="fin-chip ok">sem IA</span>' : "") + '</div>' +
+          '<div class="aut-card__acoes"><button type="button" class="dash-card-btn" data-a="run">▶ Executar</button><button type="button" class="dash-card-btn" data-a="dup">⎘ Duplicar</button>' +
+          (propria ? '<button type="button" class="dash-card-btn" data-a="edit">✎ Editar</button><button type="button" class="dash-card-btn" data-a="del">🗑</button>' : "") + '</div></div>';
+      }
+      function renderAutomacoes() {
+        var g = document.getElementById("autGrid"), d = autDados; if (!g || !d) return;
+        var grupos = {}; d.base.forEach(function (a) { (grupos[a.grupo || "Prontas"] = grupos[a.grupo || "Prontas"] || []).push(a); });
+        var h = '<div class="aut-secao">Minhas (' + d.minhas.length + ')</div>' + (d.minhas.length ? '<div class="aut-cards">' + d.minhas.map(function (a) { return autCard(a, true); }).join("") + '</div>' : '<p class="dash-empty">Você ainda não criou nenhuma. Use <b>+ Nova automação</b>, duplique uma pronta ou salve um pedido do Laboratório.</p>');
+        Object.keys(grupos).forEach(function (k) { h += '<div class="aut-secao">Prontas · ' + escapeHtml(k) + '</div><div class="aut-cards">' + grupos[k].map(function (a) { return autCard(a, false); }).join("") + '</div>'; });
+        g.innerHTML = h;
+        g.querySelectorAll(".aut-card").forEach(function (c) {
+          var id = c.getAttribute("data-id"), todas = d.base.concat(d.minhas), a = todas.filter(function (x) { return x.id === id; })[0];
+          c.querySelectorAll("[data-a]").forEach(function (b) { b.addEventListener("click", function (ev) { ev.stopPropagation(); autAcao(b.getAttribute("data-a"), a); }); });
+        });
+      }
+      function autAcao(acao, a) {
+        if (!a) return;
+        if (acao === "run") {
+          if (a.tipo === "lab") abrirLaboratorio(function () { var c = JSON.parse(JSON.stringify(a.config || {})); labPreencher(c, a.texto); document.getElementById("labComparar").checked = false; document.getElementById("labModeloBWrap").hidden = true; labExecutar(); });
+          else perguntarAoJarvis(a.texto);
+        } else if (acao === "dup") autEditor({ id: "", nome: a.nome + " (cópia)", icone: a.icone, desc: a.desc, texto: a.texto, tipo: a.tipo, config: a.config });
+        else if (acao === "edit") autEditor(a);
+        else if (acao === "del") {
+          if (!confirm('Excluir a automação "' + a.nome + '"?')) return;
+          google.script.run.withSuccessHandler(function (r) { toast(r && r.ok ? "🗑 Excluída" : "⚠️ " + ((r && r.erro) || "Falhou")); carregarAutomacoes(); })
+            .withFailureHandler(function (e) { toast("⚠️ " + (e && e.message)); }).automacaoExcluir(authToken, a.id);
+        }
+      }
+      function autEditor(a) {
+        var f = document.getElementById("autEditor"), v = function (id) { return document.getElementById(id); };
+        autEditandoId = (a && a.id) || ""; autEditandoLab = (a && a.tipo === "lab") ? (a.config || null) : null;
+        v("autIcone").value = (a && a.icone) || "⚡"; v("autNome").value = (a && a.nome) || ""; v("autDesc").value = (a && a.desc) || ""; v("autTexto").value = (a && a.texto) || "";
+        v("autNotaLab").hidden = !autEditandoLab; v("autTextoRotulo").textContent = autEditandoLab ? "Pedido do Laboratório" : "O que o Jarvis deve fazer";
+        f.hidden = false; v("autNome").focus(); f.scrollIntoView({ block: "nearest" });
+      }
+      function wireAutomacoes() {
+        var f = document.getElementById("autEditor"); if (!f || f.getAttribute("data-w")) return; f.setAttribute("data-w", "1");
+        document.getElementById("autNova").addEventListener("click", function () { autEditor(null); });
+        document.getElementById("autCancelar").addEventListener("click", function () { f.hidden = true; });
+        f.addEventListener("submit", function (ev) {
+          ev.preventDefault();
+          var v = function (id) { return document.getElementById(id).value; }, btn = document.getElementById("autSalvar");
+          var a = { id: autEditandoId, nome: v("autNome"), icone: v("autIcone"), desc: v("autDesc"), texto: v("autTexto"), tipo: autEditandoLab ? "lab" : "chat" };
+          if (autEditandoLab) a.config = autEditandoLab;
+          btn.disabled = true; var rotuloBtn = btn.textContent; btn.textContent = "Salvando…";
+          google.script.run.withSuccessHandler(function (r) { btn.disabled = false; btn.textContent = rotuloBtn; if (r && r.ok) { f.hidden = true; toast("💾 Salva"); carregarAutomacoes(); } else toast("⚠️ " + ((r && r.erro) || "Falhou")); })
+            .withFailureHandler(function (e) { btn.disabled = false; btn.textContent = rotuloBtn; toast("⚠️ " + (e && e.message)); }).automacaoSalvar(authToken, a);
+        });
+      }
+      /*LAB_FIM*/
 
       /* ===== 🔔 ALERTAS DE VOZ (card interativo no Dashboard) ===== */
       function toast(msg) {
@@ -2746,6 +2923,9 @@
           .wppApontarWebhook(authToken, wppInstName || "");
       }
 
+      var automacoesNav = document.getElementById("automacoesNav"), laboratorioNav = document.getElementById("laboratorioNav");
+      if (automacoesNav) automacoesNav.addEventListener("click", function () { setNavActive(automacoesNav); showView("automacoes"); wireAutomacoes(); carregarAutomacoes(); if (window.innerWidth <= 860) closeMobile(); });
+      if (laboratorioNav) laboratorioNav.addEventListener("click", function () { setNavActive(laboratorioNav); wireLaboratorio(); abrirLaboratorio(); if (window.innerWidth <= 860) closeMobile(); });
       if (whatsappNav) whatsappNav.addEventListener("click", function () { setNavActive(whatsappNav); showView("whatsapp"); loadWppInstancias(); if (window.innerWidth <= 860) closeMobile(); });
       if (wppRefreshBtn) wppRefreshBtn.addEventListener("click", loadWppInstancias);
       if (wppWebhookBtn) wppWebhookBtn.addEventListener("click", ativarBotWpp);

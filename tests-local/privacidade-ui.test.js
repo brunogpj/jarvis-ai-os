@@ -33,7 +33,9 @@ test('Privacidade: cada seletor borrado corresponde a uma classe/id que a interf
     'conv-list': function () { return /class="conv-list"/.test(HTML); },
     'who': function () { return /class="who"/.test(HTML); },
     'popover__head': function () { return /class="popover__head"/.test(HTML); },
-    'wpp-instances': function () { return /class="wpp-instances"/.test(HTML); }
+    'wpp-instances': function () { return /class="wpp-instances"/.test(HTML); },
+    'lab-saida': function () { return /id="labSaida"/.test(HTML) && /lab-saida/.test(JS); },
+    'aut-card': function () { return /class="aut-card"/.test(JS); }
   };
   Object.keys(existe).forEach(function (k) {
     assert.ok(b.indexOf(k) !== -1, 'o CSS borra ' + k);

@@ -1544,6 +1544,7 @@
         wireRevisaoCard(cards);
         wireProvedoresCard(cards);
         montarCardsFinNotif(cards);   // Finanças e Notificações: carregam sozinhos, no topo
+        montarCardsCustosSaude(cards); // Custos de IA e Saúde do sistema: logo abaixo, cada um com a sua chamada
 
         /* subtítulo (agregado) abaixo do título de um card identificado pelo seu data-ask */
         function subDoCard(ask, texto) {
@@ -1677,6 +1678,91 @@
         }); });
       }
       /*DASH_FIN_FIM*/
+      /*DASH_CS_INI*/
+      /* ===== 🤖 CUSTOS DE IA e 🩺 SAÚDE DO SISTEMA (cartões do Dashboard, 16/10) — cada um com a sua chamada ===== */
+      function montarCardsCustosSaude(cards) {
+        ["dashCustosCard", "dashSaudeCard"].forEach(function (id) { var o = document.getElementById(id); if (o) o.remove(); });
+        var ancora = document.getElementById("dashNotifCard");
+        function criar(id, icone, titulo) {
+          var c = document.createElement("div"); c.className = "dash-card dash-card--info dash-wide"; c.id = id;
+          c.innerHTML = '<div class="dash-card__head"><span class="dash-card__icon">' + icone + '</span><h3>' + titulo + '</h3></div><p class="dash-empty">Carregando…</p>';
+          if (ancora && ancora.nextSibling) cards.insertBefore(c, ancora.nextSibling); else cards.insertBefore(c, cards.firstChild);
+          return c;
+        }
+        var s = criar("dashSaudeCard", "🩺", "Saúde do sistema");
+        var c = criar("dashCustosCard", "🤖", "Custos de IA");
+        carregarCardCustos(); carregarCardSaude();
+      }
+      function carregarCardCustos() {
+        var el = document.getElementById("dashCustosCard"); if (!el || !hasBackend || !authToken) return;
+        google.script.run.withSuccessHandler(function (d) { renderCardCustos(el, d); })
+          .withFailureHandler(function (e) { renderCardCustos(el, { ok: false, erro: e && e.message }); }).dashboardCustos(authToken);
+      }
+      function rotuloModelo(m) { return String(m || "—").replace(/^gemini-/, ""); }
+      function renderCardCustos(el, d) {
+        var refresh = '<button type="button" class="dash-card-btn" id="csRefresh" title="Atualizar">↻</button>';
+        if (!d || !d.ok) { el.innerHTML = '<div class="dash-card__head"><span class="dash-card__icon">🤖</span><h3>Custos de IA</h3>' + refresh + '</div><p class="dash-empty">⚠️ ' + escapeHtml((d && d.erro) || "Não consegui carregar.") + '</p>'; wireRefresh(el, "#csRefresh", function () { carregarCardCustos(); }); return; }
+        var chip = { ok: ["ok", "dentro do teto"], atencao: ["warn", "no ritmo, passa do teto"], esgotado: ["bad", "teto atingido: faturamento pausado"] }[d.status] || ["mute", ""];
+        var pct = Math.min(100, d.tetoBRL > 0 ? d.gastoBRL / d.tetoBRL * 100 : 0), pProj = Math.min(100, d.tetoBRL > 0 ? d.projecaoBRL / d.tetoBRL * 100 : 0);
+        var barra = '<div class="cs-barra" title="gasto, projeção e marcas de 50%, 80% e 100% do teto"><div class="cs-proj" style="width:' + pProj + '%"></div><div class="cs-gasto ' + chip[0] + '" style="width:' + pct + '%"></div>' +
+          '<i style="left:50%"></i><i style="left:80%"></i></div><div class="cs-legenda"><span>R$ 0</span><span>50%</span><span>80%</span><span>teto ' + brlFmt(d.tetoBRL) + '</span></div>';
+        function kpi(r, v, s) { return '<div class="fin-kpi"><span>' + r + '</span><b>' + v + '</b>' + (s ? '<small>' + s + '</small>' : '') + '</div>'; }
+        var k = '<div class="fin-kpis">' + kpi("Gasto no mês", brlFmt(d.gastoBRL), String(d.pct).replace(".", ",") + "% do teto") +
+          kpi("Projeção do mês", brlFmt(d.projecaoBRL), "média " + brlFmt(d.mediaDia) + " por dia") +
+          kpi("Chamadas", String(d.chamadas), d.buscas + " buscas na web") +
+          (d.diasAteTeto != null ? kpi("Dias até o teto", String(d.diasAteTeto), "no ritmo de hoje") : kpi("Mês anterior", d.mesAnterior ? brlFmt(d.mesAnterior.brl) : "—", d.mesAnterior ? escapeHtml(d.mesAnterior.mes) : "")) + '</div>';
+        var linhas = (d.porModelo || []).map(function (m) {
+          return '<tr><td>' + escapeHtml(rotuloModelo(m.modelo)) + '</td><td class="num">' + m.chamadas + '</td><td class="num">' + brlFmt(m.brl) + '</td>' +
+                 '<td><div class="cs-mini"><div style="width:' + Math.min(100, m.pct) + '%"></div></div><small>' + String(m.pct).replace(".", ",") + '%</small></td></tr>';
+        }).join("");
+        var md = d.modelos || {}, cfg = [["Agente", md.agente], ["Reserva", md.reserva], ["Busca", md.busca], ["Voz", md.voz], ["Imagem", md.imagem]].filter(function (x) { return x[1]; })
+          .map(function (x) { return escapeHtml(x[0]) + ": <b>" + escapeHtml(rotuloModelo(x[1])) + "</b>"; }).join(" · ");
+        el.innerHTML = '<div class="dash-card__head"><span class="dash-card__icon">🤖</span><h3>Custos de IA · ' + escapeHtml(d.mes || "") + '</h3><span class="fin-chip ' + chip[0] + '">' + escapeHtml(chip[1]) + '</span>' + refresh + '</div>' +
+          barra + k +
+          '<div class="fin-sub">Por modelo</div>' + (linhas ? '<div class="md-tab"><table class="cs-tab"><thead><tr><th>Modelo</th><th class="num">Chamadas</th><th class="num">Gasto</th><th>Parte</th></tr></thead><tbody>' + linhas + '</tbody></table></div>' : '<p class="dash-empty">Nenhuma chamada paga neste mês.</p>') +
+          '<div class="dash-card__sub">' + cfg + '</div>' +
+          '<div class="dash-card__sub">Estimativa do Jarvis (tokens × tabela de preços, câmbio ' + String(d.cambio).replace(".", ",") + '), não a fatura. ' +
+          (d.travaAtiva ? "Ao atingir o teto a chave paga sai da cascata até o mês virar." : "A trava do teto está DESLIGADA.") + '</div>';
+        wireRefresh(el, "#csRefresh", function () { carregarCardCustos(); });
+      }
+
+      function carregarCardSaude() {
+        var el = document.getElementById("dashSaudeCard"); if (!el || !hasBackend || !authToken) return;
+        google.script.run.withSuccessHandler(function (d) { renderCardSaude(el, d); })
+          .withFailureHandler(function (e) { renderCardSaude(el, { ok: false, erro: e && e.message }); }).dashboardSaude(authToken);
+      }
+      function fmtMs(ms) { return ms >= 1000 ? (Math.round(ms / 100) / 10).toString().replace(".", ",") + " s" : ms + " ms"; }
+      function wireRefresh(el, sel, fn) { var b = el.querySelector(sel); if (b) b.addEventListener("click", function (ev) { ev.stopPropagation(); b.disabled = true; b.textContent = "…"; fn(); }); }
+      function renderCardSaude(el, d) {
+        var refresh = '<button type="button" class="dash-card-btn" id="shRefresh" title="Atualizar">↻</button>';
+        if (!d || !d.ok) { el.innerHTML = '<div class="dash-card__head"><span class="dash-card__icon">🩺</span><h3>Saúde do sistema</h3>' + refresh + '</div><p class="dash-empty">⚠️ ' + escapeHtml((d && d.erro) || "Não consegui carregar.") + '</p>'; wireRefresh(el, "#shRefresh", function () { carregarCardSaude(); }); return; }
+        var nv = { ok: ["ok", "tudo em dia"], atencao: ["warn", "atenção"], critico: ["bad", "crítico"] }[d.nivel] || ["mute", ""];
+        var al = (d.alertas || []).map(function (a) { return '<li>' + escapeHtml(a) + '</li>'; }).join("");
+        var jobs = (d.jobs || []).map(function (j) {
+          var cl = j.atrasado ? "bad" : (j.ativo ? "ok" : "mute"), txt = j.atrasado ? "atrasado" : (j.ativo ? "em dia" : "inativo");
+          return '<li><span class="fin-chip ' + cl + '">' + txt + '</span> ' + escapeHtml(j.nome) + ' <small>' + (j.idadeMin != null ? "última batida há " + j.idadeMin + " min (limite " + j.limiteMin + ")" : "sem batida") + (j.temTrigger ? "" : " · sem gatilho") + '</small></li>';
+        }).join("");
+        var gat = (d.gatilhos || []).map(function (g) {
+          return '<tr><td>' + escapeHtml(g.nome) + '</td><td class="num">' + g.n + '</td><td class="num">' + fmtMs(g.mediaMs) + '</td><td class="num' + (g.maxMs > 200000 ? " neg" : "") + '">' + fmtMs(g.maxMs) + (g.maxEm ? ' <small>' + escapeHtml(g.maxEm) + '</small>' : '') + '</td><td class="num' + (g.erros ? " neg" : "") + '">' + g.erros + '</td></tr>';
+        }).join("");
+        var b = d.briefing || {}, bl = [];
+        if (b.ultimo) bl.push('Último briefing falado: <b>' + escapeHtml(b.ultimo.tag || "briefing") + '</b>, ' + escapeHtml(b.ultimo.quando) + ' (' + b.ultimo.caracteres + ' caracteres)');
+        if (b.ultimoInicio) bl.push('Última coleta: ' + escapeHtml(b.ultimoInicio.quando) + (b.ultimoInicio.duracaoS != null ? ', levou <b>' + b.ultimoInicio.duracaoS + ' s</b>' : (b.semTerminar ? ' — <b class="neg">não terminou</b>' : ' — em andamento')));
+        if (!bl.length) bl.push("Nenhum briefing registrado ainda.");
+        var dr = d.drive ? 'Busca no Drive: <b>' + d.drive.indexados + '</b> arquivos' + (d.drive.soPeloNome ? " (" + d.drive.soPeloNome + " só pelo nome)" : "") + (d.drive.ativa ? ", ligada" : ", desligada") + (d.drive.varreduraEmAndamento ? ", varrendo" : "") : "";
+        var er = d.erros24h && d.erros24h.total ? d.erros24h.total + " falhas em 24 h (" + d.erros24h.top.map(function (e) { return escapeHtml(e.tool) + " " + e.n; }).join(", ") + ")" : "nenhuma falha em 24 h ✅";
+        el.innerHTML = '<div class="dash-card__head"><span class="dash-card__icon">🩺</span><h3>Saúde do sistema</h3><span class="fin-chip ' + nv[0] + '">' + nv[1] + '</span>' + refresh + '</div>' +
+          (al ? '<ul class="fin-lista sh-alertas">' + al + '</ul>' : '') +
+          '<div class="fin-cols"><div><div class="fin-sub">Gatilhos monitorados (' + d.instalados + ' instalados)</div><ul class="fin-lista">' + jobs + '</ul></div>' +
+          '<div><div class="fin-sub">Briefing</div><ul class="fin-lista"><li>' + bl.join('</li><li>') + '</li></ul></div></div>' +
+          '<div class="fin-sub" style="margin-top:12px">Execuções de hoje · orçamento de gatilhos usado: <b>' + String(d.orcamento.pct).replace(".", ",") + '%</b> de ≈ 90 min</div>' +
+          (gat ? '<div class="md-tab"><table class="cs-tab"><thead><tr><th>Gatilho</th><th class="num">Vezes</th><th class="num">Média</th><th class="num">Pico</th><th class="num">Erros</th></tr></thead><tbody>' + gat + '</tbody></table></div>' : '<p class="dash-empty">Nenhuma execução registrada hoje.</p>') +
+          '<div class="dash-card__sub">' + (dr ? dr + ' · ' : '') + er + '</div>' +
+          '<div class="fin-acoes"><button type="button" class="dash-card-btn" data-q="Execute a automação: Relatório de Atividade">🧾 Relatório de atividade (24 h)</button></div>';
+        wireRefresh(el, "#shRefresh", function () { carregarCardSaude(); });
+        el.querySelectorAll("[data-q]").forEach(function (x) { x.addEventListener("click", function (ev) { ev.stopPropagation(); perguntarAoJarvis(x.getAttribute("data-q")); }); });
+      }
+      /*DASH_CS_FIM*/
 
       /* ===== 🔔 ALERTAS DE VOZ (card interativo no Dashboard) ===== */
       function toast(msg) {

@@ -1150,6 +1150,23 @@
     .nt-hora { color: var(--text-mute); } .nt-app { font-weight: 700; } .nt-valor { margin-left: auto; }
     .nt-txt { font-size: 12.5px; color: var(--text-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .nt-row.aberto .nt-txt { white-space: normal; }
+    /* cartões Custos de IA e Saúde do sistema (16/10) */
+    .cs-barra { position: relative; height: 14px; border-radius: 999px; background: rgba(128,128,128,.18); overflow: hidden; margin: 6px 0 2px; }
+    .cs-proj { position: absolute; inset: 0 auto 0 0; background: rgba(245,185,60,.35); }
+    .cs-gasto { position: absolute; inset: 0 auto 0 0; background: #2eae62; } .cs-gasto.warn { background: #e0a21c; } .cs-gasto.bad { background: #d64545; }
+    .cs-barra i { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(0,0,0,.35); }
+    .cs-legenda { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--text-mute); margin-bottom: 10px; }
+    .cs-tab { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+    .cs-tab th, .cs-tab td { text-align: left; padding: 5px 8px; border-bottom: 1px solid rgba(128,128,128,.22); white-space: nowrap; }
+    .cs-tab .num { text-align: right; } .cs-tab .neg, .neg { color: #d64545; font-weight: 700; }
+    .cs-mini { display: inline-block; vertical-align: middle; width: 70px; height: 7px; border-radius: 999px; background: rgba(128,128,128,.2); overflow: hidden; margin-right: 6px; }
+    .cs-mini div { height: 100%; background: var(--accent); }
+    .md-tab + .dash-card__sub, .cs-tab + .dash-card__sub { margin-top: 10px; }
+    #dashCustosCard .dash-card__sub, #dashSaudeCard .dash-card__sub { margin-top: 10px; }
+    .sh-alertas { margin: 4px 0 12px; padding: 8px 12px; border-radius: 10px; background: rgba(245,185,60,.14); border: 1px solid rgba(245,185,60,.45); }
+    #dashCustosCard .dash-card__head, #dashSaudeCard .dash-card__head { flex-wrap: wrap; }
+    #dashCustosCard .dash-card__head h3, #dashSaudeCard .dash-card__head h3 { flex: 1 1 150px; }
+    #dashCustosCard .dash-card__head .dash-card-btn, #dashSaudeCard .dash-card__head .dash-card-btn { width: auto; margin-top: 0; padding: 5px 12px; }
     .nt-acoes { display: flex; flex-wrap: wrap; gap: 6px; } .nt-acoes:empty { display: none; }
     .dash-card__head .dash-card__count { white-space: nowrap; flex-shrink: 0; }
     #dashFinCard .dash-card__head, #dashNotifCard .dash-card__head { flex-wrap: wrap; }

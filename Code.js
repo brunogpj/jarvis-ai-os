@@ -9746,3 +9746,98 @@ function reprocessarNotificacao(token, id) {
   if (r.jaRegistrado) return { ok: true, status: 'ja_registrado', msg: 'Já estava registrada.' };
   return { ok: true, status: r.status || r.acao || 'feito', msg: 'Reprocessada: ' + (r.status || r.acao || 'feito') + '.' };
 }
+
+
+/* ===================== DASHBOARD: CUSTOS DE IA e SAÚDE DO SISTEMA (16/10) =====================
+ * Custos: o que o Gemini já gastou no mês (estimativa do GastoIA, não a fatura), por modelo, a projeção no ritmo atual e o teto com a trava.
+ * Saúde: os gatilhos do Apps Script (batida, tempo gasto, pico, erros), o último briefing falado, a busca no Drive e os erros das últimas 24 h.
+ * Cada cartão tem a sua chamada. Nada aqui chama o Gemini nem gasta cota. */
+
+/** Cartão "Custos de IA". Funções puras sobre o estado do GastoIA + as properties de configuração (injetáveis nos testes). */
+function _custosMontar(g, cfg) {
+  g = g || {}; cfg = cfg || {};
+  var gasto = Number(g.gastoBRL) || 0, teto = Number(g.tetoBRL) || 0, proj = Number(g.projecaoBRL) || 0;
+  var dia = Number(String(cfg.hoje || '').slice(8, 10)) || 1;
+  var porModelo = Object.keys(g.porModelo || {}).map(function (k) {
+    var m = g.porModelo[k]; return { modelo: k, chamadas: Number(m.chamadas) || 0, brl: Number(m.brl) || 0, pct: gasto > 0 ? Math.round((Number(m.brl) || 0) / gasto * 1000) / 10 : 0 };
+  }).sort(function (a, b) { return b.brl - a.brl; });
+  var mediaDia = gasto / dia;
+  var status = g.esgotado ? 'esgotado' : (teto > 0 && proj > teto ? 'atencao' : 'ok');
+  var ant = g.mesAnterior && g.mesAnterior.usd != null ? Math.round(Number(g.mesAnterior.usd) * (Number(g.cambio) || 5.7) * 100) / 100 : null;
+  return { ok: true, mes: g.mes, gastoBRL: gasto, tetoBRL: teto, pct: Number(g.pct) || 0, projecaoBRL: proj, chamadas: Number(g.chamadas) || 0, buscas: Number(g.buscas) || 0,
+           cambio: Number(g.cambio) || null, status: status, mediaDia: Math.round(mediaDia * 100) / 100,
+           diasAteTeto: (!g.esgotado && mediaDia > 0 && teto > gasto) ? Math.floor((teto - gasto) / mediaDia) : null,
+           mesAnterior: ant != null ? { mes: g.mesAnterior.mes, brl: ant } : null, porModelo: porModelo,
+           modelos: cfg.modelos || {}, somentePago: String(cfg.ordem || '') === 'billing_first' && String(cfg.freeOnly || '').toLowerCase() !== 'true',
+           ordem: cfg.ordem || null, travaAtiva: String(cfg.travaAtiva || 'sim').toLowerCase() !== 'nao', chaves: cfg.chaves || {} };
+}
+
+function dashboardCustos(token) {
+  if (!_dashDono(token)) return { ok: false, erro: 'Apenas o proprietário pode ver o painel.' };
+  if (typeof GastoIA === 'undefined') return { ok: false, erro: 'Contador de gasto indisponível.' };
+  try {
+    var p = PropertiesService.getScriptProperties();
+    return _custosMontar(GastoIA.estado(), {
+      hoje: Utilities.formatDate(new Date(), 'America/Sao_Paulo', 'yyyy-MM-dd'),
+      modelos: { agente: p.getProperty('GEMINI_MODEL'), reserva: p.getProperty('GEMINI_MODEL_FALLBACK'), busca: p.getProperty('GEMINI_SEARCH_MODEL'), voz: p.getProperty('TTS_GEMINI_MODEL'), imagem: p.getProperty('GEMINI_IMAGE_MODEL'), embedding: p.getProperty('GEMINI_EMBED_MODEL') },
+      ordem: p.getProperty('GEMINI_ORDER'), freeOnly: p.getProperty('GEMINI_FREE_ONLY'), travaAtiva: p.getProperty('GEMINI_ORCAMENTO_ATIVO'),
+      chaves: { faturamento: !!p.getProperty('GEMINI_API_KEY'), gratuitas: (p.getProperty('GEMINI_API_KEY_FALLBACK') ? 1 : 0) + (p.getProperty('GEMINI_API_KEY_FALLBACK2') ? 1 : 0) }
+    });
+  } catch (e) { return { ok: false, erro: 'Não consegui ler o gasto: ' + e.message }; }
+}
+
+var _GATILHO_NOME = { executarTarefasAgendadas: 'Agenda e monitor de Gmail (15 min)', tickAlertasVoz: 'Alertas de voz e fila de notificações (1 min)', pingTelemetria: 'Telemetria do celular (15 min)', jobInsightDiario: 'Insight diário' };
+var _ORCAMENTO_GATILHOS_MS = 90 * 60000;   // teto aproximado de execução de gatilhos por dia em conta consumer (ver Heartbeat.js)
+
+function _haMin(ms, agora) { var m = Math.max(0, Math.round((agora - ms) / 60000)); return m < 1 ? 'agora' : (m < 60 ? 'há ' + m + ' min' : (m < 1440 ? 'há ' + Math.round(m / 60) + ' h' : 'há ' + Math.round(m / 1440) + ' d')); }
+
+/** Cartão "Saúde do sistema". ins = {agora, hb:{itens}, diario:{dia,h,ontem}, triggers:[handlers], ub:{em,tag,texto}, eventos:[{tool,ok,ms,ts}], drive:{...}}. PURA. */
+function _saudeMontar(ins) {
+  var agora = ins.agora || Date.now(), alertas = [], crit = false;
+  var itens = ((ins.hb && ins.hb.itens) || []).map(function (i) {
+    if (i.atrasado) { crit = true; alertas.push('"' + i.nome + '" está atrasado' + (i.idadeMin != null ? ' (última batida há ' + i.idadeMin + ' min)' : ' (nunca bateu)') + (i.temTrigger ? '' : ' e SEM gatilho instalado')); }
+    else if (i.ativo && !i.temTrigger) { crit = true; alertas.push('"' + i.nome + '" está sem gatilho instalado'); }
+    return { nome: i.nome, ativo: !!i.ativo, atrasado: !!i.atrasado, temTrigger: !!i.temTrigger, idadeMin: i.idadeMin, limiteMin: i.limiteMin };
+  });
+  var h = (ins.diario && ins.diario.h) || {}, totalMs = 0, gat = Object.keys(h).map(function (k) {
+    var x = h[k]; totalMs += Number(x.ms) || 0;
+    var o = { handler: k, nome: _GATILHO_NOME[k] || k, n: x.n || 0, mediaMs: x.n ? Math.round(x.ms / x.n) : 0, maxMs: x.max || 0, maxEm: x.maxEm || null, erros: x.erros || 0, ultErro: x.ultErro || null, fim: x.fim || null };
+    if (o.erros) alertas.push(o.nome + ': ' + o.erros + (o.erros === 1 ? ' erro' : ' erros') + ' hoje (' + String(o.ultErro || '').slice(0, 80) + ')');
+    if (o.maxMs > 200000) alertas.push(o.nome + ': pico de ' + Math.round(o.maxMs / 1000) + ' s' + (o.maxEm ? ' às ' + o.maxEm : '') + ' (o limite é 360 s)');
+    return o;
+  }).sort(function (a, b) { return b.n * b.mediaMs - a.n * a.mediaMs; });
+  var pctOrc = Math.round(totalMs / _ORCAMENTO_GATILHOS_MS * 1000) / 10;
+  if (pctOrc > 70) alertas.push('Gatilhos já gastaram ' + pctOrc + '% do orçamento diário de execução (≈ 90 min)');
+
+  // briefing: o último falado e se o último que COMEÇOU terminou
+  var ev = (ins.eventos || []).map(function (e) { return { tool: String(e.tool || ''), ok: e.ok !== false, ms: Number(e.ms) || 0, t: new Date(e.ts).getTime() }; }).filter(function (e) { return isFinite(e.t); });
+  var inicios = ev.filter(function (e) { return e.tool === 'briefing:inicio'; }).sort(function (a, b) { return b.t - a.t; });
+  var fins = ev.filter(function (e) { return /^alertaVoz:briefing/.test(e.tool); }).sort(function (a, b) { return b.t - a.t; });
+  var briefing = { ultimo: null, semTerminar: false };
+  if (ins.ub && ins.ub.em) briefing.ultimo = { tag: ins.ub.tag || '', quando: _haMin(ins.ub.em, agora), em: ins.ub.em, caracteres: String(ins.ub.texto || '').length };
+  if (inicios.length) {
+    var ini = inicios[0], fim = fins.filter(function (f) { return f.t >= ini.t; }).sort(function (a, b) { return a.t - b.t; })[0];
+    briefing.ultimoInicio = { quando: _haMin(ini.t, agora) };
+    if (fim) { briefing.ultimoInicio.duracaoS = Math.round((fim.t - ini.t) / 1000); briefing.ultimoInicio.ok = fim.ok; if (briefing.ultimoInicio.duracaoS > 240) alertas.push('O último briefing levou ' + briefing.ultimoInicio.duracaoS + ' s (perto do teto de 360 s)'); }
+    else if (agora - ini.t > 8 * 60000) { briefing.semTerminar = true; alertas.push('Um briefing começou ' + _haMin(ini.t, agora) + ' e não terminou (a execução pode ter morrido no teto de 6 min)'); }
+  }
+  var d24 = agora - 24 * 3600e3, erros = {}, nErros = 0;
+  ev.filter(function (e) { return e.t >= d24 && !e.ok; }).forEach(function (e) { nErros++; erros[e.tool] = (erros[e.tool] || 0) + 1; });
+  var topErros = Object.keys(erros).map(function (k) { return { tool: k, n: erros[k] }; }).sort(function (a, b) { return b.n - a.n; }).slice(0, 4);
+  if (nErros > 5) alertas.push(nErros + ' eventos com falha nas últimas 24 h');
+  var nivel = crit ? 'critico' : (alertas.length ? 'atencao' : 'ok');
+  return { ok: true, nivel: nivel, alertas: alertas, jobs: itens, gatilhos: gat, orcamento: { usadoMs: totalMs, pct: pctOrc }, instalados: (ins.triggers || []).length, briefing: briefing,
+           erros24h: { total: nErros, top: topErros }, drive: ins.drive || null, ontem: (ins.diario && ins.diario.ontem) ? { dia: ins.diario.ontem.dia } : null, geradoEm: agora };
+}
+
+function dashboardSaude(token) {
+  if (!_dashDono(token)) return { ok: false, erro: 'Apenas o proprietário pode ver o painel.' };
+  try {
+    var P = PropertiesService.getScriptProperties(), ub = null, eventos = [], triggers = [], drive = null;
+    try { ub = JSON.parse(P.getProperty('ULTIMO_BRIEFING') || 'null'); } catch (e0) {}
+    try { eventos = (Firestore.listDocs('agente_eventos', 300) || []).map(function (x) { return x.dados || x; }); } catch (e1) {}
+    try { triggers = ScriptApp.getProjectTriggers().map(function (t) { return t.getHandlerFunction(); }); } catch (e2) {}
+    try { if (typeof BuscaDrive !== 'undefined') drive = BuscaDrive.status(); } catch (e3) {}
+    return _saudeMontar({ agora: Date.now(), hb: Heartbeat.status(), diario: Heartbeat.diario(), triggers: triggers, ub: ub, eventos: eventos, drive: drive });
+  } catch (e) { return { ok: false, erro: 'Não consegui montar a saúde do sistema: ' + e.message }; }
+}

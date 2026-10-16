@@ -314,6 +314,9 @@ Sem você pedir, no tick de 15 min, em duas janelas: **manhã 9–11h** e **noit
 | 1.183 | Dashboard → **Notificações do celular** | últimas 40 do celular; as financeiras mostram o que o Jarvis entendeu (registrada, aguardando, pendente, recusada, formato não reconhecido); filtros Financeiras/Alertas/Todas; clicar na linha mostra o texto inteiro | ✅ | 16/10 ao vivo |
 | 1.184 | Notificação de teste de formato novo (Mercado Pago, R$ 1,23, marcada TESTE) pelo webhook real | guarda o texto bruto, avisa pelo celular, a linha fica vermelha com "Formato não reconhecido" e o selo ⚠ 1 | ✅ | 16/10: `notif:processada · banco_desconhecido` + aviso falado; "Visto" zerou o selo |
 | 1.185 | Botão **Reprocessar** numa notificação que o Jarvis reconhece mas não registrou | refaz o registro sem duplicar | ⚠️ | teste automático; sem caso real aberto para clicar |
+| 1.186 | Dashboard → cartão **Custos de IA** | barra do gasto com a projeção e as marcas de 50/80/100% do teto, gasto/projeção/chamadas/dias até o teto, tabela por modelo com a parte de cada um, modelos em uso e aviso de que é estimativa | ✅ | 16/10 ao vivo (R$ 7,45 de R$ 29,65, projeção R$ 14,43) |
+| 1.187 | Dashboard → cartão **Saúde do sistema** | selo (tudo em dia / atenção / crítico), gatilhos monitorados, último briefing e quanto levou, tabela de execuções de hoje (vezes, média, pico e hora, erros), orçamento de gatilhos usado, busca no Drive e falhas de 24 h | ✅ | 16/10 ao vivo: tudo em dia, 43% do orçamento, briefing de 49 s |
+| 1.188 | Cartões carregam sozinhos e o ↻ de cada um atualiza só aquele cartão | um que falha mostra o erro só nele | ✅ | 16/10 ao vivo |
 | 1.139 | Interruptores: `FERRAMENTAS_JEV`, `CONFIRMA_JEV`, `INJECAO_JEV`, `ACAO_JEV`, `CATEGORIA_JEV` = nao | volta ao comportamento anterior | ✅ | testes automáticos |
 
 ### 1g. 🔔 Notificações do celular 🗣️

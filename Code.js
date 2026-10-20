@@ -3275,7 +3275,7 @@ function doPost(e) {
       var _PERMITIDAS_CF = {
         FALA_PROATIVA_LOCAL: /^(sim|nao)$/, FALA_RESPOSTAS_LOCAL: /^(sim|nao)$/,
         MODO_FALA_VOZ: /^(nuvem|auto|local)$/, FALA_VOLUME_DB: /^(1[0-6]|[0-9])$/,
-        FALA_FORMATO: /^(ogg|wav)$/, FALA_ARQUIVO_UNICO: /^(sim|nao)$/, ROTA_JEV_NOVAS: /^(sim|nao)$/, FERRAMENTAS_JEV: /^(nao|adiciona|sim)$/, INJECAO_JEV: /^(sim|nao)$/, ACAO_JEV: /^(sim|nao)$/, CATEGORIA_JEV: /^(sim|nao)$/, TTS_STYLE: /^[A-Za-zÀ-ÿ ,.\-]{0,120}$/, FERRAMENTAS_JEV_ADD: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE_CONH: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE: /^0?\.\d{1,2}$/, CONFIRMA_JEV: /^(sim|nao)$/, MONITOR_GMAIL_JEV: /^(sim|nao)$/, BUSCA_DRIVE_ATIVA: /^(sim|nao)$/, BUSCA_DRIVE_MAX: /^\d{2,4}$/, WEB_MONITOR_JEV: /^(sim|nao)$/, WEB_MONITOR_JEV_CORTE: /^0?\.\d{1,2}$/, MONITOR_GMAIL_JEV_CORTE: /^0?\.\d{1,2}$/, FIN_AVISOS_ATIVO: /^(sim|nao)$/, FIN_NOME_DONO: /^[a-zà-ÿ ]{3,80}$/, FIN_CPF_DONO: /^\d{3}\.\d{3}$/,
+        FALA_FORMATO: /^(ogg|wav)$/, FALA_ARQUIVO_UNICO: /^(sim|nao)$/, ROTA_JEV_NOVAS: /^(sim|nao)$/, FERRAMENTAS_JEV: /^(nao|adiciona|sim)$/, INJECAO_JEV: /^(sim|nao)$/, ACAO_JEV: /^(sim|nao)$/, CATEGORIA_JEV: /^(sim|nao)$/, TTS_STYLE: /^[A-Za-zÀ-ÿ ,.\-]{0,120}$/, FERRAMENTAS_JEV_ADD: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE_CONH: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE: /^0?\.\d{1,2}$/, CONFIRMA_JEV: /^(sim|nao)$/, MONITOR_GMAIL_JEV: /^(sim|nao)$/, BUSCA_DRIVE_ATIVA: /^(sim|nao)$/, FILE_SEARCH_ATIVA: /^(sim|nao)$/, FS_LOTE: /^\d{1,2}$/, FS_MAX_MB: /^\d{1,2}$/, FS_MAX: /^\d{2,4}$/, FS_EXCLUIR: /^[^\r\n]{0,200}$/, BUSCA_DRIVE_MAX: /^\d{2,4}$/, WEB_MONITOR_JEV: /^(sim|nao)$/, WEB_MONITOR_JEV_CORTE: /^0?\.\d{1,2}$/, MONITOR_GMAIL_JEV_CORTE: /^0?\.\d{1,2}$/, FIN_AVISOS_ATIVO: /^(sim|nao)$/, FIN_NOME_DONO: /^[a-zà-ÿ ]{3,80}$/, FIN_CPF_DONO: /^\d{3}\.\d{3}$/,
         // consultor (fase 4): margem na conta (R$), taxa ao mês (decimal), reserva-alvo (meses) e pausa do rebalanceamento (data)
         CONSULTOR_MARGEM: /^\d{1,6}$/, CONSULTOR_TAXA_MES: /^0?\.\d{1,4}$/, CONSULTOR_RESERVA_ALVO: /^\d{1,2}$/, CONSULTOR_PAUSA_ATE: /^\d{4}-\d{2}-\d{2}$/, CONSULTOR_AVISO_ATIVO: /^(sim|nao)$/, CONSULTOR_AVISO_MIN: /^\d{1,6}$/
       };
@@ -4332,6 +4332,9 @@ function doPost(e) {
           } catch (eTc) { saida.tempoConhecimento = { erro: eTc.message }; }
         }
         // Busca semântica de ARQUIVOS do Drive. {} → status · {consulta,k,tipo} → busca · {rodar:true,maxArquivos} → indexa um lote · {simular:true} → conta sem gravar · {limpar:true}.
+        if (body.fileSearch) {
+          try { saida.fileSearch = diagFileSearch(body.fileSearch === true ? {} : body.fileSearch); } catch (eFs) { saida.fileSearch = { erro: eFs.message }; }
+        }
         if (body.buscaDrive) {
           try { saida.buscaDrive = diagBuscaDrive(body.buscaDrive === true ? {} : body.buscaDrive); } catch (eBd) { saida.buscaDrive = { erro: eBd.message }; }
         }
@@ -9829,7 +9832,7 @@ function _custosMontar(g, cfg) {
            diasAteTeto: (!g.esgotado && mediaDia > 0 && teto > gasto) ? Math.floor((teto - gasto) / mediaDia) : null,
            mesAnterior: ant != null ? { mes: g.mesAnterior.mes, brl: ant } : null, porModelo: porModelo,
            modelos: cfg.modelos || {}, somentePago: String(cfg.ordem || '') === 'billing_first' && String(cfg.freeOnly || '').toLowerCase() !== 'true',
-           ordem: cfg.ordem || null, travaAtiva: String(cfg.travaAtiva || 'sim').toLowerCase() !== 'nao', chaves: cfg.chaves || {} };
+           ordem: cfg.ordem || null, travaAtiva: String(cfg.travaAtiva || 'sim').toLowerCase() !== 'nao', chaves: cfg.chaves || {}, capGoogle: cfg.capGoogle || null };
 }
 
 function dashboardCustos(token) {
@@ -9841,7 +9844,8 @@ function dashboardCustos(token) {
       hoje: Utilities.formatDate(new Date(), 'America/Sao_Paulo', 'yyyy-MM-dd'),
       modelos: { agente: p.getProperty('GEMINI_MODEL'), reserva: p.getProperty('GEMINI_MODEL_FALLBACK'), busca: p.getProperty('GEMINI_SEARCH_MODEL'), voz: p.getProperty('TTS_GEMINI_MODEL'), imagem: p.getProperty('GEMINI_IMAGE_MODEL'), embedding: p.getProperty('GEMINI_EMBED_MODEL') },
       ordem: p.getProperty('GEMINI_ORDER'), freeOnly: p.getProperty('GEMINI_FREE_ONLY'), travaAtiva: p.getProperty('GEMINI_ORCAMENTO_ATIVO'),
-      chaves: { faturamento: !!p.getProperty('GEMINI_API_KEY'), gratuitas: (p.getProperty('GEMINI_API_KEY_FALLBACK') ? 1 : 0) + (p.getProperty('GEMINI_API_KEY_FALLBACK2') ? 1 : 0) }
+      chaves: { faturamento: !!p.getProperty('GEMINI_API_KEY'), gratuitas: (p.getProperty('GEMINI_API_KEY_FALLBACK') ? 1 : 0) + (p.getProperty('GEMINI_API_KEY_FALLBACK2') ? 1 : 0) },
+      capGoogle: (function () { try { if (typeof Gemini !== 'undefined') { Gemini.sondarChavePaga(); return Gemini.capGoogle(); } } catch (eSd) {} return null; })()
     });
   } catch (e) { return { ok: false, erro: 'Não consegui ler o gasto: ' + e.message }; }
 }
@@ -9885,6 +9889,7 @@ function _saudeMontar(ins) {
   ev.filter(function (e) { return e.t >= d24 && !e.ok; }).forEach(function (e) { nErros++; erros[e.tool] = (erros[e.tool] || 0) + 1; });
   var topErros = Object.keys(erros).map(function (k) { return { tool: k, n: erros[k] }; }).sort(function (a, b) { return b.n - a.n; }).slice(0, 4);
   if (nErros > 5) alertas.push(nErros + ' eventos com falha nas últimas 24 h');
+  if (ins.capGoogle) alertas.unshift('O Google RECUSOU a chave paga: o teto de gasto do projeto no AI Studio estourou' + (ins.capGoogle.desde ? ' (desde ' + _haMin(ins.capGoogle.desde, agora) + ')' : '') + '. O Jarvis está usando as chaves gratuitas; voz premium, File Search e o que só aceita a chave paga ficam parados. Ajuste em ai.studio/spend.');
   var nivel = crit ? 'critico' : (alertas.length ? 'atencao' : 'ok');
   return { ok: true, nivel: nivel, alertas: alertas, jobs: itens, gatilhos: gat, orcamento: { usadoMs: totalMs, pct: pctOrc }, instalados: (ins.triggers || []).length, briefing: briefing,
            erros24h: { total: nErros, top: topErros }, drive: ins.drive || null, ontem: (ins.diario && ins.diario.ontem) ? { dia: ins.diario.ontem.dia } : null, geradoEm: agora };
@@ -9898,7 +9903,8 @@ function dashboardSaude(token) {
     try { eventos = (Firestore.listDocs('agente_eventos', 300) || []).map(function (x) { return x.dados || x; }); } catch (e1) {}
     try { triggers = ScriptApp.getProjectTriggers().map(function (t) { return t.getHandlerFunction(); }); } catch (e2) {}
     try { if (typeof BuscaDrive !== 'undefined') drive = BuscaDrive.status(); } catch (e3) {}
-    return _saudeMontar({ agora: Date.now(), hb: Heartbeat.status(), diario: Heartbeat.diario(), triggers: triggers, ub: ub, eventos: eventos, drive: drive });
+    var capG = null; try { if (typeof Gemini !== 'undefined') { Gemini.sondarChavePaga(); capG = Gemini.capGoogle(); } } catch (eCg) {}   // a sonda (cache de 30 min) descobre o teto do Google mesmo sem tráfego pago
+    return _saudeMontar({ agora: Date.now(), hb: Heartbeat.status(), diario: Heartbeat.diario(), triggers: triggers, ub: ub, eventos: eventos, drive: drive, capGoogle: capG });
   } catch (e) { return { ok: false, erro: 'Não consegui montar a saúde do sistema: ' + e.message }; }
 }
 

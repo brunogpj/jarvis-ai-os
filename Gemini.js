@@ -58,6 +58,44 @@ var Gemini = (function () {
   function _nBuscas(data) {
     try { var q = data.candidates[0].groundingMetadata.webSearchQueries; return q ? q.length : 0; } catch (e) { return 0; }
   }
+  /* TETO DE GASTO DO PROJETO NO GOOGLE (19/10). O AI Studio tem um "monthly spending cap" do projeto, separado do teto ESTIMADO do GastoIA: quando estoura, a chave paga recebe
+   * HTTP 429 "Your project has exceeded its monthly spending cap" e a cascata cai, em silêncio, para as chaves gratuitas (voz premium, File Search e tudo que só aceita a paga param).
+   * Aqui o erro é lembrado (GEMINI_CAP_GOOGLE) para o painel avisar; uma chamada paga que volta a funcionar apaga o aviso. */
+  function _ehTetoGoogle(msg) { return /spending cap|monthly spending|spend cap/i.test(String(msg || '')); }
+  /** Guarda o aviso se a mensagem for de teto do Google (no máximo uma gravação a cada 10 min). Nunca lança. */
+  function notarFalha(msg) {
+    try {
+      if (!_ehTetoGoogle(msg)) return false;
+      var atual = null; try { atual = JSON.parse(_p('GEMINI_CAP_GOOGLE') || 'null'); } catch (e0) {}
+      if (!atual || Date.now() - Number(atual.em || 0) > 600000) PropertiesService.getScriptProperties().setProperty('GEMINI_CAP_GOOGLE', JSON.stringify({ desde: (atual && atual.desde) || Date.now(), em: Date.now(), msg: String(msg).replace(/\s+/g, ' ').slice(0, 200) }));
+      return true;
+    } catch (e) { return false; }
+  }
+  /** Uma chamada PAGA funcionou: o teto do Google não está mais bloqueando. */
+  function notarSucessoPago() { try { if (_p('GEMINI_CAP_GOOGLE')) PropertiesService.getScriptProperties().deleteProperty('GEMINI_CAP_GOOGLE'); } catch (e) {} }
+  /** → {desde, em, msg} se o Google recusou a chave paga nos últimos 7 dias, senão null. */
+  function capGoogle() {
+    try { var o = JSON.parse(_p('GEMINI_CAP_GOOGLE') || 'null'); return (o && Date.now() - Number(o.em || 0) < 7 * 86400000) ? o : null; } catch (e) { return null; }
+  }
+
+  /** SONDA da chave paga: um embedding de 1 palavra (custo desprezível) para saber SE o Google está aceitando a chave de faturamento agora. Guarda/limpa o aviso do teto e
+   *  guarda o resultado por 30 min (o painel não gasta uma chamada a cada abertura). → {ok, erro?, tetoGoogle?, cache?} */
+  function sondarChavePaga() {
+    var kBill = _p('GEMINI_API_KEY');
+    if (!kBill) return { ok: false, erro: 'sem chave de faturamento' };
+    var cache = null; try { cache = CacheService.getScriptCache(); var h = cache.get('gem_sonda'); if (h) { var o = JSON.parse(h); o.cache = true; return o; } } catch (e0) {}
+    var res, out;
+    try {
+      res = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + (_p('GEMINI_EMBED_MODEL') || 'gemini-embedding-001') + ':embedContent?key=' + encodeURIComponent(kBill),
+        { method: 'post', contentType: 'application/json', payload: JSON.stringify({ content: { parts: [{ text: 'ok' }] } }), muteHttpExceptions: true });
+      var code = res.getResponseCode(), txt = res.getContentText();
+      if (code === 200) { notarSucessoPago(); out = { ok: true }; }
+      else { var msg = txt; try { var j = JSON.parse(txt); if (j.error && j.error.message) msg = j.error.message; } catch (e1) {} var cap = notarFalha(msg); out = { ok: false, erro: String(msg).slice(0, 160), tetoGoogle: !!cap }; }
+    } catch (e) { out = { ok: false, erro: 'sem conexão' }; }
+    try { if (cache && !(out.erro === 'sem conexão')) cache.put('gem_sonda', JSON.stringify(out), 1800); } catch (e2) {}
+    return out;
+  }
+
   /** Soma o custo estimado de uma resposta no gasto do mês (GastoIA). Nunca lança. */
   function registrarUso(model, data, extras) {
     try { if (typeof GastoIA !== 'undefined') GastoIA.registrar(model, data && data.usageMetadata, extras || { buscas: _nBuscas(data) }); } catch (e) {}
@@ -110,12 +148,13 @@ var Gemini = (function () {
       } catch (e) { erros.push(t.tier + '/' + t.model + ' → exceção: ' + e.message); continue; }
       var code = res.getResponseCode();
       if (code === 200) {
-        try { var jj = JSON.parse(res.getContentText()); registrarUso(t.model, jj); return { json: jj, model: t.model, tier: t.tier }; }
+        try { var jj = JSON.parse(res.getContentText()); registrarUso(t.model, jj); if (t.tier === 'faturamento') notarSucessoPago(); return { json: jj, model: t.model, tier: t.tier }; }
         catch (e) { erros.push(t.tier + '/' + t.model + ' → 200 mas JSON inválido'); continue; }
       }
       var msg = res.getContentText();
       try { var j = JSON.parse(msg); if (j.error && j.error.message) msg = j.error.message; } catch (e) {}
       erros.push(t.tier + '/' + t.model + ' → HTTP ' + code + ': ' + String(msg).substring(0, 140));
+      if (t.tier === 'faturamento') notarFalha(msg);
       // Qualquer falha (429 cota, 403 faturamento, 5xx, 400) → tenta a próxima chave/modelo.
     }
     var ctx = ' [build=' + GEMINI_BUILD + ' | GEMINI_MODEL=' + _p('GEMINI_MODEL') + ' | GEMINI_ORDER=' + _p('GEMINI_ORDER') + ' | scriptId=' + (function () { try { return ScriptApp.getScriptId(); } catch (e) { return '?'; } })() + ']';
@@ -123,8 +162,8 @@ var Gemini = (function () {
   }
 
   /** Laboratório (16/10): UM modelo escolhido pelo dono, com as ferramentas nativas e o `_thinking` já no payload. Mesma cascata de chaves e o mesmo registro de gasto do resto. → {data, model, tier} */
-  function gerarComModelo(payload, modelo) {
-    return _fetchComCascata('laboratorio', _comThinking(payload, modelo), [modelo]);
+  function gerarComModelo(payload, modelo, opts) {
+    return _fetchComCascata('laboratorio', _comThinking(payload, modelo), [modelo], !!(opts && opts.soPago));
   }
 
   /**
@@ -179,9 +218,11 @@ var Gemini = (function () {
    * a FALLBACK2 e a billing têm cotas independentes; antes, um 429 na 1ª chave matava a busca
    * o dia inteiro). @return { data, model, tier }. Lança erro se TODAS falharem.
    */
-  function _fetchComCascata(rotulo, payload, modelos) {
+  function _fetchComCascata(rotulo, payload, modelos, soPago) {
     var tents = _tentativas();
-    if (!tents.length) throw new Error('Nenhuma chave configurada (defina GEMINI_API_KEY e/ou GEMINI_API_KEY_FALLBACK).');
+    // soPago: conteúdo pessoal (print de gastos, pedidos do Laboratório) só pela chave de faturamento: a gratuita pode usar o conteúdo para melhorar produtos.
+    if (soPago) tents = tents.filter(function (t) { return t.tier === 'faturamento'; });
+    if (!tents.length) throw new Error(soPago ? 'Sem chave paga disponível (ausente ou teto do mês atingido): não envio conteúdo pessoal pela chave gratuita.' : 'Nenhuma chave configurada (defina GEMINI_API_KEY e/ou GEMINI_API_KEY_FALLBACK).');
     var cache = null; try { cache = CacheService.getScriptCache(); } catch (eC) {}
     var ultErro = '';
     for (var k = 0; k < tents.length; k++) {
@@ -191,10 +232,11 @@ var Gemini = (function () {
         var url = 'https://generativelanguage.googleapis.com/v1beta/models/' + modelos[m] + ':generateContent?key=' + encodeURIComponent(tents[k].key);
         var res = UrlFetchApp.fetch(url, { method: 'post', contentType: 'application/json', payload: JSON.stringify(payload), muteHttpExceptions: true });
         var code = res.getResponseCode();
-        if (code === 200) { var dd = JSON.parse(res.getContentText() || '{}'); registrarUso(modelos[m], dd); return { data: dd, model: modelos[m], tier: tents[k].tier }; }
+        if (code === 200) { var dd = JSON.parse(res.getContentText() || '{}'); registrarUso(modelos[m], dd); if (tents[k].tier === 'faturamento') notarSucessoPago(); return { data: dd, model: modelos[m], tier: tents[k].tier }; }
         var msg = res.getContentText();
         try { var j = JSON.parse(msg); if (j.error && j.error.message) msg = j.error.message; } catch (eP) {}
         ultErro = rotulo + ' HTTP ' + code + ': ' + String(msg).substring(0, 160);
+        if (tents[k].tier === 'faturamento') notarFalha(msg);
         if (code === 429) { try { if (cache) cache.put(ckey, '1', 600); } catch (eW) {} }
         // 400/404 (modelo sem suporte à tool) → próximo modelo; 429/5xx → cascata segue.
       }
@@ -357,6 +399,7 @@ var Gemini = (function () {
       if (code === 200) {
         var data = JSON.parse(res.getContentText() || '{}');
         var vec = (data.embedding && data.embedding.values) || [];
+        if (tents[t].tier === 'faturamento') notarSucessoPago();
         registrarUso(model, { usageMetadata: { promptTokenCount: Math.ceil(String(texto || '').length / 3) } }, { buscas: 0 });
         if (ck && vec.length) { try { cache.put(ck, JSON.stringify(vec), 21600); } catch (eP) {} }
         return vec;
@@ -364,6 +407,7 @@ var Gemini = (function () {
       var msg = res.getContentText();
       try { var j = JSON.parse(msg); if (j.error && j.error.message) msg = j.error.message; } catch (e) {}
       ultErro = 'embedContent HTTP ' + code + ': ' + String(msg).substring(0, 160);
+      if (tents[t].tier === 'faturamento') notarFalha(msg);
       if (code === 429 || /quota|RESOURCE_EXHAUSTED|exceeded|spending cap/i.test(msg)) {
         try { if (cache) cache.put(cool, '1', 600); } catch (eW) {}  // 10 min de cooldown p/ esta chave
       } else if (code === 400 || code === 404) { break; } // modelo/chamada inválida → não adianta rotacionar
@@ -529,7 +573,7 @@ var Gemini = (function () {
     return null;
   }
 
-  return { gerar: gerar, gerarComModelo: gerarComModelo, temChave: temChave, gerarImagem: gerarImagem, pesquisarWeb: pesquisarWeb, pesquisarWebVarias: pesquisarWebVarias, registrarUso: registrarUso, chaveDireta: chaveDireta, lerUrl: lerUrl, embeddar: embeddar, gerarTextoFallback: gerarTextoFallback };
+  return { gerar: gerar, gerarComModelo: gerarComModelo, notarFalha: notarFalha, notarSucessoPago: notarSucessoPago, capGoogle: capGoogle, sondarChavePaga: sondarChavePaga, temChave: temChave, gerarImagem: gerarImagem, pesquisarWeb: pesquisarWeb, pesquisarWebVarias: pesquisarWebVarias, registrarUso: registrarUso, chaveDireta: chaveDireta, lerUrl: lerUrl, embeddar: embeddar, gerarTextoFallback: gerarTextoFallback };
 })();
 
 /** Diagnóstico do MODO RESERVA: testa os provedores alternativos (Anthropic/OpenRouter/NVIDIA). Rode no editor. */

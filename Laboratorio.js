@@ -105,7 +105,7 @@ var Laboratorio = (function () {
         if (est.esgotado || Number(est.pct) >= LIM.pctTeto) return { ok: false, erro: 'O gasto do mês está em ' + est.pct + '% do teto: o Laboratório fica parado até o mês virar ou o teto subir.' };
       }
       if (!_limitePorHora()) return { ok: false, erro: 'Limite de ' + LIM.porHora + ' execuções por hora no Laboratório. Tente daqui a pouco.' };
-      var t0 = Date.now(), g = Gemini.gerarComModelo(m.payload, m.modelo), ms = Date.now() - t0, custo = null;
+      var t0 = Date.now(), g = Gemini.gerarComModelo(m.payload, m.modelo, { soPago: true }), ms = Date.now() - t0, custo = null;
       try { custo = Math.round(GastoIA.custoUSD(g.model, g.data.usageMetadata) * GastoIA.cambio() * 10000) / 10000; } catch (e) {}
       return interpretar(g.data, { modelo: g.model, tier: g.tier, ms: ms, custoBRL: custo, json: m.json });
     } catch (e) { return { ok: false, erro: String(e && e.message || e).slice(0, 300) }; }

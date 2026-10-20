@@ -385,6 +385,7 @@ var Voz = (function () {
     var code = res.getResponseCode();
     if (code !== 200) {
       var msg = res.getContentText(); try { var j = JSON.parse(msg); if (j.error && j.error.message) msg = j.error.message; } catch (e) {}
+      try { if (typeof Gemini !== 'undefined' && Gemini.notarFalha) Gemini.notarFalha(msg); } catch (eCap) {}
       return { status: 'error', erro: 'Gemini TTS HTTP ' + code + ': ' + String(msg).substring(0, 220), model: model };
     }
     var data = JSON.parse(res.getContentText() || '{}');

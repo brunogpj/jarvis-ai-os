@@ -1751,7 +1751,8 @@
         }).join("");
         var md = d.modelos || {}, cfg = [["Agente", md.agente], ["Reserva", md.reserva], ["Busca", md.busca], ["Voz", md.voz], ["Imagem", md.imagem]].filter(function (x) { return x[1]; })
           .map(function (x) { return escapeHtml(x[0]) + ": <b>" + escapeHtml(rotuloModelo(x[1])) + "</b>"; }).join(" · ");
-        el.innerHTML = '<div class="dash-card__head"><span class="dash-card__icon">🤖</span><h3>Custos de IA · ' + escapeHtml(d.mes || "") + '</h3><span class="fin-chip ' + chip[0] + '">' + escapeHtml(chip[1]) + '</span>' + refresh + '</div>' +
+        var aviso = d.capGoogle ? '<ul class="fin-lista sh-alertas"><li>⚠️ <b>O Google recusou a chave paga</b>: o teto de gasto do projeto no AI Studio estourou (' + escapeHtml(d.capGoogle.msg || "") + '). O Jarvis está usando as chaves gratuitas de reserva; voz premium, File Search e o que só aceita a chave paga ficam parados. Ajuste o teto em ai.studio/spend.</li></ul>' : '';
+        el.innerHTML = aviso + '<div class="dash-card__head"><span class="dash-card__icon">🤖</span><h3>Custos de IA · ' + escapeHtml(d.mes || "") + '</h3><span class="fin-chip ' + chip[0] + '">' + escapeHtml(chip[1]) + '</span>' + refresh + '</div>' +
           barra + k +
           '<div class="fin-sub">Por modelo</div>' + (linhas ? '<div class="md-tab"><table class="cs-tab"><thead><tr><th>Modelo</th><th class="num">Chamadas</th><th class="num">Gasto</th><th>Parte</th></tr></thead><tbody>' + linhas + '</tbody></table></div>' : '<p class="dash-empty">Nenhuma chamada paga neste mês.</p>') +
           '<div class="dash-card__sub">' + cfg + '</div>' +

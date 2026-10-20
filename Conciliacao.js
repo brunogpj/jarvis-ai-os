@@ -98,7 +98,7 @@ var Conciliacao = (function () {
       var parts = [{ text: _instrucao(hoje) }];
       imagens.forEach(function (a) { parts.push({ inlineData: { mimeType: a.mimeType, data: a.data } }); });
       var modelo = PropertiesService.getScriptProperties().getProperty('GEMINI_MODEL') || 'gemini-2.5-flash';
-      var g = Gemini.gerarComModelo({ contents: [{ role: 'user', parts: parts }], generationConfig: { temperature: 0, maxOutputTokens: 4096, responseMimeType: 'application/json', responseJsonSchema: ESQUEMA }, _thinking: 'low' }, modelo);
+      var g = Gemini.gerarComModelo({ contents: [{ role: 'user', parts: parts }], generationConfig: { temperature: 0, maxOutputTokens: 4096, responseMimeType: 'application/json', responseJsonSchema: ESQUEMA }, _thinking: 'low' }, modelo, { soPago: true });   // o print tem dados financeiros: só a chave paga
       var cand = g.data && g.data.candidates && g.data.candidates[0], txt = '';
       ((cand && cand.content && cand.content.parts) || []).forEach(function (p) { if (!p.thought && typeof p.text === 'string') txt += p.text; });
       var obj = JSON.parse(txt);

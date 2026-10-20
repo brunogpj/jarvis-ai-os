@@ -329,6 +329,10 @@ Sem você pedir, no tick de 15 min, em duas janelas: **manhã 9–11h** e **noit
 | 1.198 | Resposta do modelo com ≥ 2 valores da caderneta sem consulta da caderneta | é trocada por um aviso e o evento `hook:financeiro_sem_fonte` fica no log | ⚠️ | teste automático |
 | 1.199 | Reabrir uma conversa com imagem anexada e clicar no anexo | abre a miniatura (a de antes de 19/10 não tem original: avisa em vez de ficar muda) | ⚠️ | testes automáticos; anexar imagem no navegador de teste não é possível |
 | 1.200 | Dashboard → Notificações → "Último push recebido" | mostra há quanto tempo chegou o último push de Mercado Pago, Bradesco, Itaú e Swile | ✅ | teste automático |
+| 1.201 | Perguntar "o que diz o contrato do aluguel sobre reajuste?" (File Search) | resposta só com o que está nos PDFs, com o nome e o link de cada fonte; se não achar, diz que não achou | ⚠️ | **bloqueado pelo teto de gasto do Google**; o código está testado com respostas simuladas (9 testes) e o envio/consulta reais ainda não passaram |
+| 1.202 | `ler_debug` com `fileSearch:{simular:true}` | conta o que entraria no store sem enviar nada | ✅ | 20/10 ao vivo: 301 arquivos (297 PDFs e 4 Google Docs), 175 MB, 0 excluídos |
+| 1.203 | Aviso "O Google recusou a chave paga" nos cartões Custos de IA e Saúde do sistema | aparece quando o AI Studio devolve "monthly spending cap"; some quando a chave paga volta (sonda de 30 min) | ✅ | 19/10 ao vivo: banner no cartão de Custos |
+| 1.204 | Conciliação por print e Laboratório | só usam a chave PAGA (conteúdo pessoal nunca vai pela gratuita); sem a paga, dizem por quê | ✅ | testes automáticos |
 | 1.139 | Interruptores: `FERRAMENTAS_JEV`, `CONFIRMA_JEV`, `INJECAO_JEV`, `ACAO_JEV`, `CATEGORIA_JEV` = nao | volta ao comportamento anterior | ✅ | testes automáticos |
 
 ### 1g. 🔔 Notificações do celular 🗣️

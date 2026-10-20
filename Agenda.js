@@ -97,6 +97,7 @@ function executarTarefasAgendadas() {
   try { if (typeof Consultor !== 'undefined') Consultor.verificarAporte(); } catch (e) { Logger.log('[tick] AvisoConsultor: ' + e.message); }
   try { if (typeof Financas !== 'undefined') Financas.verificarAvisos(); } catch (e) { Logger.log('[tick] AvisosCaderneta: ' + e.message); }
   try { if (typeof BuscaDrive !== 'undefined') BuscaDrive.tick(); } catch (e) { Logger.log('[tick] BuscaDrive: ' + e.message); }
+  try { if (typeof FileSearchDrive !== 'undefined') FileSearchDrive.tick(); } catch (e) { Logger.log('[tick] FileSearchDrive: ' + e.message); }
   try { if (typeof Autorizacoes !== 'undefined') { Autorizacoes.acompanharPendentes(8); Autorizacoes.limparExpiradas(180); } } catch (e) { Logger.log('[tick] Autorizacoes: ' + e.message); }
   try { if (typeof Secretaria !== 'undefined') Secretaria.limparExpiradas(30); } catch (e) { Logger.log('[tick] Secretaria: ' + e.message); }
   // B1 · limpeza de telemetria antiga (agente_eventos/feedback) — no máx. 1x/dia.

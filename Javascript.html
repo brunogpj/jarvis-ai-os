@@ -94,6 +94,26 @@
         reader.readAsDataURL(file);
       }
 
+      /* Miniatura (JPEG, até ~150 KB) de uma imagem anexada, guardada com a mensagem. 19/10: o print do Mercado Pago "não abria mais" na conversa porque a imagem só vivia na memória
+         da página; ao reabrir a conversa só sobrava o nome. Agora a miniatura vai junto e reabre (o arquivo original só é guardado no Drive se você pedir para arquivar). */
+      function miniaturaDe(dataUrl, cb) {
+        var img = new Image();
+        img.onload = function () {
+          function gerar(max, q) {
+            var esc = Math.min(1, max / Math.max(img.width, img.height)), c = document.createElement("canvas");
+            c.width = Math.max(1, Math.round(img.width * esc)); c.height = Math.max(1, Math.round(img.height * esc));
+            c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+            return c.toDataURL("image/jpeg", q);
+          }
+          var t = gerar(900, 0.7);
+          if (t.length > 150000) t = gerar(640, 0.55);
+          if (t.length > 150000) t = gerar(480, 0.5);
+          cb(t.length <= 150000 ? t : "");
+        };
+        img.onerror = function () { cb(""); };
+        img.src = dataUrl;
+      }
+
       /* Avatar do cadastro */
       avatarPic.addEventListener("click", function () { avatarInput.click(); });
       avatarInput.addEventListener("change", function () {
@@ -569,7 +589,7 @@
         if (type.indexOf("image/") === 0) {
           resizeImageFile(file, 1280, function (dataUrl) {
             var m = dataUrl.match(/^data:([^;]+);base64,(.*)$/); if (!m) return;
-            _addPending({ tipo: "inline", mimeType: m[1], data: m[2], dataUrl: dataUrl, nome: name, isImage: true });
+            miniaturaDe(dataUrl, function (th) { _addPending({ tipo: "inline", mimeType: m[1], data: m[2], dataUrl: dataUrl, nome: name, isImage: true, thumb: th }); });
           });
         } else if (/^video\//.test(type) || /\.(mp4|m4v|mov|3gp|mkv)$/i.test(name)) {
           // 🎬 Vídeo: o Gemini assiste IMAGEM e ÁUDIO. Inline até ~12 MB (≈1–2 min) por limite da API.
@@ -716,6 +736,7 @@
         var att = attachmentStore[Number(el.getAttribute("data-att"))];
         if (!att) return;
         if (att.driveUrl) { window.open(att.driveUrl, "_blank"); return; } // abre no Google Drive
+        if (att.semOriginal) { toast("O arquivo original desta mensagem não foi guardado (o anexo só fica salvo quando você pede para arquivar)."); return; }
         if (att.isImage) {
           openLightbox('<img src="' + att.dataUrl + '" alt="' + escapeHtml(att.nome || "imagem") + '" />');
         } else if (att.tipo === "texto") {
@@ -1222,7 +1243,7 @@
         var t0 = Date.now();
         var _toPayload = function (a) {
           return a.tipo === "inline"
-            ? { tipo: "inline", mimeType: a.mimeType, data: a.data, nome: a.nome }
+            ? { tipo: "inline", mimeType: a.mimeType, data: a.data, nome: a.nome, thumb: a.thumb || "" }
             : { tipo: "texto", nome: a.nome, texto: a.texto };
         };
         var payload = null;
@@ -1356,8 +1377,8 @@
             messages.innerHTML = "";
             welcome = null;
             (res.mensagens || []).forEach(function (m) {
-              var att = (m.anexo && (m.anexo.nome || m.anexo.url))
-                ? { isImage: false, nome: m.anexo.nome || "anexo", driveUrl: m.anexo.url || "" }
+              var att = (m.anexo && (m.anexo.nome || m.anexo.url || m.anexo.thumb))
+                ? { isImage: !!m.anexo.thumb, dataUrl: m.anexo.thumb || "", nome: m.anexo.nome || "anexo", driveUrl: m.anexo.url || "", semOriginal: !m.anexo.thumb && !m.anexo.url }
                 : null;
               if (m.role === "assistant") {
                 // Reidrata miniaturas de imagem geradas (antes apareciam como URL crua no histórico).
@@ -1366,7 +1387,14 @@
                 parsedH.urls.forEach(function (u) { anexarImagemGerada(wrapH, u); });
                 anexarYouTube(wrapH, parsedH.texto);
               } else {
-                addMessage("user", m.text, att, m.ts);
+                var wrapU = addMessage("user", m.text, att, m.ts);
+                // anexos extras da mesma mensagem (miniaturas)
+                ((m.anexo && m.anexo.outros) || []).forEach(function (o) {
+                  if (!o || !o.thumb || !/^data:image\/jpeg;base64,/.test(o.thumb)) return;
+                  var ix = attachmentStore.push({ isImage: true, dataUrl: o.thumb, nome: o.nome || "imagem" }) - 1, im = document.createElement("img");
+                  im.className = "msg__img"; im.setAttribute("data-att", String(ix)); im.alt = "anexo"; im.src = o.thumb;
+                  var corpoU = wrapU.querySelector(".msg__text"); if (corpoU && corpoU.parentNode) corpoU.parentNode.insertBefore(im, corpoU);
+                });
               }
               chatHistory.push({ role: m.role, text: m.text });
             });
@@ -1660,6 +1688,7 @@
         el.innerHTML = '<div class="dash-card__head"><span class="dash-card__icon">📲</span><h3>Notificações do celular</h3>' + badge + '<button type="button" class="dash-card-btn" id="ntRefresh" title="Atualizar">↻</button></div>' +
           '<div class="dash-card__sub">O que o Jarvis entendeu de cada notificação financeira. Vermelho = tem valor e não foi registrado na caderneta.</div>' +
           '<div class="fin-filtros">' + filtros + '</div>' +
+          (d.ultimoPush ? '<div class="dash-card__sub" title="Se um app fica muitos dias sem push mas você usou o cartão, o celular pode ter ficado sem sinal: a macro não reenvia depois que volta. Mande o print dos gastos que eu concilio.">Último push recebido: ' + Object.keys(d.ultimoPush).map(function (k) { var u = d.ultimoPush[k]; return escapeHtml(k) + ' <b>' + (u ? escapeHtml(u.quando) : 'nenhum nos últimos registros') + '</b>'; }).join(' · ') + '</div>' : '') +
           (rows ? '<ul class="nt-lista">' + rows + '</ul>' : '<p class="dash-empty">' + (notifFiltro === "alertas" ? "Nenhum alerta ✅" : "Nada por aqui.") + '</p>');
         el.querySelector("#ntRefresh").addEventListener("click", function (ev) { ev.stopPropagation(); carregarCardNotif(); });
         el.querySelectorAll(".fin-filtro").forEach(function (b) { b.addEventListener("click", function (ev) {

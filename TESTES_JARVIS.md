@@ -323,6 +323,12 @@ Sem você pedir, no tick de 15 min, em duas janelas: **manhã 9–11h** e **noit
 | 1.192 | Laboratório → "Com busca na web" + Comparar com um segundo modelo | duas respostas lado a lado (3.8-flash × 2.5-flash), com as buscas feitas, as fontes e o fim da geração (o 2.5 parou em MAX_TOKENS: o raciocínio gastou 945 dos 1.024 tokens) | ✅ | 16/10 ao vivo: 13,2 s e 7,8 s |
 | 1.193 | Laboratório → 💾 Salvar na galeria; automação do tipo Laboratório → ▶ Executar | guarda modelo, instrução, ferramentas e o pedido; executar abre o Laboratório já preenchido e roda | ⚠️ | teste automático; o `prompt()` de nome não foi acionado no navegador de teste |
 | 1.194 | Limites do Laboratório | modelo fora da lista, pedido vazio ou gigante, JSON junto de ferramentas, teto do mês perto (92%) e 40 execuções por hora são recusados sem chamar a API | ✅ | testes automáticos |
+| 1.195 | Chat: anexar o print do Mercado Pago e pedir "veja quais gastos não foram inseridos na caderneta e corrija" | tabela do que o print mostra (✅ já na caderneta / ➕ falta), pergunta "Registro as N que faltam, no total de R$ X?"; só o "sim" registra (origem mp, sem duplicar o que você digitou) e "desfaz" tira o conjunto | ⚠️ | pipeline provado ao vivo com um print sintético (`ler_debug` `conciliarTeste`: 4 saídas lidas, 3 já na caderneta, 1 falta; a entrada foi ignorada); falta você mandar o seu print real |
+| 1.196 | Chat: "gastei 35 no mercado no débito", "sim", "desfaz" | o chat usa a mesma cadeia de ações da voz (propor, sim, desfaz) | ⚠️ | teste automático; falta ver no chat |
+| 1.197 | Chat: "Veja os ajustes na caderneta" | responde o resumo do mês DA CADERNETA (antes o modelo inventou um "novo panorama" com números dele) | ⚠️ | teste automático |
+| 1.198 | Resposta do modelo com ≥ 2 valores da caderneta sem consulta da caderneta | é trocada por um aviso e o evento `hook:financeiro_sem_fonte` fica no log | ⚠️ | teste automático |
+| 1.199 | Reabrir uma conversa com imagem anexada e clicar no anexo | abre a miniatura (a de antes de 19/10 não tem original: avisa em vez de ficar muda) | ⚠️ | testes automáticos; anexar imagem no navegador de teste não é possível |
+| 1.200 | Dashboard → Notificações → "Último push recebido" | mostra há quanto tempo chegou o último push de Mercado Pago, Bradesco, Itaú e Swile | ✅ | teste automático |
 | 1.139 | Interruptores: `FERRAMENTAS_JEV`, `CONFIRMA_JEV`, `INJECAO_JEV`, `ACAO_JEV`, `CATEGORIA_JEV` = nao | volta ao comportamento anterior | ✅ | testes automáticos |
 
 ### 1g. 🔔 Notificações do celular 🗣️

@@ -1725,6 +1725,18 @@ function verificarCadeiaTelemetria(limite) {
   return out;
 }
 
+/** Resposta do modelo que apresenta números da caderneta (saídas, sobra, previsão...) sem consulta da caderneta no turno: troca por um aviso. PURA.
+ *  Só vale para o texto que veio do modelo; as respostas do código (Financas.responder) nunca passam por aqui. */
+function _finSemFonte(msg, resp) {
+  var r = String(resp || ''), m = String(msg || '');
+  var vals = {}; (r.match(/R\$\s*\d[\d.]*(?:,\d{2})?/g) || []).forEach(function (v) { vals[v.replace(/\s+/g, '')] = 1; });
+  if (Object.keys(vals).length < 2) return r;
+  if (!/\b(caderneta|sobra|sa[ií]das|previs[aã]o|livre|panorama|fechamento|renda)\b/i.test(r)) return r;
+  if (!/\b(caderneta|gastos?|sa[ií]das?|sobra|livre|fatura|ajustes?|m[eê]s)\b/i.test(m)) return r;
+  return 'Não vou responder isso de cabeça: os valores da caderneta (saídas, sobra, previsão) só valem quando vêm dela, e eu não consultei nada neste turno. ' +
+         'Pergunte "como foi o mês?" ou "quanto tenho livre?" que a resposta sai direto da caderneta. Para lançar um gasto, diga por exemplo "gastei 150 no posto no crédito".';
+}
+
 function askIA(mensagem, token, historico, anexo, conversaId) {
   var sessao = getSessionUser(token);
   if (!sessao) return { resposta: '⚠️ Sessão expirada. Faça login novamente.' };
@@ -1748,11 +1760,14 @@ function askIA(mensagem, token, historico, anexo, conversaId) {
     anexoConjunto = _lstA.length > 1 ? _lstA : null;
   }
   var temAnexo = anexo && ((anexo.tipo === 'inline' && anexo.data) || (anexo.tipo === 'texto' && anexo.texto));
+  // Miniaturas das imagens para reabrir o anexo no histórico (19/10). Só JPEG pequeno, no máximo 3 e ~420 KB no total.
+  var _miniaturas = [];
+  try { _miniaturas = _miniaturasValidas(anexoConjunto || (anexo ? [anexo] : [])); } catch (eMi) { _miniaturas = []; }
   if ((!mensagem || !mensagem.toString().trim()) && !temAnexo) {
     return { resposta: 'Por favor, envie uma mensagem.' };
   }
 
-  var extra = {};
+  var extra = { miniaturas: _miniaturas };
   if (temAnexo) {
     // 1) Bloqueio de credenciais — não envia à IA nem salva.
     var amostra = anexo.tipo === 'texto' ? anexo.texto : (anexo.nome || '');
@@ -1787,9 +1802,20 @@ function askIA(mensagem, token, historico, anexo, conversaId) {
       (extra.categoria || '') + ' — URL do bruto: ' + extra.anexoUrl + ' (fileId: ' + extra.fileId + '). ' +
       'Se for ingerir na wiki, crie a página em sources/ referenciando essa fonte bruta e siga o protocolo de ingestão.]';
   }
+  // CADERNETA NO CHAT (19/10). A cadeia de ações (gasto, pagamento, aplicação, "sim", "desfaz"...) só existia na voz: no chat o modelo respondia "não tenho ferramenta para a caderneta" e,
+  // numa segunda mensagem, inventou um "novo panorama" com números dele. Agora o chat usa a MESMA cadeia da voz (o modelo continua sem gravar nada) e um print com pedido de ajuste
+  // vira conciliação (Conciliacao.js: o modelo só lê a imagem; o código compara e propõe; só o "sim" registra).
+  var _donoCh = Jarvis._isOwner(sessao.email);
+  if (_donoCh && !extra.resposta) {
+    try {
+      if (temAnexo) { var _cv = Conciliacao.executar(String(mensagem || ''), anexoConjunto || [anexo]); if (_cv) extra.resposta = _cv; }
+      else if (typeof Financas !== 'undefined' && Financas.conversar) { var _fc = Financas.conversar(String(mensagem || '')); if (_fc && _fc.resp) extra.resposta = _fc.resp; }
+    } catch (eFin) {}
+  }
+  var _viaCodigo = !!extra.resposta;
   // MODO DIRETO: leituras determinísticas (e-mails/agenda/tarefas/…) sem LLM → economiza cota e
   // funciona mesmo com o Gemini esgotado. Só intercepta padrões de LEITURA inequívocos (do dono).
-  if (!temAnexo) {
+  if (!temAnexo && !extra.resposta) {
     try {
       var _direto = _rotaDireta(String(mensagem || ''), sessao.email, Jarvis._isOwner(sessao.email));
       if (_direto) extra.resposta = _direto;
@@ -1810,6 +1836,13 @@ function askIA(mensagem, token, historico, anexo, conversaId) {
       // Sem cota: honesto (ações/anexos) ou reserva ESTRITA (só conversa). NUNCA inventa resultado.
       extra.resposta = _semCotaFallback(e.message, msgJarvis, historico, temAnexo) || _erroAmigavel(e.message);
     }
+  }
+  // TRAVA (19/10): resposta do MODELO com números da caderneta que nenhuma consulta da caderneta produziu neste turno.
+  if (!_viaCodigo && !temAnexo && _donoCh) {
+    try {
+      var _ss = _finSemFonte(String(mensagem || ''), extra.resposta);
+      if (_ss !== extra.resposta) { extra.resposta = _ss; try { Jarvis.registrarEvento({ tool: 'hook:financeiro_sem_fonte', ok: true, ms: 0, resumo: 'resposta do modelo com valores da caderneta sem consulta [texto não registrado]' }); } catch (eEv) {} }
+    } catch (eSs) {}
   }
   // Fala no celular: garante o disparo se o dono pediu "fala ... no android/voz alta" (pula se já falou).
   try { _falarRespostaNoCelular(String(mensagem || ''), extra.resposta, Jarvis._isOwner(sessao.email)); } catch (eFc) {}
@@ -1995,6 +2028,18 @@ function _tituloConversa(mensagem, anexo) {
   return 'Nova conversa';
 }
 
+/** Miniaturas aceitas para guardar com a mensagem: JPEG em data URL, até 3, ~150 KB cada e ~420 KB no total (o documento do Firestore tem 1 MB). PURA. */
+function _miniaturasValidas(anexos) {
+  var out = [], total = 0;
+  (anexos || []).forEach(function (a) {
+    var th = a && a.thumb;
+    if (out.length >= 3 || typeof th !== 'string' || th.length > 150000 || !/^data:image\/jpeg;base64,[A-Za-z0-9+\/=]+$/.test(th)) return;
+    if (total + th.length > 420000) return;
+    total += th.length; out.push({ nome: String(a.nome || 'imagem').slice(0, 80), thumb: th });
+  });
+  return out;
+}
+
 function _persistirTurno(uid, conversaId, mensagem, anexo, extra) {
   if (extra.bloqueado) return conversaId || null; // anexo bloqueado: nada a persistir
   // Não salva respostas de erro/aviso (evita poluir o histórico e o contexto de conversas futuras).
@@ -2017,6 +2062,8 @@ function _persistirTurno(uid, conversaId, mensagem, anexo, extra) {
       categoria: extra.categoria || '',
       isImage: !!(anexo.tipo === 'inline' && String(anexo.mimeType || '').indexOf('image/') === 0)
     };
+    var _mins = extra.miniaturas || [];
+    if (_mins.length) { anexoRef.isImage = true; anexoRef.thumb = _mins[0].thumb; if (_mins.length > 1) anexoRef.outros = _mins.slice(1); }
   }
   Firestore.setDoc(col, Utilities.getUuid(), { role: 'user', text: String(mensagem || ''), ts: agora, anexo: anexoRef });
   Firestore.setDoc(col, Utilities.getUuid(), { role: 'assistant', text: String(extra.resposta || ''), ts: agora + 1, anexo: null });
@@ -4317,6 +4364,13 @@ function doPost(e) {
               return { frase: f, resposta: d == null ? null : String(d).slice(0, 2500) };
             });
           } catch (eRt) { saida.relatorioTeste = { erro: eRt.message }; }
+        }
+        // Conciliação por print SEM gravar nada e sem criar proposta: {base64, mime, texto, hoje?}. Lê a imagem com o modelo e compara com a caderneta de verdade.
+        if (body.conciliarTeste) {
+          try {
+            var _ct = body.conciliarTeste, _an = [{ tipo: 'inline', mimeType: String(_ct.mime || 'image/png'), data: String(_ct.base64 || ''), nome: 'teste' }];
+            saida.conciliarTeste = { pedido: Conciliacao.ehPedido(String(_ct.texto || '')), resultado: Conciliacao.analisar(_an, String(_ct.hoje || Utilities.formatDate(new Date(), 'America/Sao_Paulo', 'yyyy-MM-dd'))) };
+          } catch (eCt2) { saida.conciliarTeste = { erro: eCt2.message }; }
         }
         // Avisos proativos da caderneta: o que sairia agora na janela pedida ('manha'|'noite'), sem enviar nem gravar.
         if (body.cadernetaAvisos) { try { saida.cadernetaAvisos = Financas.verificarAvisos({ ensaio: true, janela: String(body.cadernetaAvisos) === 'noite' ? 'noite' : 'manha' }); } catch (eCa) { saida.cadernetaAvisos = { erro: eCa.message }; } }
@@ -9730,7 +9784,13 @@ function dashboardNotificacoes(token) {
              quando: em ? Utilities.formatDate(new Date(em), TZ, dia === hoje ? 'HH:mm' : 'dd/MM HH:mm') : '',
              financeira: !!c, classe: c ? c.classe : 'comum', rotulo: c ? c.rotulo : '', alerta: !!(c && c.alerta), valor: c && c.valor != null ? c.valor : null, reprocessavel: !!(c && c.reprocessavel) };
   });
-  return { ok: true, itens: itens, resumo: { total: itens.length, financeiras: itens.filter(function (i) { return i.financeira; }).length, alertas: itens.filter(function (i) { return i.alerta; }).length }, geradoEm: agora };
+  // Último push recebido de cada app financeiro, para notar silêncio (19/10: compras no cartão do fim de semana não chegaram; o celular pode ter ficado sem sinal e a macro não reenvia).
+  var ultimoPush = {};
+  [['Mercado Pago', /mercado ?pago/i], ['Bradesco', /bradesco/i], ['Itaú', /ita[uú]/i], ['Swile', /swile/i]].forEach(function (a) {
+    var achou = notifs.map(function (x) { return x.dados || x; }).filter(function (d) { return a[1].test(String(d.app || '')) && !/investiment/i.test(String(d.app || '')) && Number(d.em) > 0; }).sort(function (p, q) { return Number(q.em) - Number(p.em); })[0];
+    ultimoPush[a[0]] = achou ? { em: Number(achou.em), quando: _haMin(Number(achou.em), agora) } : null;
+  });
+  return { ok: true, itens: itens, ultimoPush: ultimoPush, resumo: { total: itens.length, financeiras: itens.filter(function (i) { return i.financeira; }).length, alertas: itens.filter(function (i) { return i.alerta; }).length }, geradoEm: agora };
 }
 
 /** "Reprocessar": refaz o registro de uma notificação de banco que o Jarvis reconhece mas não registrou. Idempotente (o id vem do conteúdo + dia). */

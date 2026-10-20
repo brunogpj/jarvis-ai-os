@@ -381,6 +381,8 @@ var Financas = (function () {
     if (!s) return null;
     // "Mercado Pago" é o BANCO: sem isto, "gastos do cartão Mercado Pago" caía no orçamento do supermercado (15/10).
     s = s.replace(/\bmercado ?pago\b/g, 'mercadopago');
+    // "veja os ajustes na caderneta" / "confira os lançamentos da caderneta": quem confere é a caderneta, não o modelo (19/10: ele inventou um "novo panorama" com saídas e sobra dele).
+    if (/\b(veja|ve|confira|confere|olha|olhe|checa|checar|verifique)\b.{0,40}\b(ajustes?|lancamentos?|registros?)\b.{0,30}\bcaderneta\b/.test(s)) return { tipo: 'mes' };
     // CONSULTOR (fase 4): distribuição da carteira, quanto aportar, simulação, reserva contra o alvo, metas. Recebe a frase SEM tirar
     // vírgula e ponto (são decimais e milhar: "1,5 milhão", "1.000") e vem antes das regras abaixo, que cortam esses sinais.
     if (typeof Consultor !== 'undefined') {
@@ -925,6 +927,7 @@ var Financas = (function () {
       case 'ensinarCategoria': return 'a regra "' + (u.termo || '') + '" e a troca de categoria que veio com ela';
       case 'cotas': return 'a quantidade de cotas de ' + ((u.itens || []).map(function (i) { return i.ticker; }).join(', ') || 'um fundo');
       case 'provento': return 'o lançamento de ' + v + ' em proventos de ' + ((u.itens || []).map(function (i) { return i.ticker; }).join(', ') || 'fundos');
+      case 'conciliar': return 'o registro de ' + ((u.itens || []).length) + ' gasto(s) lidos do print, ' + v;
       case 'consultor': return 'o ajuste ' + (u.rotulo || 'do consultor');
       default: return 'a última ação';
     }
@@ -1406,6 +1409,45 @@ var Financas = (function () {
     }
   };
 
+
+  // ── CONCILIAÇÃO POR PRINT (19/10) ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+  // Ele anexou o print dos gastos do Mercado Pago pedindo que a caderneta fosse ajustada; o modelo respondeu "sem ferramenta" (e, depois, inventou números).
+  // Agora o CÓDIGO lê o print (Conciliacao.js), compara com as despesas da caderneta e propõe só o que falta; o "sim" registra pela mesma rota estreita de sempre
+  // (origem mp, com dedup contra o que ele digitou) e o "desfaz" tira o conjunto.
+  function lancamentos(de, ate) {
+    var url = String(_p('FIN_API_URL') || '').replace(/\/+$/, ''), token = _p('FIN_API_TOKEN');
+    if (!url || !token) return { ok: false, erro: 'não configurado' };
+    var res;
+    try { res = UrlFetchApp.fetch(url + '/api/jarvis/lancamentos?de=' + encodeURIComponent(de) + '&ate=' + encodeURIComponent(ate), { method: 'get', headers: { Authorization: 'Bearer ' + token }, muteHttpExceptions: true }); }
+    catch (e) { return { ok: false, erro: 'sem conexão' }; }
+    if (res.getResponseCode() !== 200) return { ok: false, erro: 'HTTP ' + res.getResponseCode() };
+    try { return { ok: true, despesas: JSON.parse(res.getContentText()).despesas || [] }; } catch (e2) { return { ok: false, erro: 'resposta inválida' }; }
+  }
+  /** Guarda a proposta de conciliação (10 min) para o "sim". itens = [{chave, data, valor, meio, categoria, descricao}]. */
+  function proporConciliacao(itens) {
+    var total = itens.reduce(function (a, i) { return a + Number(i.valor); }, 0);
+    _cachePut('fin_pendente', { tipo: 'conciliar', itens: itens, valor: Math.round(total * 100) / 100 }, 600);
+  }
+  ACOES.conciliar = {
+    propor: function () { return null; },   // a proposta nasce do print (Conciliacao.js), não de uma frase
+    executar: function (p) {
+      var feitos = [], dup = 0, falhas = 0;
+      (p.itens || []).forEach(function (i) {
+        var r = registrarGasto({ origem: 'mp', chave: i.chave, data: i.data, valor: i.valor, meio: i.meio, categoria: i.categoria, descricao: i.descricao });
+        if (!r.ok) falhas++; else if (r.criado) feitos.push(i); else dup++;
+      });
+      if (!feitos.length && !dup) return { resp: 'Não consegui registrar agora. Não gravei nada; mande o print de novo daqui a pouco.' };
+      var tot = feitos.reduce(function (a, i) { return a + Number(i.valor); }, 0);
+      return { resp: (feitos.length ? 'Registrei ' + feitos.length + (feitos.length === 1 ? ' gasto' : ' gastos') + ' (' + _brl(tot) + '): ' + feitos.map(function (i) { return nomeCurto(i.descricao) + ' ' + _brl(i.valor); }).join('; ') + '.' : 'Nada novo para registrar.') +
+                     (dup ? ' ' + dup + (dup === 1 ? ' já existia e não foi duplicado.' : ' já existiam e não foram duplicados.') : '') + (falhas ? ' ' + falhas + ' não consegui registrar.' : '') + (feitos.length ? ' Diga desfaz para tirar.' : ''),
+               desfazer: feitos.length ? { tipo: 'conciliar', itens: feitos.map(function (i) { return i.chave; }), valor: Math.round(tot * 100) / 100 } : undefined };
+    },
+    desfazer: function (u) {
+      var n = 0;
+      (u.itens || []).forEach(function (c) { var r = desfazerGasto('mp', c); if (r.ok && r.removido) n++; });
+      return n ? 'Desfeito: tirei ' + n + (n === 1 ? ' gasto' : ' gastos') + ' da conciliação.' : 'Não consegui desfazer. Ajuste na caderneta.';
+    }
+  };
 
   // ── COTAS e PROVENTOS dos FIIs por voz (15/10), no molde propor → "sim" → "desfaz" ───────────────────────────────────────────────────────
   // "tenho 5 cotas do KNRI11, 5 do HGLG11 e 65 do MXRF11" guarda a quantidade; "lança os proventos dos fundos" soma (cotas × valor do último rendimento do Funds Explorer)
@@ -1986,7 +2028,7 @@ var Financas = (function () {
     } catch (e) { return { ok: false, erro: 'falha ao montar o painel' }; }
   }
 
-  return { painel: painel, configurado: configurado, resumo: resumo, falar: falar, interpretar: interpretar, responder: responder, AJUDA: AJUDA,
+  return { lancamentos: lancamentos, proporConciliacao: proporConciliacao, painel: painel, configurado: configurado, resumo: resumo, falar: falar, interpretar: interpretar, responder: responder, AJUDA: AJUDA,
            avisos: avisos, verificarAvisos: verificarAvisos,
            registrarGastoSwile: registrarGastoSwile, desfazerGastoSwile: desfazerGastoSwile, falarSaldoSwile: falarSaldoSwile,
            interpretarRecarga: interpretarRecarga, conversar: conversar, registrarRecarga: registrarRecarga, desfazerRecarga: desfazerRecarga,

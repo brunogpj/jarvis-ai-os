@@ -7972,6 +7972,7 @@ function verificarPontoBatido(opts) {
   if (!alvo) return { ok: true, nenhumPontoVencido: true };
 
   var chave = 'PONTO_COBRADO_' + hoje + '_' + alvo.min;
+  _pontoLimparMarcasAntigas(p, hoje);   // 08/11: só a marca de HOJE é lida; as dos dias anteriores acumulavam 4 propriedades por dia útil (190 em 08/11)
   if (p.getProperty(chave)) return { ok: true, jaCobrado: true, ponto: alvo.min };
 
   // Chegou notificação do app de ponto perto do horário?
@@ -7989,6 +7990,14 @@ function verificarPontoBatido(opts) {
   var r = _falarProativo('ponto_ausente', txt, { cooldownMin: 60, simular: opts.simular });
   if (!opts.simular && r.falou === true) p.setProperty(chave, 'cobrado');
   return { ok: true, ponto: hh, confirmado: false, cobrou: r.falou, bloqueado: r.bloqueado || null, texto: txt };
+}
+
+/** Apaga as marcas PONTO_COBRADO_<data>_<minuto> de dias que já passaram. Chamada ao gravar uma marca nova, então custa quase nada. */
+function _pontoLimparMarcasAntigas(p, hoje) {
+  try {
+    var manter = 'PONTO_COBRADO_' + hoje + '_';
+    p.getKeys().forEach(function (k) { if (k.indexOf('PONTO_COBRADO_') === 0 && k.indexOf(manter) !== 0) p.deleteProperty(k); });
+  } catch (eLm) { /* limpar é um favor: nunca derruba a cobrança */ }
 }
 
 /** Diag da cobrança de ponto. args {simular:false} cobra de verdade · {limpar:true}. */

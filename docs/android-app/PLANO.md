@@ -31,7 +31,7 @@ Rascunho de 08/11/2026. Decisões já tomadas com o dono: **app Android próprio
 
 ## Fases propostas
 
-0. **Preparar o ambiente:** Android SDK (command-line tools), Gradle, um projeto Kotlin vazio que compila e instala por ADB. Estado hoje: JDK 21 presente; **sem Android SDK nem Gradle**.
+0. **Preparar o ambiente (FEITO em 08/11/2026):** Android SDK (command-line tools), Gradle, um projeto Kotlin vazio que compila e instala por ADB. Estado hoje: JDK 21 presente; **sem Android SDK nem Gradle**.
 1. **Receber ordens e falar:** FCM + `falar` + ack. Substitui a macro Falar. É onde está a dor maior (volume, fila, arquivo).
 2. **Notificações:** captura com fila offline e reenvio. Substitui "Notificações Premium" e Sisponto.
 3. **Voz de entrada:** widget e `voice_command` com `rid` e repetição segura.
@@ -53,3 +53,14 @@ Rascunho de 08/11/2026. Decisões já tomadas com o dono: **app Android próprio
 2. Voz: apertar para falar basta no começo, ou a palavra de ativação é obrigatória?
 3. Onde guardar o código: pasta `android/` neste repositório ou repositório separado?
 4. Quanto tempo de convivência com o MacroDroid antes de desligá-lo?
+
+
+## Fase 0 — resultado (08/11/2026)
+
+App vazio `dev.jarvis.companion` v0.0.1-fase0 compilou (AGP 8.13.2, Gradle 8.14.6, Kotlin 2.2.20, compileSdk 35, targetSdk 34, minSdk 26) e abriu no Redmi Note 11 (2201117TL, Android 13, API 33), confirmado por captura de tela. Projeto em `C:UsersBrunoprojetosjarvis-android` (repositório local, fora deste). SDK em `C:UsersBrunoAndroidSdk`.
+
+Achados do Xiaomi/MIUI que valem para as próximas fases:
+- `adb install` e `pm install` falham com `INSTALL_FAILED_USER_RESTRICTED` mesmo com Depuração USB, Instalar via USB e Config. de segurança ligadas: o MIUI abre uma tela de verificação com tempo curto e protegida contra captura. **Caminho que funcionou:** `adb push` do APK para `/sdcard/Download` e instalar pelo app Arquivos (instalador do pacote), sem pressa.
+- `adb shell input tap` falha com SecurityException (INJECT_EVENTS): não dá para tocar na tela por ADB. O scrcpy usa o mesmo canal e tem a mesma limitação. A captura (`adb exec-out screencap -p`) funciona, exceto em telas protegidas.
+- `sdk.dir` do `local.properties` precisa de barras normais (`C:/Users/...`).
+- Há dois `adb` na máquina (`D:Documentsplatform-tools` e o do SDK); usar um só por vez para não derrubar o servidor um do outro.

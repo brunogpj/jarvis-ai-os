@@ -25,7 +25,7 @@ Projeto Google Apps Script gerenciado localmente via clasp.
 
 | Deployment ID | Versão | Descrição |
 |---|---|---|
-| `<DEPLOYMENT_ID>` | **@569** | **ATIVA** — "Nova cara fases 2 a 4: casca, chat e dashboard em tres zonas". Anteriores: @568 (fase 1, sem Laboratorio e Automacoes), @566 (File Search desligado, aviso do teto do Google) |
+| `<DEPLOYMENT_ID>` | **@570** | **ATIVA** — "Canal do app Android (FCM, desligado): registro, confirmacao e envio de fala". Anterior: @569 (nova cara fases 2 a 4). Anteriores: @568 (fase 1, sem Laboratorio e Automacoes), @566 (File Search desligado, aviso do teto do Google) |
 | `<DEPLOYMENT_ID>` | @25 | Antiga — "TesteJobs" |
 | `<DEPLOYMENT_ID>` | @HEAD | Cabeça (muda a cada push, não é a de produção) |
 

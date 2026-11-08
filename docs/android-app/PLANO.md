@@ -64,3 +64,7 @@ Achados do Xiaomi/MIUI que valem para as próximas fases:
 - `adb shell input tap` falha com SecurityException (INJECT_EVENTS): não dá para tocar na tela por ADB. O scrcpy usa o mesmo canal e tem a mesma limitação. A captura (`adb exec-out screencap -p`) funciona, exceto em telas protegidas.
 - `sdk.dir` do `local.properties` precisa de barras normais (`C:/Users/...`).
 - Há dois `adb` na máquina (`D:Documentsplatform-tools` e o do SDK); usar um só por vez para não derrubar o servidor um do outro.
+
+## Fase 1 — estado (08/11/2026)
+
+Servidor publicado (@570, canal desligado: `ANDROID_FALAR` não existe até alguém ligar) e app `0.1.0-fase1` compilado, em `android/`. Falta o projeto Firebase (ver `FIREBASE.md`) para o primeiro push de verdade. O `/exec` devolveu HTML numa chamada de teste e acertou nas quatro seguintes, o mesmo defeito de sempre: por isso a fila de confirmações do app repete.

@@ -57,6 +57,7 @@
         google.script.run
           .withSuccessHandler(function (s) {
             if (!s) return;
+            var wi = document.getElementById("whatsappItem"); if (wi) wi.hidden = !s.whatsappAtivo;
             var cls = s.estado === "reserva" ? "reserva" : (s.estado === "offline" ? "offline" : "");
             el.innerHTML = '<span class="status-dot ' + cls + '"></span> ' + (s.texto || "Online");
             el.title = s.reserva ? "Provedor reserva (OpenRouter/Anthropic/NVIDIA) configurado" : "";
@@ -432,7 +433,7 @@
 
       /* ---------- Tema (persistente) ---------- */
       var savedTheme = localStorage.getItem("softtech-theme");
-      if (savedTheme === "dark") { root.setAttribute("data-theme", "dark"); themeToggle.checked = true; }
+      root.setAttribute("data-theme", savedTheme === "light" ? "light" : "dark"); themeToggle.checked = savedTheme !== "light";   // 08/11: escuro é o padrão; só vira claro se a pessoa escolheu
       themeToggle.addEventListener("change", function () {
         var dark = themeToggle.checked;
         root.setAttribute("data-theme", dark ? "dark" : "light");
@@ -1415,6 +1416,7 @@
       }
 
       if (chatNav) chatNav.addEventListener("click", function () { setNavActive(chatNav); novaConversa(); });
+      setNavActive(chatNav);   // 08/11: o Chat é a tela inicial, então já abre marcado
       if (convNewBtn) convNewBtn.addEventListener("click", function (e) { e.stopPropagation(); novaConversa(); });
 
       /* ===================== CONEXÕES WHATSAPP ===================== */
@@ -1711,7 +1713,6 @@
       /* ===== 🤖 CUSTOS DE IA e 🩺 SAÚDE DO SISTEMA (cartões do Dashboard, 16/10) — cada um com a sua chamada ===== */
       function montarCardsCustosSaude(cards) {
         ["dashCustosCard", "dashSaudeCard"].forEach(function (id) { var o = document.getElementById(id); if (o) o.remove(); });
-        var ancora = document.getElementById("dashNotifCard");
         function criar(id, icone, titulo) {
           var c = document.createElement("div"); c.className = "dash-card dash-card--info dash-wide"; c.id = id;
           c.innerHTML = '<div class="dash-card__head"><span class="dash-card__icon">' + icone + '</span><h3>' + titulo + '</h3></div><p class="dash-empty">Carregando…</p>';

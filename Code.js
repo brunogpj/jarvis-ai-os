@@ -2250,12 +2250,13 @@ function estadoAssistente(token) {
   var sessao = getSessionUser(token);
   if (!sessao) return { estado: 'offline', texto: 'Offline' };
   var p = PropertiesService.getScriptProperties();
+  var wa = false; try { wa = _whatsappAtivo(); } catch (eWa) {}   // 08/11: o menu esconde o WhatsApp enquanto ele estiver desligado
   var temGemini = !!p.getProperty('GEMINI_API_KEY');
   var temReserva = !!(p.getProperty('OPENROUTER_API_KEY') || p.getProperty('ANTHROPIC_API_KEY') || p.getProperty('NVIDIA_API_KEY'));
   // Sem checar cota ao vivo (custaria 1 chamada). Reporta capacidade configurada.
-  if (temGemini) return { estado: 'online', texto: 'Online', reserva: temReserva };
-  if (temReserva) return { estado: 'reserva', texto: 'Modo reserva', reserva: true };
-  return { estado: 'offline', texto: 'Sem IA configurada' };
+  if (temGemini) return { estado: 'online', texto: 'Online', reserva: temReserva, whatsappAtivo: wa };
+  if (temReserva) return { estado: 'reserva', texto: 'Modo reserva', reserva: true, whatsappAtivo: wa };
+  return { estado: 'offline', texto: 'Sem IA configurada', whatsappAtivo: wa };
 }
 
 /**

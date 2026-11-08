@@ -1,9 +1,10 @@
 <style>
     /* ============================================================
-       DESIGN TOKENS — Neumorphism + Glassmorphism
-       Estratégia (ver wiki/concepts): vidro nas camadas flutuantes
-       (sidebar, topbar, composer) sobre fundo com gradiente;
-       neumorfismo nos controles táteis (toggle de tema, botões).
+       DESIGN TOKENS — vidro limpo + controles planos (refinado em 08/11)
+       Vidro só nas camadas flutuantes (sidebar, topbar, composer) sobre o fundo
+       com gradiente. Os controles (botões, campos, toggle) eram neumórficos, com
+       duas sombras opostas; agora têm um filete de 1px e uma sombra curta
+       (--ctl-shadow / --ctl-inset). O ciano da marca e os dois temas não mudam.
        ============================================================ */
     :root {
       /* Acento (teal/cyan da marca Softtech) */
@@ -13,16 +14,20 @@
       --accent-ring:   rgba(15, 181, 190, 0.45);
 
       /* Texto */
-      --text:          #2c2a4f;
-      --text-soft:     #5f6589;
-      --text-mute:     #9aa0bd;
+      --text:          #20224a;
+      --text-soft:     #454b73;
+      --text-mute:     #5d6486;   /* era #9aa0bd (2,5:1); agora passa de 4,5:1 sobre o fundo claro */
 
       /* Glassmorphism */
       --glass-bg:      rgba(255, 255, 255, 0.60);
       --glass-bg-strong: rgba(255, 255, 255, 0.78);
       --glass-border:  rgba(255, 255, 255, 0.70);
       --glass-blur:    18px;
-      --glass-shadow:  0 18px 48px rgba(31, 38, 80, 0.16);
+      --glass-shadow:  0 1px 2px rgba(31, 38, 80, 0.06), 0 10px 30px rgba(31, 38, 80, 0.10);
+
+      /* Controles planos (substituem as sombras duplas do neumorfismo) */
+      --ctl-shadow:    0 0 0 1px rgba(31, 38, 80, 0.08), 0 1px 2px rgba(31, 38, 80, 0.10);
+      --ctl-inset:     inset 0 0 0 1px rgba(31, 38, 80, 0.10), inset 0 1px 2px rgba(31, 38, 80, 0.08);
 
       /* Neumorphism (controles táteis) */
       --neu-bg:        #e7eaf2;
@@ -36,9 +41,9 @@
       --bg-blob-3:     #dcecff;
 
       /* Geometria / movimento */
-      --radius-lg: 22px;
-      --radius-md: 14px;
-      --radius-sm: 10px;
+      --radius-lg: 18px;
+      --radius-md: 12px;
+      --radius-sm: 9px;
       --sidebar-w: 274px;
       --sidebar-w-collapsed: 84px;
       --ease: cubic-bezier(0.22, 1, 0.36, 1);
@@ -61,7 +66,10 @@
       --glass-bg:      rgba(24, 28, 48, 0.55);
       --glass-bg-strong: rgba(26, 30, 52, 0.78);
       --glass-border:  rgba(255, 255, 255, 0.09);
-      --glass-shadow:  0 18px 48px rgba(0, 0, 0, 0.45);
+      --glass-shadow:  0 1px 2px rgba(0, 0, 0, 0.40), 0 12px 32px rgba(0, 0, 0, 0.35);
+
+      --ctl-shadow:    0 0 0 1px rgba(255, 255, 255, 0.07), 0 1px 2px rgba(0, 0, 0, 0.50);
+      --ctl-inset:     inset 0 0 0 1px rgba(255, 255, 255, 0.08), inset 0 1px 2px rgba(0, 0, 0, 0.45);
 
       --neu-bg:        #1a1d30;
       --neu-light:     #262a44;
@@ -93,17 +101,12 @@
       overflow: hidden;
     }
 
-    /* Padrão de pontos sutil, como no estudo de caso */
-    body::before {
-      content: "";
-      position: fixed; inset: 0;
-      background-image: radial-gradient(currentColor 1px, transparent 1px);
-      background-size: 26px 26px;
-      color: var(--text);
-      opacity: 0.035;
-      pointer-events: none;
-      z-index: 0;
-    }
+    
+    ::selection { background: var(--accent-soft); color: var(--text); }
+    input, textarea { caret-color: var(--accent); }
+    h1, h2, h3 { text-wrap: balance; }
+    .dash-card { font-variant-numeric: tabular-nums; }
+    :focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 2px; }
 
     .glass {
       background: var(--glass-bg);
@@ -169,11 +172,11 @@
       display: grid; place-items: center;
       color: var(--text-soft);
       background: var(--neu-bg);
-      box-shadow: 3px 3px 7px var(--neu-dark), -3px -3px 7px var(--neu-light);
+      box-shadow: var(--ctl-shadow);
       transition: box-shadow 0.18s var(--ease), color 0.18s, transform var(--speed) var(--ease);
     }
     .brand__collapse:hover { color: var(--accent); }
-    .brand__collapse:active { box-shadow: inset 2px 2px 5px var(--neu-dark), inset -2px -2px 5px var(--neu-light); }
+    .brand__collapse:active { box-shadow: var(--ctl-inset); }
     .brand__collapse svg { transition: transform var(--speed) var(--ease); }
     .sidebar.is-collapsed .brand__collapse svg { transform: rotate(180deg); }
 
@@ -189,33 +192,16 @@
     .nav::-webkit-scrollbar { width: 6px; }
     .nav::-webkit-scrollbar-thumb { background: var(--glass-border); border-radius: 4px; }
 
-    .nav__label {
-      font-size: 11px;
-      font-weight: 600;
-      letter-spacing: 0.12em;
-      color: var(--text-mute);
-      padding: 14px 12px 8px;
-      white-space: nowrap;
-    }
-    .sidebar.is-collapsed .nav__label {
-      text-align: center;
-      padding-inline: 0;
-      font-size: 0;
-    }
-    .sidebar.is-collapsed .nav__label::after {
-      content: "•••";
-      font-size: 10px;
-      letter-spacing: 0.1em;
-    }
-
-    .nav__list { list-style: none; display: flex; flex-direction: column; gap: 3px; }
+    .nav__list { list-style: none; display: flex; flex-direction: column; gap: 2px; }
+    .nav__list li[hidden] { display: none; }
+    .nav { padding-top: 4px; }
 
     .nav__item {
       position: relative;
       display: flex;
       align-items: center;
       gap: 12px;
-      padding: 11px 12px;
+      padding: 10px 12px;
       border-radius: var(--radius-sm);
       color: var(--text-soft);
       text-decoration: none;
@@ -253,19 +239,9 @@
       background: var(--accent-soft);
       color: var(--accent);
       font-weight: 600;
-      border-color: var(--glass-border);
     }
     .nav__item.is-active .nav__icon,
     .nav__item.is-active .nav__chevron { color: var(--accent); }
-    .nav__item.is-active::before {
-      content: "";
-      position: absolute; left: -14px; top: 50%;
-      transform: translateY(-50%);
-      width: 4px; height: 22px;
-      border-radius: 0 4px 4px 0;
-      background: var(--accent);
-    }
-
     /* Estado recolhido: só ícones + tooltip */
     .sidebar.is-collapsed .nav__item { justify-content: center; padding: 12px 0; }
     .sidebar.is-collapsed .nav__chevron,
@@ -275,7 +251,6 @@
       min-width: 8px; height: 8px; padding: 0;
       font-size: 0; border-radius: 50%;
     }
-    .sidebar.is-collapsed .nav__item.is-active::before { left: -14px; }
 
     .sidebar.is-collapsed .nav__item[data-tip]:hover::after {
       content: attr(data-tip);
@@ -292,13 +267,14 @@
     /* Rodapé: toggle de tema neumórfico */
     .sidebar__footer {
       margin-top: 10px;
-      padding-top: 14px;
+      padding-top: 10px;
       border-top: 1px solid var(--glass-border);
       display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 12px;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 10px;
     }
+    .sidebar__footer .theme-toggle { justify-content: center; padding-top: 4px; }
     .theme-toggle {
       display: inline-flex; align-items: center; gap: 10px;
       cursor: pointer; color: var(--text-mute);
@@ -314,7 +290,7 @@
       position: absolute; inset: 0;
       border-radius: 999px;
       background: var(--neu-bg);
-      box-shadow: inset 3px 3px 6px var(--neu-dark), inset -3px -3px 6px var(--neu-light);
+      box-shadow: var(--ctl-inset);
       transition: background 0.2s;
     }
     .switch__knob {
@@ -322,7 +298,7 @@
       width: 22px; height: 22px;
       border-radius: 50%;
       background: var(--neu-light);
-      box-shadow: 2px 2px 5px var(--neu-dark), -2px -2px 5px var(--neu-light);
+      box-shadow: var(--ctl-shadow);
       transition: transform var(--speed) var(--ease), background 0.2s;
     }
     .switch input:checked + .switch__track .switch__knob { transform: translateX(22px); background: var(--accent); }
@@ -358,7 +334,7 @@
       border: none; border-radius: 10px; cursor: pointer;
       color: var(--text-soft);
       background: var(--neu-bg);
-      box-shadow: 3px 3px 7px var(--neu-dark), -3px -3px 7px var(--neu-light);
+      box-shadow: var(--ctl-shadow);
       place-items: center;
     }
     .topbar__heading { display: flex; flex-direction: column; line-height: 1.2; }
@@ -530,11 +506,11 @@
       border: none; border-radius: 12px; cursor: pointer;
       display: grid; place-items: center;
       color: var(--text-soft); background: var(--neu-bg);
-      box-shadow: 3px 3px 7px var(--neu-dark), -3px -3px 7px var(--neu-light);
+      box-shadow: var(--ctl-shadow);
       transition: color 0.18s, box-shadow 0.15s;
     }
     .composer__attach:hover { color: var(--accent); }
-    .composer__attach:active { box-shadow: inset 2px 2px 5px var(--neu-dark), inset -2px -2px 5px var(--neu-light); }
+    .composer__attach:active { box-shadow: var(--ctl-inset); }
     .composer__attach.is-rec { color: #fff; background: #e0245e; box-shadow: 0 0 0 0 rgba(224,36,94,.6); animation: micPulse 1.2s infinite; }
     @keyframes micPulse { 0% { box-shadow: 0 0 0 0 rgba(224,36,94,.55); } 70% { box-shadow: 0 0 0 10px rgba(224,36,94,0); } 100% { box-shadow: 0 0 0 0 rgba(224,36,94,0); } }
     .composer__preview {
@@ -642,7 +618,7 @@
     .auth__tabs {
       display: flex; gap: 6px; padding: 5px; margin-bottom: 22px;
       background: var(--neu-bg); border-radius: 12px;
-      box-shadow: inset 2px 2px 5px var(--neu-dark), inset -2px -2px 5px var(--neu-light);
+      box-shadow: var(--ctl-inset);
     }
     .auth__tab {
       flex: 1; border: none; cursor: pointer; padding: 9px; border-radius: 9px;
@@ -659,24 +635,24 @@
     .field label { font-size: 12.5px; font-weight: 600; color: var(--text-soft); }
     .field input {
       border: 1px solid var(--glass-border); background: var(--neu-bg);
-      box-shadow: inset 2px 2px 5px var(--neu-dark), inset -2px -2px 5px var(--neu-light);
+      box-shadow: var(--ctl-inset);
       border-radius: 11px; padding: 12px 14px;
       color: var(--text); font: inherit; font-size: 14px; outline: none;
       transition: box-shadow 0.18s, border-color 0.18s;
     }
-    .field input:focus { border-color: var(--accent-ring); box-shadow: inset 1px 1px 3px var(--neu-dark), 0 0 0 3px var(--accent-soft); }
+    .field input:focus { border-color: var(--accent-ring); box-shadow: var(--ctl-inset), 0 0 0 3px var(--accent-soft); }
     .field input[type="range"] { padding: 0; background: transparent; border: none; box-shadow: none; height: 28px; accent-color: var(--accent, #22c1b7); }
     .field input[type="range"]:focus { box-shadow: none; }
     .field input::placeholder { color: var(--text-mute); }
     /* Preferências do Jarvis: selects e range com o mesmo visual neumórfico dos inputs */
     .field select {
       border: 1px solid var(--glass-border); background: var(--neu-bg);
-      box-shadow: inset 2px 2px 5px var(--neu-dark), inset -2px -2px 5px var(--neu-light);
+      box-shadow: var(--ctl-inset);
       border-radius: 11px; padding: 12px 14px; width: 100%;
       color: var(--text); font: inherit; font-size: 14px; outline: none; cursor: pointer;
       transition: box-shadow 0.18s, border-color 0.18s;
     }
-    .field select:focus { border-color: var(--accent-ring); box-shadow: inset 1px 1px 3px var(--neu-dark), 0 0 0 3px var(--accent-soft); }
+    .field select:focus { border-color: var(--accent-ring); box-shadow: var(--ctl-inset), 0 0 0 3px var(--accent-soft); }
     .field select option { background: var(--neu-bg); color: var(--text); }
     .field input[type="range"] { padding: 0; box-shadow: none; border: none; accent-color: var(--accent, #2fd4c6); cursor: pointer; }
 
@@ -684,7 +660,7 @@
     .auth__avatar-pic {
       width: 86px; height: 86px; border-radius: 50%;
       background: var(--neu-bg);
-      box-shadow: inset 3px 3px 7px var(--neu-dark), inset -3px -3px 7px var(--neu-light);
+      box-shadow: var(--ctl-inset);
       display: grid; place-items: center; overflow: hidden;
       color: var(--text-mute); cursor: pointer;
     }
@@ -879,7 +855,7 @@
       width: 34px; height: 34px; border: none; border-radius: 9px; cursor: pointer;
       display: grid; place-items: center; color: var(--text-soft);
       background: var(--neu-bg);
-      box-shadow: 3px 3px 7px var(--neu-dark), -3px -3px 7px var(--neu-light);
+      box-shadow: var(--ctl-shadow);
       transition: color 0.18s;
     }
     .modal__close:hover { color: var(--accent); }

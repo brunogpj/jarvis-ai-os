@@ -94,7 +94,7 @@ var PROPRIEDADES_CREDENCIAIS_PARA_REMOVER = [];
 /** PONTO_COBRADO_<aaaa-mm-dd>_<min>: só a do dia corrente é lida. As de dias passados são lixo (acumularam 190 até 08/11/2026). */
 function _pontoCobradoAntigas() {
   var hoje = Utilities.formatDate(new Date(), 'America/Sao_Paulo', 'yyyy-MM-dd');
-  return PropertiesService.getScriptProperties().getKeys().filter(function (k) { return /^PONTO_COBRADO_d{4}-d{2}-d{2}_/.test(k) && k.indexOf('PONTO_COBRADO_' + hoje + '_') !== 0; });
+  return PropertiesService.getScriptProperties().getKeys().filter(function (k) { return /^PONTO_COBRADO_[0-9]{4}-[0-9]{2}-[0-9]{2}_/.test(k) && k.indexOf('PONTO_COBRADO_' + hoje + '_') !== 0; });
 }
 
 /** Ensaio da limpeza das marcas antigas do ponto: mostra quantas e quais sairiam, sem apagar. */

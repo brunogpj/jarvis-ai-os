@@ -670,3 +670,17 @@ Ver a skill `google-apps-script` para os padrões completos. O que vale aqui:
 - `try/catch` + log nas funções de entrada; **fail-open** onde a falha não pode derrubar a resposta.
 - Comentários em **português**, explicando *por quê* (frequentemente citando o bug que motivou o código). Mantenha esse estilo.
 - Mensagens de commit em português, no imperativo, descrevendo o efeito observável (ex.: "tick de alertas deixa de desistir quando o lock global esta ocupado").
+
+## Agent skills
+
+### Issue tracker
+
+Issues no GitHub Issues do repositório (CLI `gh`; hoje o `gh` não está logado nesta máquina). Ver `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Vocabulário padrão: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. Ver `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context (um `GLOSSARY.md` + `docs/adr/` na raiz). Ver `docs/agents/domain.md`.

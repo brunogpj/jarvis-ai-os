@@ -68,3 +68,7 @@ Achados do Xiaomi/MIUI que valem para as próximas fases:
 ## Fase 1 — estado (08/11/2026)
 
 Servidor publicado (@570, canal desligado: `ANDROID_FALAR` não existe até alguém ligar) e app `0.1.0-fase1` compilado, em `android/`. Falta o projeto Firebase (ver `FIREBASE.md`) para o primeiro push de verdade. O `/exec` devolveu HTML numa chamada de teste e acertou nas quatro seguintes, o mesmo defeito de sempre: por isso a fila de confirmações do app repete.
+
+## Fase 1 — Firebase e pareamento (08/11/2026)
+
+Projeto Firebase `xjywkp-27a85b93` (plano Spark, sem Firestore; só para o push). App `dev.jarvis.companion` registrado. A conta de serviço do Firestore do Jarvis (de outro projeto) recebeu o papel Administrador da API Firebase Cloud Messaging neste projeto (IAM). O app (0.1.1) informa o `projectId` ao se registrar e o servidor guarda em `ANDROID_FCM_PROJECT`; deploy @571 no ar, rotas `android_registrar` e `android_ack` conferidas. Falta: instalar o APK 0.1.1, o token em `android/pareamento.json` e `node android/parear.mjs`.

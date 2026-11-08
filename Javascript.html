@@ -546,6 +546,8 @@
       }
       function definirTextoMsg(el, texto) {
         if (pareceMd(texto)) { el.innerHTML = mdSeguro(texto); el.classList.add("md"); } else { el.textContent = texto; }
+        var _m = el.closest ? el.closest(".msg.is-ai") : null;   // 08/11: aviso de falha (⚠️) ganha o visual de erro em qualquer caminho
+        if (_m) _m.classList.toggle("is-erro", String(texto || "").indexOf("⚠️") === 0);
       }
       /*MD_FIM*/
       function readAs(file, how, cb) {
@@ -814,6 +816,7 @@
           attHtml +
           '<div class="msg__text"></div></div>';
         definirTextoMsg(wrap.querySelector(".msg__text"), text);
+        if (role !== "user" && String(text || "").indexOf("⚠️") === 0) wrap.classList.add("is-erro");
         // 🔊 nas respostas CARREGADAS do histórico (as novas ganham o botão no fluxo de envio).
         if (role !== "user" && text && text.length > 1 && hasBackend && String(text).indexOf("⚠️") !== 0) {
           var metaOld = document.createElement("div");
@@ -1270,6 +1273,7 @@
           if (res.conversaId) { conversaId = res.conversaId; if (wasNew && typeof loadConversas === "function") loadConversas(); }
           var parsed = extrairImagensGeradas(reply); // separa miniaturas de imagem do texto
           var aiWrap = addMessage("ai", "");
+          if (String(parsed.texto || "").indexOf("⚠️") === 0) aiWrap.classList.add("is-erro");
           typeOut(aiWrap.querySelector(".msg__text"), parsed.texto, function () {
             parsed.urls.forEach(function (u) { anexarImagemGerada(aiWrap, u); });
             anexarYouTube(aiWrap, parsed.texto);

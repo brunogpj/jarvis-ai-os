@@ -3128,6 +3128,21 @@ var Jarvis = (function () {
             qs = 'acao=' + encodeURIComponent(finalAcao);
             Object.keys(args).forEach(function (k) { qs += '&' + encodeURIComponent(k) + '=' + encodeURIComponent(String(args[k])); });
           }
+          /* APP ANDROID (08/11): com ANDROID_FALAR=sim e um aparelho registrado, a fala vai por push (FCM) e só conta como
+           * dita se o app CONFIRMAR o recebimento. Sem confirmação não cai para o MacroDroid sozinho: se o app recebeu e só a
+           * confirmação se perdeu (o /exec perde respostas), os dois falariam. ANDROID_FALAR_FALLBACK=sim liga a volta. */
+          if (acao === 'falar' && typeof Android !== 'undefined' && Android.falarAtivo()) {
+            var _ordA = Android.enviarFala({ texto: _falaLocal ? _txtF : String(args.texto || ''), audioId: _falaLocal ? '' : (fala && fala.id) || '', local: _falaLocal });
+            var _ackA = _ordA.ok ? Android.aguardarAck(_ordA.id, 6000) : null;
+            if (_ackA && _ackA.estado !== 'erro') {
+              try { _FALA_FEITA = true; } catch (eFl2) {}
+              return { status: 'success', via: 'android', acao: 'falar', ordem: _ordA.id, confirmacao: _ackA.estado, spans: (typeof _spansFala !== 'undefined' ? _spansFala : null) };
+            }
+            var _motivoA = !_ordA.ok ? _ordA.erro : (_ackA ? 'o app respondeu erro: ' + (_ackA.detalhe || '') : 'o app não confirmou o recebimento em 6 s');
+            if (String(_prop('ANDROID_FALAR_FALLBACK') || 'nao').toLowerCase() !== 'sim') {
+              return { status: 'error', via: 'android', acao: 'falar', ordem: _ordA.id, erro: 'Não consegui falar pelo app Android: ' + _motivoA };
+            }
+          }
           var alvoFinal = qs ? (alvo + (alvo.indexOf('?') === -1 ? '?' : '&') + qs) : alvo;
           // 🔐 P7.4 · assina o disparo com um segredo compartilhado (o MacroDroid valida via Constraint
           // [sig]=segredo antes de agir). NÃO-QUEBRA: sem MACRODROID_WEBHOOK_SECRET configurado, idêntico.

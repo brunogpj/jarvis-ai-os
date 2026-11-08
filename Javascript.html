@@ -1560,8 +1560,18 @@
         var ordem = (d.ordemCards && d.ordemCards.length) ? d.ordemCards : ordemPadrao;
         // garante que nenhum card se perca se o backend omitir alguma chave
         ordemPadrao.forEach(function (k) { if (ordem.indexOf(k) === -1) ordem.push(k); });
-        var html = ordem.map(function (k) { return cardHtml[k] || ""; }).join("");
-        cards.innerHTML = html;
+        // 08/11 (fase 4): três zonas. "Hoje" recebe Finanças e Notificações (montarCardsFinNotif); "Seu dia" fica com o que muda
+        // todo dia; "Sistema" é recolhido: telemetria que só importa quando algo falha (o selo no título avisa).
+        var SISTEMA_CHAVES = ["monitor", "atividade", "revisao", "provedores", "loop"];
+        window.__sisEst = {};
+        var htmlDia = ordem.filter(function (k) { return SISTEMA_CHAVES.indexOf(k) === -1; }).map(function (k) { return cardHtml[k] || ""; }).join("");
+        var htmlSis = ordem.filter(function (k) { return SISTEMA_CHAVES.indexOf(k) !== -1; }).map(function (k) { return cardHtml[k] || ""; }).join("");
+        cards.innerHTML = '<div class="dash-zona dash-grid" id="dashHoje"></div>' +
+          '<div class="dash-zona dash-grid" id="dashDia">' + htmlDia + '</div>' +
+          '<details class="dash-sistema" id="dashSistema"><summary><span class="dash-sistema__titulo">Sistema</span><span class="fin-chip mute" id="dashSistemaSelo">verificando…</span>' +
+          '<span class="dash-sistema__dica">Custos de IA, saúde, monitores e telemetria</span></summary>' +
+          '<div class="dash-grid" id="dashSistemaGrid">' + htmlSis + '</div></details>';
+        wireSistema();
         wireAvCard(cards);
         cards.querySelectorAll(".act-card").forEach(function (c) { wireActCard(c, c.getAttribute("data-cardkey")); });
         var _pc = cards.querySelector(".pend-card"); if (_pc) {
@@ -1590,6 +1600,11 @@
           var sp = document.createElement('div'); sp.className = 'dash-card__sub'; sp.textContent = texto;
           head.insertAdjacentElement('afterend', sp);
         }
+        /* 08/11: atResumo, rvResumo e lpResumo nunca foram definidos (ReferenceError desde o primeiro commit): a função morria aqui e o clique dos cartões
+           para perguntar ao Jarvis nunca chegava a ser ligado. Agora o subtítulo é montado com os números que o painel já tem. */
+        var atResumo = at.total ? (at.total + " chamadas hoje · " + (at.ok || 0) + " ok · " + (at.erros || 0) + " com erro") : "";
+        var rvResumo = (rv.positivos || rv.negativos) ? ("👍 " + (rv.positivos || 0) + " · 👎 " + (rv.negativos || 0) + " respostas avaliadas") : "";
+        var lpResumo = (lp.maxSteps && lp.maxTools) ? ("até " + lp.maxSteps + " passos e " + lp.maxTools + " ferramentas por pedido" + (lp.budgetDay ? " · " + lp.budgetDay + " por dia" : "")) : "";
         subDoCard("Como anda o desempenho do agente hoje?", atResumo);
         subDoCard("Analise as respostas que recebi 👎 e sugira como melhorar", rvResumo);
         subDoCard("Como está o orçamento dos meus loops de agente?", lpResumo);
@@ -1610,7 +1625,7 @@
         n.innerHTML = '<div class="dash-card__head"><span class="dash-card__icon">📲</span><h3>Notificações do celular</h3><span class="dash-card__count" id="dashNotifBadge">…</span></div><p class="dash-empty">Carregando…</p>';
         var f = document.createElement("div"); f.className = "dash-card dash-card--info dash-wide"; f.id = "dashFinCard";
         f.innerHTML = '<div class="dash-card__head"><span class="dash-card__icon">💰</span><h3>Finanças</h3></div><p class="dash-empty">Carregando…</p>';
-        cards.insertBefore(n, cards.firstChild); cards.insertBefore(f, cards.firstChild);
+        var hoje = document.getElementById("dashHoje") || cards; hoje.insertBefore(n, hoje.firstChild); hoje.insertBefore(f, hoje.firstChild);
         carregarCardFin(); carregarCardNotif();
       }
       function carregarCardFin() {
@@ -1720,12 +1735,31 @@
         function criar(id, icone, titulo) {
           var c = document.createElement("div"); c.className = "dash-card dash-card--info dash-wide"; c.id = id;
           c.innerHTML = '<div class="dash-card__head"><span class="dash-card__icon">' + icone + '</span><h3>' + titulo + '</h3></div><p class="dash-empty">Carregando…</p>';
-          if (ancora && ancora.nextSibling) cards.insertBefore(c, ancora.nextSibling); else cards.insertBefore(c, cards.firstChild);
+          var sg = document.getElementById("dashSistemaGrid") || cards; sg.insertBefore(c, sg.firstChild);
           return c;
         }
-        var s = criar("dashSaudeCard", "🩺", "Saúde do sistema");
         var c = criar("dashCustosCard", "🤖", "Custos de IA");
+        var s = criar("dashSaudeCard", "🩺", "Saúde do sistema");
         carregarCardCustos(); carregarCardSaude();
+      }
+      /* Selo do Sistema: o pior estado entre Saúde e Custos. Crítico abre a seção sozinho (uma vez); o resto respeita o que a pessoa deixou. */
+      function registrarSistema(chave, nivel) {
+        window.__sisEst = window.__sisEst || {}; window.__sisEst[chave] = nivel;
+        var peso = { ok: 0, atencao: 1, critico: 2 }, pior = "ok";
+        Object.keys(window.__sisEst).forEach(function (k) { if (peso[window.__sisEst[k]] > peso[pior]) pior = window.__sisEst[k]; });
+        var s = document.getElementById("dashSistemaSelo"); if (!s) return;
+        var rot = { ok: ["ok", "tudo em dia"], atencao: ["warn", "atenção"], critico: ["bad", "crítico"] }[pior];
+        s.className = "fin-chip " + rot[0]; s.textContent = rot[1];
+        var d = document.getElementById("dashSistema");
+        if (pior === "critico" && d && !d.open) { d.__auto = true; d.open = true; }
+      }
+      function wireSistema() {
+        var d = document.getElementById("dashSistema"); if (!d) return;
+        try { if (localStorage.getItem("jarvis-dash-sistema") === "1") d.open = true; } catch (e) {}
+        d.addEventListener("toggle", function () {
+          if (d.__auto) { d.__auto = false; return; }   // abertura automática por falha não vira preferência
+          try { localStorage.setItem("jarvis-dash-sistema", d.open ? "1" : "0"); } catch (e) {}
+        });
       }
       function carregarCardCustos() {
         var el = document.getElementById("dashCustosCard"); if (!el || !hasBackend || !authToken) return;
@@ -1758,6 +1792,7 @@
           '<div class="dash-card__sub">' + cfg + '</div>' +
           '<div class="dash-card__sub">Estimativa do Jarvis (tokens × tabela de preços, câmbio ' + String(d.cambio).replace(".", ",") + '), não a fatura. ' +
           (d.travaAtiva ? "Ao atingir o teto a chave paga sai da cascata até o mês virar." : "A trava do teto está DESLIGADA.") + '</div>';
+        registrarSistema("custos", (d.capGoogle || d.status === "esgotado") ? "critico" : (d.status === "atencao" ? "atencao" : "ok"));
         wireRefresh(el, "#csRefresh", function () { carregarCardCustos(); });
       }
 
@@ -1794,6 +1829,7 @@
           (gat ? '<div class="md-tab"><table class="cs-tab"><thead><tr><th>Gatilho</th><th class="num">Vezes</th><th class="num">Média</th><th class="num">Pico</th><th class="num">Erros</th></tr></thead><tbody>' + gat + '</tbody></table></div>' : '<p class="dash-empty">Nenhuma execução registrada hoje.</p>') +
           '<div class="dash-card__sub">' + (dr ? dr + ' · ' : '') + er + '</div>' +
           '<div class="fin-acoes"><button type="button" class="dash-card-btn" data-q="Execute a automação: Relatório de Atividade">🧾 Relatório de atividade (24 h)</button></div>';
+        registrarSistema("saude", d.nivel === "critico" ? "critico" : (d.nivel === "atencao" ? "atencao" : "ok"));
         wireRefresh(el, "#shRefresh", function () { carregarCardSaude(); });
         el.querySelectorAll("[data-q]").forEach(function (x) { x.addEventListener("click", function (ev) { ev.stopPropagation(); perguntarAoJarvis(x.getAttribute("data-q")); }); });
       }

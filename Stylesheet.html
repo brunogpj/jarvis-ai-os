@@ -966,13 +966,25 @@
       border: 1px solid var(--accent-ring, rgba(34,193,183,.4)); transition: transform .12s, filter .12s;
     }
     .dash-turno-pill:hover { transform: translateY(-1px); filter: brightness(1.08); }
-    .dash-resumo-dia { font-size: 13px; color: var(--text); margin-top: 8px; line-height: 1.6; opacity: .92; }
+    .dash-resumo-dia { font-size: 15px; font-weight: 500; color: var(--text); margin-top: 10px; line-height: 1.6; }
     .dash-refresh {
       border: 1px solid var(--glass-border); background: var(--accent-soft); color: var(--accent);
       width: 38px; height: 38px; border-radius: 12px; cursor: pointer; display: grid; place-items: center;
       transition: transform .35s ease, background .15s;
     }
     .dash-refresh:hover { transform: rotate(180deg); }
+    /* fase 4: #dashCards guarda as zonas (Hoje, Seu dia, Sistema), cada uma com a sua grade */
+    #dashCards.dash-grid { display: flex; flex-direction: column; gap: 22px; }
+    .dash-zona:empty { display: none; }
+    .dash-sistema { border: 1px solid var(--glass-border); border-radius: var(--radius-md); background: var(--glass-bg); }
+    .dash-sistema > summary { display: flex; align-items: center; gap: 12px; padding: 12px 16px; cursor: pointer; list-style: none; border-radius: var(--radius-md); }
+    .dash-sistema > summary::-webkit-details-marker { display: none; }
+    .dash-sistema > summary::before { content: ""; width: 7px; height: 7px; border-right: 2px solid var(--text-mute); border-bottom: 2px solid var(--text-mute); transform: rotate(-45deg); transition: transform .2s var(--ease); flex-shrink: 0; }
+    .dash-sistema[open] > summary::before { transform: rotate(45deg); }
+    .dash-sistema__titulo { font-size: 14px; font-weight: 700; }
+    .dash-sistema__dica { margin-left: auto; font-size: 12px; color: var(--text-mute); text-align: right; }
+    .dash-sistema > .dash-grid { padding: 4px 16px 16px; }
+    @media (max-width: 640px) { .dash-sistema__dica { display: none; } }
     .dash-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 16px; }
     .dash-card {
       border: 1px solid var(--glass-border); background: var(--glass-bg);
@@ -1125,6 +1137,7 @@
     /* cartões Finanças e Notificações do Dashboard (16/10) */
     .dash-wide { grid-column: 1 / -1; }
     .fin-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 6px 0 12px; }
+    @media (max-width: 640px) { .fin-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; } .fin-kpi b { font-size: 15px; } }
     .fin-kpi { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border-radius: 12px; background: var(--accent-soft); border: 1px solid var(--glass-border); }
     .fin-kpi span { font-size: 11px; color: var(--text-mute); text-transform: uppercase; letter-spacing: .4px; }
     .fin-kpi b { font-size: 18px; color: var(--text); } .fin-kpi b.neg { color: #d64545; }

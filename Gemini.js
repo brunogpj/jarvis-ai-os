@@ -161,9 +161,9 @@ var Gemini = (function () {
     throw new Error('Gemini indisponível em todas as chaves:\n' + erros.join('\n') + ctx);
   }
 
-  /** Laboratório (16/10): UM modelo escolhido pelo dono, com as ferramentas nativas e o `_thinking` já no payload. Mesma cascata de chaves e o mesmo registro de gasto do resto. → {data, model, tier} */
+  /** Um modelo escolhido por quem chama (conciliação por print, File Search), com as ferramentas nativas e o `_thinking` já no payload. Mesma cascata de chaves e o mesmo registro de gasto do resto. → {data, model, tier} */
   function gerarComModelo(payload, modelo, opts) {
-    return _fetchComCascata('laboratorio', _comThinking(payload, modelo), [modelo], !!(opts && opts.soPago));
+    return _fetchComCascata('modelo_direto', _comThinking(payload, modelo), [modelo], !!(opts && opts.soPago));
   }
 
   /**
@@ -220,7 +220,7 @@ var Gemini = (function () {
    */
   function _fetchComCascata(rotulo, payload, modelos, soPago) {
     var tents = _tentativas();
-    // soPago: conteúdo pessoal (print de gastos, pedidos do Laboratório) só pela chave de faturamento: a gratuita pode usar o conteúdo para melhorar produtos.
+    // soPago: conteúdo pessoal (print de gastos, leitura de prints) só pela chave de faturamento: a gratuita pode usar o conteúdo para melhorar produtos.
     if (soPago) tents = tents.filter(function (t) { return t.tier === 'faturamento'; });
     if (!tents.length) throw new Error(soPago ? 'Sem chave paga disponível (ausente ou teto do mês atingido): não envio conteúdo pessoal pela chave gratuita.' : 'Nenhuma chave configurada (defina GEMINI_API_KEY e/ou GEMINI_API_KEY_FALLBACK).');
     var cache = null; try { cache = CacheService.getScriptCache(); } catch (eC) {}

@@ -38,6 +38,7 @@ object Api {
         val r = post(ctx, JSONObject()
             .put("action", "android_registrar")
             .put("fcm_token", fcmToken)
+            .put("fcm_project", Config.projectId(ctx))
             .put("modelo", "${Build.MANUFACTURER} ${Build.MODEL}")
             .put("android", Build.VERSION.RELEASE)
             .put("app", BuildConfigVersao.NOME))
@@ -52,4 +53,4 @@ object Api {
 }
 
 /** A versão do app, sem depender do BuildConfig (desligado por padrão nas versões novas do AGP). */
-object BuildConfigVersao { const val NOME = "0.1.0-fase1" }
+object BuildConfigVersao { const val NOME = "0.1.1-fase1" }

@@ -64,6 +64,10 @@ var Android = (function () {
     info = info || {};
     var t = String(info.fcm_token || '').trim();
     if (!/^[A-Za-z0-9:_\-]{20,400}$/.test(t)) return { ok: false, erro: 'token FCM inválido' };
+    // O app informa o projeto do Firebase em que está registrado: é daí que o push sai (a conta de serviço do Firestore é de OUTRO projeto).
+    var proj = String(info.fcm_project || '').trim();
+    if (proj && !/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(proj)) return { ok: false, erro: 'projeto do Firebase inválido' };
+    if (proj) _setP('ANDROID_FCM_PROJECT', proj);
     _setP('ANDROID_FCM_TOKEN', t);
     _setP('ANDROID_DEVICE', JSON.stringify({
       modelo: String(info.modelo || '').substring(0, 60), android: String(info.android || '').substring(0, 20),

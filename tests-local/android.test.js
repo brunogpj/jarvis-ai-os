@@ -111,3 +111,14 @@ test('aguardarAck: devolve o estado quando o app confirma e null quando ninguém
   s.Android.ack({ id: id, estado: 'recebido' });
   assert.strictEqual(J(s.Android.aguardarAck(id, 1000)).estado, 'recebido');
 });
+
+test('registrar: guarda o projeto do Firebase informado pelo app e recusa nome inválido', function () {
+  var s = sb();
+  var ruim = J(s.Android.registrar({ fcm_token: TOKEN_FCM, fcm_project: 'Projeto Com Espaço' }));
+  assert.strictEqual(ruim.ok, false);
+  assert.strictEqual(J(s.Android.registrar({ fcm_token: TOKEN_FCM, fcm_project: 'xjywkp-27a85b93' })).ok, true);
+  s.Android.registrar({ fcm_token: TOKEN_FCM });
+  s.Android.enviarFala({ texto: 'x' });
+  var fcm = s._chamadas.filter(function (c) { return c.url.indexOf("fcm.googleapis") !== -1; })[0];
+  assert.ok(fcm.url.indexOf("/projects/xjywkp-27a85b93/messages:send") !== -1, 'o push deve sair do projeto informado pelo app');
+});

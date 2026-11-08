@@ -38,6 +38,9 @@ object Config {
     fun url(ctx: Context): String? = segredo(ctx).getString("url", null)
     fun token(ctx: Context): String? = segredo(ctx).getString("token", null)
 
+    /** Projeto do Firebase do pareamento: o app o informa ao Jarvis, que usa para saber de onde mandar o push. */
+    fun projectId(ctx: Context): String = segredo(ctx).getString("fcm_projectId", "") ?: ""
+
     fun pareado(ctx: Context): Boolean =
         !url(ctx).isNullOrBlank() && !token(ctx).isNullOrBlank() && segredo(ctx).getString("fcm_appId", null) != null
 

@@ -78,3 +78,7 @@ Projeto Firebase `xjywkp-27a85b93` (plano Spark, sem Firestore; só para o push)
 Tentamos um app que se atualiza sozinho (`REQUEST_INSTALL_PACKAGES` + PackageInstaller, 0.2.0). O **Google Play Protect bloqueou o 0.2.0 como "App nocivo"**: um app desconhecido com permissão de instalar pacotes parece um dropper. O 0.1.1, sem a permissão, passa. Decisão do dono: **sem atualizador**. O fluxo é `node android/entregar.mjs` (compila e copia para `Download/jarvis-fase1.apk`, conferindo o tamanho) e o dono instala pelo app Arquivos. Não desligar o Play Protect para isso: tira a proteção do celular inteiro. Nunca reintroduzir `REQUEST_INSTALL_PACKAGES`.
 
 Limites que continuam valendo: `adb install` e `pm install` são cancelados pelo MIUI; `adb shell input` e o scrcpy não conseguem tocar (INJECT_EVENTS negado); a captura de tela (`adb exec-out screencap -p`) funciona, exceto em telas protegidas e com a tela apagada.
+
+## Canal de fala LIGADO (08/11/2026, 18:29)
+
+`ANDROID_FALAR=sim` pelo `config_fala`. Fala real conferida: o lembrete de 1 minuto criado pela rota de voz foi falado pelo app (ordem `amw8cj8m9b7`, recebida 18:30:27, fala concluída 18:30:37, fila de confirmações vazia). Sem confirmação do app em 6 s o Jarvis diz que não conseguiu falar pelo app e NÃO cai para o MacroDroid (evita fala dobrada; `ANDROID_FALAR_FALLBACK` ainda não está na lista do `config_fala`). Reverter: `config_fala` com `ANDROID_FALAR=nao`. Convivência de uma semana com o MacroDroid: a partir de 08/11.

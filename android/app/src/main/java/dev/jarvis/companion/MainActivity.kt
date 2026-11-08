@@ -29,7 +29,6 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         montarTela()
         tratarPareamento(intent)
-        tratarAtualizacao(intent)
         pedirPermissaoDeNotificacao()
     }
 
@@ -37,7 +36,6 @@ class MainActivity : Activity() {
         super.onNewIntent(intent)
         setIntent(intent)
         tratarPareamento(intent)
-        tratarAtualizacao(intent)
     }
 
     override fun onResume() {
@@ -86,15 +84,6 @@ class MainActivity : Activity() {
         atualizar()
     }
 
-    /** `am start ... --ez atualizar true` (android/atualizar.mjs): instala o APK que foi copiado para filesDir/update. */
-    private fun tratarAtualizacao(i: Intent?) {
-        if (i?.getBooleanExtra("atualizar", false) != true) return
-        i.removeExtra("atualizar")
-        val erro = Atualizador.instalar(this)
-        if (erro != null) Config.evento(this, "atualização não começou: $erro")
-        atualizar()
-    }
-
     private fun pedirPermissaoDeNotificacao() {
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
@@ -125,7 +114,6 @@ class MainActivity : Activity() {
             appendLine("pareado: ${if (pareado) "sim ($host)" else "NÃO"}")
             appendLine("notificações: $notif")
             appendLine("confirmações na fila: ${AckQueue.pendentes(this@MainActivity)}")
-            appendLine("atualização pelo computador: ${if (Atualizador.podeInstalar(this@MainActivity)) "liberada" else "PRECISA liberar (apps desconhecidos)"}")
             appendLine()
             appendLine("últimos eventos:")
             append(Config.eventos(this@MainActivity).ifBlank { "(nenhum)" })

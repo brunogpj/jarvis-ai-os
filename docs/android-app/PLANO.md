@@ -72,3 +72,9 @@ Servidor publicado (@570, canal desligado: `ANDROID_FALAR` não existe até algu
 ## Fase 1 — Firebase e pareamento (08/11/2026)
 
 Projeto Firebase `xjywkp-27a85b93` (plano Spark, sem Firestore; só para o push). App `dev.jarvis.companion` registrado. A conta de serviço do Firestore do Jarvis (de outro projeto) recebeu o papel Administrador da API Firebase Cloud Messaging neste projeto (IAM). O app (0.1.1) informa o `projectId` ao se registrar e o servidor guarda em `ANDROID_FCM_PROJECT`; deploy @571 no ar, rotas `android_registrar` e `android_ack` conferidas. Falta: instalar o APK 0.1.1, o token em `android/pareamento.json` e `node android/parear.mjs`.
+
+## Atualização do app — decisão de 08/11/2026
+
+Tentamos um app que se atualiza sozinho (`REQUEST_INSTALL_PACKAGES` + PackageInstaller, 0.2.0). O **Google Play Protect bloqueou o 0.2.0 como "App nocivo"**: um app desconhecido com permissão de instalar pacotes parece um dropper. O 0.1.1, sem a permissão, passa. Decisão do dono: **sem atualizador**. O fluxo é `node android/entregar.mjs` (compila e copia para `Download/jarvis-fase1.apk`, conferindo o tamanho) e o dono instala pelo app Arquivos. Não desligar o Play Protect para isso: tira a proteção do celular inteiro. Nunca reintroduzir `REQUEST_INSTALL_PACKAGES`.
+
+Limites que continuam valendo: `adb install` e `pm install` são cancelados pelo MIUI; `adb shell input` e o scrcpy não conseguem tocar (INJECT_EVENTS negado); a captura de tela (`adb exec-out screencap -p`) funciona, exceto em telas protegidas e com a tela apagada.

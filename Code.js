@@ -4375,6 +4375,16 @@ function doPost(e) {
             saida.conciliarTeste = { pedido: Conciliacao.ehPedido(String(_ct.texto || '')), resultado: Conciliacao.analisar(_an, String(_ct.hoje || Utilities.formatDate(new Date(), 'America/Sao_Paulo', 'yyyy-MM-dd'))) };
           } catch (eCt2) { saida.conciliarTeste = { erro: eCt2.message }; }
         }
+        // O arquivo de fala no Drive do jeito que o celular o baixa (anônimo): devolve o tipo, o tamanho e o começo, para ver se veio áudio ou uma página HTML (20/10).
+        if (body.falaArquivoTeste) {
+          try {
+            var _fid = PropertiesService.getScriptProperties().getProperty('JARVIS_FALA_FILE_ID') || '';
+            var _fr = UrlFetchApp.fetch('https://drive.google.com/uc?export=download&id=' + _fid, { muteHttpExceptions: true, followRedirects: true });
+            var _fb = _fr.getContent(), _fh = _fr.getAllHeaders();
+            var _ini = ''; try { _ini = String.fromCharCode.apply(null, _fb.slice(0, 120).map(function (b) { return b & 255; })).replace(/[^\x20-\x7e]/g, '.'); } catch (eIn) {}
+            saida.falaArquivoTeste = { id: _fid, codigo: _fr.getResponseCode(), contentType: _fh['Content-Type'] || _fh['content-type'] || '', bytes: _fb.length, comecaCom: _ini, ehHtml: /^\s*<(!doctype|html)/i.test(_ini) };
+          } catch (eFa) { saida.falaArquivoTeste = { erro: eFa.message }; }
+        }
         // Avisos proativos da caderneta: o que sairia agora na janela pedida ('manha'|'noite'), sem enviar nem gravar.
         if (body.cadernetaAvisos) { try { saida.cadernetaAvisos = Financas.verificarAvisos({ ensaio: true, janela: String(body.cadernetaAvisos) === 'noite' ? 'noite' : 'manha' }); } catch (eCa) { saida.cadernetaAvisos = { erro: eCa.message }; } }
         // Entrega REAL de um aviso de teste (notificação + fala no celular), com dados inventados e rotulado como teste.

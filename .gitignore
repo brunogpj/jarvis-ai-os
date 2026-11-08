@@ -33,3 +33,13 @@ Thumbs.db
 *.tmp
 *.bak
 ~$*
+
+# app Android (android/): nada de build, chave de assinatura, configuracao do Firebase ou pareamento no repositorio publico
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/*.jks
+android/*.keystore
+android/**/google-services.json
+android/pareamento*.json

@@ -22,6 +22,7 @@ const ADB = process.env.ADB || "C:/Users/Bruno/Android/Sdk/platform-tools/adb.ex
 
 if (!fs.existsSync(arq)) { console.error("não achei " + arq + " (veja docs/android-app/FIREBASE.md)"); process.exit(1); }
 const json = JSON.parse(fs.readFileSync(arq, "utf8"));   // falha cedo se o JSON estiver quebrado
+if (/COLE_AQUI/.test(json.token || "")) { console.error("troque o marcador do token pelo VOICE_API_TOKEN em " + arq); process.exit(1); }
 for (const k of ["url", "token"]) if (!json[k]) { console.error("falta o campo " + k); process.exit(1); }
 for (const k of ["apiKey", "appId", "projectId", "senderId"]) if (!json.fcm?.[k]) { console.error("falta fcm." + k); process.exit(1); }
 

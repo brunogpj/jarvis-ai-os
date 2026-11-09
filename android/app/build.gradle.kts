@@ -11,8 +11,8 @@ android {
         applicationId = "dev.jarvis.companion"
         minSdk = 26          // Android 8.0; o Redmi do dono roda Android 13
         targetSdk = 34
-        versionCode = 16
-        versionName = "0.5.3-nova-cara"
+        versionCode = 17
+        versionName = "0.5.4-nova-cara"
     }
 
     buildTypes {
@@ -39,4 +39,5 @@ dependencies {
     implementation(platform("com.google.firebase:firebase-bom:35.1.0"))
     implementation("com.google.firebase:firebase-messaging")
     implementation("androidx.security:security-crypto:1.1.0")
+    testImplementation("junit:junit:4.13.2")
 }

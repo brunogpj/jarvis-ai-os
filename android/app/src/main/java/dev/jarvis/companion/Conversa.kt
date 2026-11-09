@@ -24,11 +24,11 @@ object Conversa {
      */
     fun dividir(frase: String): List<String> {
         val s = frase.trim()
-        val achados = Regex("""(?i)\b(que horas|que dia|quanto|quantos|quantas|qual|quais|o que|quando)\b""").findAll(s).toList()
+        val achados = Regex("""(?iU)\b(que horas|que dia|quanto|quantos|quantas|qual|quais|o que|quando)\b""").findAll(s).toList()
         if (achados.size < 2) return listOf(s)
         val partes = achados.mapIndexed { k, m ->
             val fim = if (k + 1 < achados.size) achados[k + 1].range.first else s.length
-            s.substring(m.range.first, fim).trim().replace(Regex("""(?i)(\s+(e|ou|também))+$"""), "").trim(' ', ',', '.')
+            s.substring(m.range.first, fim).trim().replace(Regex("""(?iU)(\s+(e|ou|também))+$"""), "").trim(' ', ',', '.')
         }.filter { it.length >= 4 }
         return if (partes.size >= 2) partes.take(5) else listOf(s)
     }
@@ -36,24 +36,32 @@ object Conversa {
     /** Verdadeiro quando o último texto devolvido é uma resposta do Jarvis (e não um aviso de falha do próprio app). */
     @Volatile var respostaReal = false
 
+    /** Resposta + se veio de verdade do Jarvis (e não é um aviso de falha do próprio app). Sem estado compartilhado: serve para chamadas em paralelo. */
+    data class Resposta(val texto: String, val real: Boolean)
+
     fun perguntar(ctx: Context, pergunta: String, rid: String): String {
-        respostaReal = false
+        val r = perguntarR(ctx, pergunta, rid)
+        respostaReal = r.real
+        return r.texto
+    }
+
+    fun perguntarR(ctx: Context, pergunta: String, rid: String): Resposta {
         val url = Config.url(ctx)
         val token = Config.token(ctx)
-        if (url == null || token == null) return "O aplicativo ainda não está pareado com o Jarvis."
+        if (url == null || token == null) return Resposta("O aplicativo ainda não está pareado com o Jarvis.", false)
         var motivo = "sem resposta do servidor"
         for (t in 1..TENTATIVAS) {
             val r = tentar(url, token, pergunta, rid)
             when {
                 r.startsWith(FALHA) -> motivo = r.substring(1)
                 r.isBlank() -> motivo = "resposta vazia"
-                r.startsWith("Erro:") -> return "O Jarvis recusou o pedido. " + r.removePrefix("Erro:").trim()
-                else -> { respostaReal = true; return r.trim() }
+                r.startsWith("Erro:") -> return Resposta("O Jarvis recusou o pedido. " + r.removePrefix("Erro:").trim(), false)
+                else -> return Resposta(r.trim(), true)
             }
             Config.evento(ctx, "conversa: tentativa $t falhou ($motivo)")
             if (t < TENTATIVAS) try { Thread.sleep(3000L * t) } catch (e: InterruptedException) { }
         }
-        return "Não consegui falar com o Jarvis agora: $motivo."
+        return Resposta("Não consegui falar com o Jarvis agora: $motivo.", false)
     }
 
     /**

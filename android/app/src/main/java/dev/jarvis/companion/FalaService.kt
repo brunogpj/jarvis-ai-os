@@ -53,7 +53,9 @@ class FalaService : Service() {
         val i = intent ?: run { stopSelf(); return START_NOT_STICKY }
         pendentes.incrementAndGet()
         fila.execute {
-            try { tocar(i) } finally { if (pendentes.decrementAndGet() == 0) stopSelf() }
+            try { tocar(i) }
+            catch (e: Throwable) { Config.evento(this, "fala: erro inesperado (${e.javaClass.simpleName}: ${(e.message ?: "").take(80)})") }   // uma exceção aqui derrubava o app inteiro
+            finally { if (pendentes.decrementAndGet() == 0) stopSelf() }
         }
         return START_NOT_STICKY
     }
@@ -83,7 +85,7 @@ class FalaService : Service() {
         if (pergunta != null) {
             val t0 = System.currentTimeMillis()
             val rid0 = i.getStringExtra("rid") ?: id.removePrefix("c")
-            val partes = Conversa.dividir(pergunta)
+            val partes = try { Conversa.dividir(pergunta) } catch (e: Exception) { listOf(pergunta) }      // dividir nunca derruba a conversa
             if (partes.size == 1) {
                 texto = Conversa.perguntar(this, pergunta, rid0)
             } else {

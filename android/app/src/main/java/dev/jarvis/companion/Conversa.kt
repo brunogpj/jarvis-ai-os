@@ -22,14 +22,41 @@ object Conversa {
      * por mensagem e respondia só a última (08/11/2026). Divide nos começos de pergunta conhecidos; com menos de duas, devolve a frase inteira.
      * "me diga" / "e" / "ou" de ligação ficam de fora de cada parte.
      */
+    // Sem regex de propósito: o Android usa o motor ICU, que recusa flags como (?U) (o app travou com isso em 08/11) e trata o  de
+    // forma diferente do Java do computador. A varredura abaixo confere letra por letra e dá o mesmo resultado nos dois.
+    private val COMECOS = listOf("que horas", "que dia", "quantos", "quantas", "quanto", "quais", "qual", "o que", "quando")
+    private val LIGACOES = listOf(" e", " ou", " também")
+
+    private fun inicios(s: String): List<Int> {
+        val m = s.lowercase()
+        val achados = ArrayList<Int>()
+        var i = 0
+        while (i < m.length) {
+            val c = COMECOS.firstOrNull { st ->
+                m.startsWith(st, i) &&
+                    (i == 0 || !m[i - 1].isLetterOrDigit()) &&
+                    (i + st.length == m.length || !m[i + st.length].isLetterOrDigit())
+            }
+            if (c != null) { achados.add(i); i += c.length } else i++
+        }
+        return achados
+    }
+
+    private fun semLigacaoNoFim(p: String): String {
+        var t = p.trim(' ', ',', '.')
+        while (true) {
+            val m = t.lowercase()
+            val l = LIGACOES.firstOrNull { m.endsWith(it) } ?: return t
+            t = t.substring(0, t.length - l.length).trim(' ', ',', '.')
+        }
+    }
+
     fun dividir(frase: String): List<String> {
         val s = frase.trim()
-        val achados = Regex("""(?iU)\b(que horas|que dia|quanto|quantos|quantas|qual|quais|o que|quando)\b""").findAll(s).toList()
-        if (achados.size < 2) return listOf(s)
-        val partes = achados.mapIndexed { k, m ->
-            val fim = if (k + 1 < achados.size) achados[k + 1].range.first else s.length
-            s.substring(m.range.first, fim).trim().replace(Regex("""(?iU)(\s+(e|ou|também))+$"""), "").trim(' ', ',', '.')
-        }.filter { it.length >= 4 }
+        val pos = inicios(s)
+        if (pos.size < 2) return listOf(s)
+        val partes = pos.mapIndexed { k, ini -> semLigacaoNoFim(s.substring(ini, if (k + 1 < pos.size) pos[k + 1] else s.length)) }
+            .filter { it.length >= 4 }
         return if (partes.size >= 2) partes.take(5) else listOf(s)
     }
 

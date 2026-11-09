@@ -164,6 +164,7 @@ class ConversaActivity : Activity() {
         val rid = System.currentTimeMillis().toString()      // numérico e longo: é o que o servidor exige para repetir sem re-executar
         Config.evento(this, "conversa: pedido de ${frase.length} caracteres")
         Config.estado(this).edit().putString("ultima_pergunta", frase).putString("ultima_resposta", "(aguardando…)").apply()
+        Historico.add(this, true, frase)
         ContextCompat.startForegroundService(this, Intent(this, FalaService::class.java).putExtra("id", "c$rid").putExtra("pergunta", frase).putExtra("rid", rid))
         finish()
     }

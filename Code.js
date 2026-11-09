@@ -3380,6 +3380,40 @@ function doPost(e) {
       } catch (eAn2) { return json({ ok: false, erro: eAn2.message }); }
     }
 
+    // PAINEL NO APP ANDROID (0.6.0): os mesmos cartões do Dashboard do web app (Finanças, agenda, tarefas, e-mails, notificações, custos, saúde),
+    // só leitura, com o token PRÓPRIO do app. Cada parte falha sozinha (uma parte fora do ar não derruba o painel). Nada aqui chama o Gemini.
+    if (body && body.action === "android_dashboard") {
+      var _tkDb = PropertiesService.getScriptProperties().getProperty('ANDROID_API_TOKEN');
+      if (!body.token || !_tkDb || body.token !== _tkDb) return json({ ok: false, erro: 'não autorizado' });
+      _DASH_INTERNO = true;
+      var _TZdb = 'America/Sao_Paulo', _sdb = { ok: true, em: Date.now() };
+      try {
+        try { _sdb.financas = dashboardFinancas(''); } catch (eD1) { _sdb.financas = { ok: false, erro: eD1.message }; }
+        try {
+          var _evDb = CalendarApp.getDefaultCalendar().getEvents(new Date(), new Date(Date.now() + 7 * 86400000));
+          _sdb.eventos = _evDb.slice(0, 8).map(function (ev) { return { inicio: Utilities.formatDate(ev.getStartTime(), _TZdb, 'dd/MM HH:mm'), titulo: (ev.getTitle() || '(sem título)').substring(0, 60) }; });
+        } catch (eD2) { _sdb.eventos = []; }
+        try { _sdb.tarefas = (typeof Tarefas !== 'undefined' ? Tarefas.listar({}) : []).slice(0, 8).map(function (t) { return { titulo: String(t.titulo || '').substring(0, 70) }; }); } catch (eD3) { _sdb.tarefas = []; }
+        try { _sdb.emailsNaoLidos = GmailApp.getInboxUnreadCount(); } catch (eD4) { _sdb.emailsNaoLidos = null; }
+        try {
+          _sdb.notificacoes = (Firestore.listDocs(_NOTIF_COL, 20) || []).slice(0, 15).map(function (x) {
+            var d = x.dados || x; return { app: String(d.app || ''), titulo: String(d.titulo || '').substring(0, 60), texto: String(d.texto || '').substring(0, 110), em: Number(d.em) || 0 };
+          });
+        } catch (eD5) { _sdb.notificacoes = []; }
+        try { var _cu = dashboardCustos(''); _sdb.custos = _cu && _cu.ok ? { mes: _cu.mes, gastoBRL: _cu.gastoBRL, tetoBRL: _cu.tetoBRL, pct: _cu.pct, projecaoBRL: _cu.projecaoBRL, status: _cu.status } : { ok: false }; } catch (eD6) { _sdb.custos = { ok: false }; }
+        try { var _sa = dashboardSaude(''); _sdb.saude = _sa && _sa.ok ? { nivel: _sa.nivel, alertas: (_sa.alertas || []).slice(0, 5), orcamentoPct: _sa.orcamento && _sa.orcamento.pct } : { ok: false }; } catch (eD7) { _sdb.saude = { ok: false }; }
+        try {
+          var _t0 = null;
+          (Firestore.listDocs('telemetria_dispositivo', 5) || []).forEach(function (x) {
+            var d = x.dados || x; if (d.bateria_nivel == null && d.bateria == null) return;
+            if (!_t0 || String(d.recebidoEm || '') > String(_t0.recebidoEm || '')) _t0 = d;
+          });
+          _sdb.telemetria = _t0 ? { bateria: _t0.bateria_nivel != null ? _t0.bateria_nivel : _t0.bateria, carregando: _t0.carregando, modo_som: _t0.modo_som, wifi: _t0.wifi_nome, recebidoEm: _t0.recebidoEm } : null;
+        } catch (eD8) { _sdb.telemetria = null; }
+      } finally { _DASH_INTERNO = false; }
+      return json(_sdb);
+    }
+
     // VOZ PREMIUM DA CONVERSA (0.3.1): o app pega o TEXTO da resposta (android_conversa) e pede aqui a fala na voz do Jarvis. O servidor
     // sintetiza e empurra o áudio ao app pelo mesmo canal FCM dos briefings; o app toca quando a fila de fala liberar. Falhou → o app fala
     // pela voz do celular. Uma tentativa só do lado do app: repetir falaria duas vezes.
@@ -9863,7 +9897,10 @@ function _notifFinClassificar(n, finMap) {
   return R('informativa', 'Informativa', false, { valor: null });
 }
 
+// Verdadeiro só dentro da rota android_dashboard (a variável vive uma execução): o app autentica pelo token PRÓPRIO, não por sessão do web app.
+var _DASH_INTERNO = false;
 function _dashDono(token) {
+  if (_DASH_INTERNO) return { email: 'app-android' };
   var s = getSessionUser(token);
   return (s && Jarvis._isOwner(s.email)) ? s : null;
 }

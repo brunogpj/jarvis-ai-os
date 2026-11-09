@@ -11,8 +11,8 @@ android {
         applicationId = "dev.jarvis.companion"
         minSdk = 26          // Android 8.0; o Redmi do dono roda Android 13
         targetSdk = 34
-        versionCode = 19
-        versionName = "0.5.6-religa-escuta"
+        versionCode = 20
+        versionName = "0.6.0-chat-dashboard"
     }
 
     buildTypes {

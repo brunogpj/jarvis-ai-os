@@ -26,8 +26,8 @@ import com.google.firebase.messaging.FirebaseMessaging
 import java.net.URI
 
 /**
- * Tela do app (0.5.0, "nova cara"): três áreas numa barra inferior — Conversa (o orbe para falar e a última troca),
- * Sistema (conexão, notificações, eventos) e Voz (tom e ritmo da voz do celular). Também é a porta do pareamento.
+ * Tela do app (0.6.0): três áreas numa barra inferior, as mesmas do web app — Chat (balões, texto e voz), Dashboard (os cartões do painel)
+ * e Dispositivo (conexão, notificações, eventos e a voz do celular). Também é a porta do pareamento.
  *
  * Pareamento (uma vez, pelo computador, sem digitar nada no celular; o JSON NÃO fica no repositório):
  *   adb shell am start -n dev.jarvis.companion/.MainActivity --es config_b64 <JSON em base64>
@@ -42,11 +42,8 @@ class MainActivity : Activity() {
     private val relogio = Handler(Looper.getMainLooper())
     private val vigia = object : Runnable {
         override fun run() {
-            // Reconstrói Conversa e Sistema quando algo mudou (resposta chegou, evento novo). Voz não: reconstruir tiraria o dedo do controle.
-            if (aba != 2) {
-                val ass = assinaturaAtual()
-                if (ass != assinatura) { mostrar(aba) }
-            }
+            // Chat: refaz só os balões quando entra mensagem (o campo de texto não é tocado). Dashboard e Dispositivo: ao abrir ou em Atualizar.
+            if (aba == 0 && Historico.assinatura(this@MainActivity) != histVisto) preencherMsgs()
             atualizarCabecalho()
             relogio.postDelayed(this, 2500)
         }
@@ -110,7 +107,7 @@ class MainActivity : Activity() {
         val barra = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; setBackgroundColor(Cores.BARRA); setPadding(dp(12), dp(6), dp(12), dp(10))
         }
-        listOf("Conversa", "Sistema", "Voz").forEachIndexed { i, nome ->
+        listOf("Chat", "Dashboard", "Dispositivo").forEachIndexed { i, nome ->
             val icone = IconeAbaView(this, i)
             val t = TextView(this).apply { text = nome; textSize = 12f; gravity = Gravity.CENTER }
             val celula = LinearLayout(this).apply {
@@ -141,7 +138,7 @@ class MainActivity : Activity() {
             t.typeface = Tipografia.inter(this, if (idx == i) 600 else 500)
         }
         conteudo.removeAllViews()
-        conteudo.addView(when (i) { 0 -> telaConversa(); 1 -> telaSistema(); else -> telaVoz() })
+        conteudo.addView(when (i) { 0 -> telaChat(); 1 -> telaDashboard(); else -> telaDispositivo() })
         atualizarCabecalho()
     }
 
@@ -162,63 +159,112 @@ class MainActivity : Activity() {
         selo.minHeight = dp(32)
     }
 
-    // ---------------------------------------------------------------- Conversa
+    // ---------------------------------------------------------------- Chat
 
-    private fun telaConversa(): View {
-        val e = Config.estado(this)
-        val pergunta = e.getString("ultima_pergunta", null)
-        val resposta = e.getString("ultima_resposta", null)
+    private var listaMsgs: LinearLayout? = null
+    private var rolagemMsgs: ScrollView? = null
+    private var campoMsg: android.widget.EditText? = null
+    private var rascunho = ""
+    private var histVisto = ""
+    private var aguardando = false
 
-        val baloes = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; gravity = Gravity.BOTTOM
-            setPadding(dp(20), dp(16), dp(20), dp(8))
-        }
-        if (pergunta == null) {
-            baloes.addView(texto("Toque no orbe e fale, ou use um atalho. Segure um atalho para trocar a frase.", 15f, Cores.SECUNDARIO).apply {
-                gravity = Gravity.CENTER; setPadding(dp(16), 0, dp(16), dp(24))
-            })
-        } else {
-            baloes.addView(texto("ÚLTIMA CONVERSA", 11f, Cores.SECUNDARIO).apply {
-                gravity = Gravity.CENTER; letterSpacing = 0.08f; setPadding(0, 0, 0, dp(12))
-            })
-            baloes.addView(balao(pergunta, voce = true))
-            baloes.addView(balao(resposta ?: "", voce = false))
-        }
+    private fun telaChat(): View {
+        val msgs = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.BOTTOM; setPadding(dp(16), dp(12), dp(16), dp(8)) }
+        listaMsgs = msgs
         val rolagem = ScrollView(this).apply {
             isFillViewport = true; overScrollMode = View.OVER_SCROLL_NEVER
-            addView(baloes, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-            post { fullScroll(View.FOCUS_DOWN) }
+            addView(msgs, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
+        rolagemMsgs = rolagem
+        preencherMsgs()
 
         val frases = atalhos()
-        val linhaChips = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(dp(20), dp(8), dp(20), dp(4)) }
+        val linhaChips = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(dp(16), dp(6), dp(16), dp(6)) }
         frases.forEach { f ->
             linhaChips.addView(Button(this).apply {
-                text = f; isAllCaps = false; textSize = 14f; setTextColor(Cores.TEXTO2); minHeight = dp(44); minimumHeight = dp(44)
-                setPadding(dp(16), 0, dp(16), 0)
-                background = fundoArredondado(Cores.CARTAO, dp(22).toFloat(), Color.parseColor("#2a335e"), 1)
+                text = f; isAllCaps = false; textSize = 13f; setTextColor(Cores.TEXTO2); minHeight = dp(40); minimumHeight = dp(40)
+                setPadding(dp(14), 0, dp(14), 0)
+                background = fundoArredondado(Cores.CARTAO, dp(20).toFloat(), Color.parseColor("#2a335e"), 1)
                 stateListAnimator = null
                 typeface = Tipografia.inter(this@MainActivity, 500)
                 setOnClickListener { perguntar(f) }
                 setOnLongClickListener { editarAtalho(frases.indexOf(f)); true }      // segurar = trocar a frase
-            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)).apply { rightMargin = dp(8) })
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)).apply { rightMargin = dp(8) })
         }
         val chips = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(linhaChips) }
 
-        val orbe = OrbeView(this).apply { setOnClickListener { startActivity(Intent(this@MainActivity, ConversaActivity::class.java)) } }
-        val legenda = texto("Toque para falar", 14f, Cores.TEXTO2).apply { gravity = Gravity.CENTER; typeface = Tipografia.inter(this@MainActivity, 500) }
-        val rodape = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; setPadding(0, dp(14), 0, dp(12))
-            addView(orbe, LinearLayout.LayoutParams(dp(152), dp(152)))
-            addView(legenda, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(2) })
+        val campo = android.widget.EditText(this).apply {
+            hint = "Escreva para o Jarvis"; setHintTextColor(Cores.SECUNDARIO); setTextColor(Cores.TEXTO); textSize = 15f
+            typeface = Tipografia.inter(this@MainActivity, 400); maxLines = 4
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            background = fundoArredondado(Cores.CARTAO, dp(22).toFloat(), Cores.BORDA, 1)
+            setPadding(dp(16), dp(10), dp(16), dp(10)); setText(rascunho)
+            addTextChangedListener(object : android.text.TextWatcher {
+                override fun afterTextChanged(s: android.text.Editable?) { rascunho = s?.toString() ?: "" }
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            })
         }
-
+        campoMsg = campo
+        val enviar = Button(this).apply {
+            text = "↑"; textSize = 20f; isAllCaps = false; setTextColor(Cores.FUNDO); stateListAnimator = null; contentDescription = "Enviar"
+            typeface = Tipografia.grotesk(this@MainActivity, 700); setPadding(0, 0, 0, 0)
+            background = fundoArredondado(Cores.DESTAQUE, dp(22).toFloat())
+            setOnClickListener { enviarTexto() }
+        }
+        val mic = Button(this).apply {
+            text = "🎙"; textSize = 18f; isAllCaps = false; stateListAnimator = null; contentDescription = "Falar com o Jarvis"; setPadding(0, 0, 0, 0)
+            background = fundoArredondado(Cores.BALAO_VOCE, dp(22).toFloat(), Cores.DESTAQUE, dp(1))
+            setOnClickListener { startActivity(Intent(this@MainActivity, ConversaActivity::class.java)) }
+        }
+        val barra = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.BOTTOM; setPadding(dp(16), dp(4), dp(16), dp(12))
+            addView(campo, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(mic, LinearLayout.LayoutParams(dp(44), dp(44)).apply { leftMargin = dp(8) })
+            addView(enviar, LinearLayout.LayoutParams(dp(44), dp(44)).apply { leftMargin = dp(8) })
+        }
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(rolagem, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
             addView(chips)
-            addView(rodape)
+            addView(barra)
         }
+    }
+
+    /** Refaz só a lista de balões (o campo de texto e o teclado ficam como estão). */
+    private fun preencherMsgs() {
+        val msgs = listaMsgs ?: return
+        histVisto = Historico.assinatura(this)
+        msgs.removeAllViews()
+        val h = Historico.ler(this)
+        if (h.length() == 0 && !aguardando) {
+            msgs.addView(texto("Escreva, toque no microfone ou use um atalho. Segure um atalho para trocar a frase.", 15f, Cores.SECUNDARIO).apply {
+                gravity = Gravity.CENTER; setPadding(dp(16), 0, dp(16), dp(24))
+            })
+        }
+        for (i in 0 until h.length()) {
+            val o = h.getJSONObject(i)
+            msgs.addView(balao(o.optString("t"), o.optBoolean("v")))
+        }
+        if (aguardando) msgs.addView(balao("…", false))
+        rolagemMsgs?.post { rolagemMsgs?.fullScroll(View.FOCUS_DOWN) }
+    }
+
+    /** Mensagem digitada: vai ao Jarvis pelo mesmo caminho da voz (rid, cadeia determinística), mas a resposta só aparece, não é falada. */
+    private fun enviarTexto() {
+        val frase = campoMsg?.text?.toString()?.trim() ?: ""
+        if (frase.isEmpty() || aguardando) return
+        campoMsg?.setText("")
+        Historico.add(this, true, frase)
+        aguardando = true
+        preencherMsgs()
+        val ctx = applicationContext
+        Config.evento(ctx, "chat: pedido de ${frase.length} caracteres")
+        Thread {
+            val r = Conversa.perguntarR(ctx, frase, System.currentTimeMillis().toString())
+            Historico.add(ctx, false, r.texto)
+            runOnUiThread { aguardando = false; if (aba == 0) preencherMsgs() }
+        }.start()
     }
 
     private val atalhosPadrao = listOf("Que horas são", "Quanto tenho livre", "O que vence hoje")
@@ -251,8 +297,9 @@ class MainActivity : Activity() {
         val rid = System.currentTimeMillis().toString()
         Config.evento(this, "conversa: pedido de ${frase.length} caracteres")
         Config.estado(this).edit().putString("ultima_pergunta", frase).putString("ultima_resposta", "(aguardando…)").apply()
+        Historico.add(this, true, frase)
         ContextCompat.startForegroundService(this, Intent(this, FalaService::class.java).putExtra("id", "c$rid").putExtra("pergunta", frase).putExtra("rid", rid))
-        mostrar(0)
+        if (aba == 0) preencherMsgs()
     }
 
     private fun balao(t: String, voce: Boolean): View {
@@ -269,6 +316,159 @@ class MainActivity : Activity() {
             setPadding(0, 0, 0, dp(10))
             addView(v)
         }
+    }
+
+    // ---------------------------------------------------------------- Dashboard
+
+    private var buscandoPainel = false
+    private var painelErro: String? = null
+
+    private fun brl(v: Double?): String = if (v == null || v.isNaN()) "—" else java.text.NumberFormat.getCurrencyInstance(java.util.Locale("pt", "BR")).format(v)
+
+    private fun telaDashboard(): View {
+        val lista = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(12), dp(20), dp(24)) }
+        val d = Painel.cache(this)
+        val idade = Painel.idadeMs(this)
+        lista.addView(texto("Dashboard", 28f, Cores.TEXTO).apply { typeface = Tipografia.grotesk(this@MainActivity, 700) })
+        val estado = when {
+            buscandoPainel -> "Atualizando…"
+            painelErro != null -> painelErro!!
+            d == null -> "Ainda sem dados."
+            else -> "Atualizado há " + (if (idade < 90_000) "instantes" else "${idade / 60_000} min")
+        }
+        lista.addView(texto(estado, 13f, Cores.SECUNDARIO).apply { setPadding(0, dp(4), 0, dp(4)) })
+
+        if (d != null) {
+            val f = d.optJSONObject("financas")
+            if (f != null && f.optBoolean("ok")) {
+                val c = cartaoBase("Finanças")
+                fun lin(k: String, v: String) = c.addView(LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(5), 0, dp(7))
+                    addView(texto(k, 14f, Cores.SECUNDARIO), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)); addView(texto(v, 14f, Cores.TEXTO))
+                })
+                lin("Livre hoje", brl(f.optDouble("livreHoje")))
+                lin("Previsão do fim do mês", brl(f.optDouble("livreFim")))
+                lin("A pagar", brl(f.optDouble("aPagar")) + " · ${f.optInt("nPendentes")} contas")
+                if (!f.isNull("investido")) lin("Investido", brl(f.optDouble("investido")))
+                if (!f.isNull("reservaMeses")) lin("Reserva", String.format(java.util.Locale("pt", "BR"), "%.1f meses", f.optDouble("reservaMeses")))
+                val g = f.optJSONObject("gastos")
+                if (g != null) lin("Gastos hoje · semana · mês", listOf("hoje", "semana", "mes").joinToString(" · ") { if (g.isNull(it)) "—" else brl(g.optDouble(it)) })
+                val v = f.optJSONArray("vencimentos")
+                if (v != null && v.length() > 0) {
+                    c.addView(texto("VENCIMENTOS", 11f, Cores.SECUNDARIO).apply { letterSpacing = 0.08f; setPadding(0, dp(10), 0, dp(2)) })
+                    for (i in 0 until v.length()) {
+                        val o = v.getJSONObject(i)
+                        val quando = if (o.optBoolean("atrasada")) "atrasada" else if (o.optBoolean("hoje")) "hoje" else if (o.isNull("dia")) "" else "dia ${o.optInt("dia")}"
+                        lin(o.optString("nome") + if (quando.isNotEmpty()) " · $quando" else "", brl(o.optDouble("valor")))
+                    }
+                }
+                lista.addView(c)
+            } else if (f != null) lista.addView(cartaoTexto("Finanças", f.optString("erro", "indisponível")))
+
+            val ev = d.optJSONArray("eventos"); val ta = d.optJSONArray("tarefas")
+            val cAg = cartaoBase("Agenda e tarefas")
+            if (ev == null || ev.length() == 0) cAg.addView(texto("Nenhum compromisso nos próximos 7 dias.", 14f, Cores.SECUNDARIO).apply { setPadding(0, 0, 0, dp(6)) })
+            else for (i in 0 until ev.length()) { val o = ev.getJSONObject(i); cAg.addView(linhaDupla(o.optString("inicio"), o.optString("titulo"))) }
+            if (ta != null && ta.length() > 0) {
+                cAg.addView(texto("TAREFAS PENDENTES", 11f, Cores.SECUNDARIO).apply { letterSpacing = 0.08f; setPadding(0, dp(10), 0, dp(2)) })
+                for (i in 0 until ta.length()) cAg.addView(linhaDupla("•", ta.getJSONObject(i).optString("titulo")))
+            }
+            if (!d.isNull("emailsNaoLidos")) cAg.addView(texto("E-mails não lidos: ${d.optInt("emailsNaoLidos")}", 14f, Cores.TEXTO2).apply { setPadding(0, dp(10), 0, dp(6)) })
+            lista.addView(cAg)
+
+            val nt = d.optJSONArray("notificacoes")
+            val cNt = cartaoBase("Notificações")
+            if (nt == null || nt.length() == 0) cNt.addView(texto("Nada por enquanto.", 14f, Cores.SECUNDARIO).apply { setPadding(0, 0, 0, dp(6)) })
+            else for (i in 0 until minOf(nt.length(), 8)) {
+                val o = nt.getJSONObject(i)
+                val hora = try { java.text.SimpleDateFormat("dd/MM HH:mm", java.util.Locale("pt", "BR")).format(java.util.Date(o.optLong("em"))) } catch (e: Exception) { "" }
+                cNt.addView(LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL; setPadding(0, dp(8), 0, dp(8))
+                    addView(texto(o.optString("app") + " · " + hora, 12f, Cores.SECUNDARIO))
+                    addView(texto((o.optString("titulo") + " " + o.optString("texto")).trim(), 14f, Cores.TEXTO))
+                })
+                cNt.addView(View(this).apply { setBackgroundColor(Cores.DIVISOR) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1))
+            }
+            lista.addView(cNt)
+
+            val cu = d.optJSONObject("custos")
+            if (cu != null && cu.has("gastoBRL")) {
+                val ok = cu.optString("status") == "ok"
+                lista.addView(cartao("Custos de IA", if (ok) "Dentro do teto" else "Atenção", ok, listOf(
+                    "Gasto no mês (estimado)" to brl(cu.optDouble("gastoBRL")), "Teto" to brl(cu.optDouble("tetoBRL")),
+                    "Uso do teto" to String.format(java.util.Locale("pt", "BR"), "%.0f%%", cu.optDouble("pct")), "Projeção do mês" to brl(cu.optDouble("projecaoBRL")))))
+            }
+            val sa = d.optJSONObject("saude")
+            if (sa != null && sa.has("nivel")) {
+                val nivel = sa.optString("nivel"); val ok = nivel == "ok"
+                val cs = cartao("Saúde do sistema", if (ok) "Tudo certo" else nivel, ok, emptyList()) as LinearLayout
+                val al = sa.optJSONArray("alertas")
+                if (al != null) for (i in 0 until al.length()) {
+                    val a = al.get(i)
+                    cs.addView(texto("• " + (if (a is org.json.JSONObject) a.optString("texto", a.toString()) else a.toString()), 14f, Cores.TEXTO2).apply { setPadding(0, dp(3), 0, dp(3)) })
+                }
+                lista.addView(cs)
+            }
+        }
+
+        lista.addView(Button(this).apply {
+            text = if (buscandoPainel) "Atualizando…" else "Atualizar agora"; isAllCaps = false; typeface = Tipografia.inter(this@MainActivity, 600); textSize = 15f
+            setTextColor(Cores.TEXTO); stateListAnimator = null; isEnabled = !buscandoPainel
+            background = fundoArredondado(Cores.BALAO_VOCE, dp(14).toFloat())
+            setOnClickListener { atualizarPainel() }
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)).apply { topMargin = dp(12) })
+
+        // abre já atualizado: se o que há é velho (mais de 2 min), busca em segundo plano
+        if (!buscandoPainel && painelErro == null && (d == null || idade > 120_000)) relogio.post { atualizarPainel() }
+        return ScrollView(this).apply { overScrollMode = View.OVER_SCROLL_NEVER; addView(lista) }
+    }
+
+    private fun atualizarPainel() {
+        if (buscandoPainel) return
+        buscandoPainel = true; painelErro = null
+        if (aba == 1) mostrar(1)
+        val ctx = applicationContext
+        Thread {
+            val r = Painel.buscar(ctx)
+            runOnUiThread {
+                buscandoPainel = false
+                if (r == null) painelErro = "Não consegui atualizar agora."
+                if (aba == 1) mostrar(1)
+            }
+        }.start()
+    }
+
+    private fun cartaoTexto(titulo: String, msg: String): View = cartaoBase(titulo).also { it.addView(texto(msg, 14f, Cores.SECUNDARIO).apply { setPadding(0, 0, 0, dp(6)) }) }
+
+    private fun linhaDupla(a: String, b: String): View = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(5), 0, dp(5))
+        addView(texto(a, 14f, Cores.SECUNDARIO).apply { minWidth = dp(86) })
+        addView(texto(b, 14f, Cores.TEXTO), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+    }
+
+    // ---------------------------------------------------------------- Dispositivo
+
+    /** Estado do celular e do app: a telemetria que o servidor tem, a conexão, as notificações, os eventos e a voz do celular. */
+    private fun telaDispositivo(): View {
+        val sistema = telaSistema() as ScrollView
+        val voz = telaVoz() as ScrollView
+        val a = sistema.getChildAt(0) as LinearLayout
+        val b = voz.getChildAt(0) as LinearLayout
+        sistema.removeAllViews(); voz.removeAllViews()
+        val t = Painel.cache(this)?.optJSONObject("telemetria")
+        if (t != null) {
+            val rec = t.optString("recebidoEm")
+            val c = cartao("Celular (último aviso ao Jarvis)", if (t.optBoolean("carregando")) "Carregando" else "Na bateria", true, listOf(
+                "Bateria" to (t.opt("bateria")?.toString()?.let { "$it%" } ?: "—"),
+                "Som" to (t.optString("modo_som").ifBlank { "—" }),
+                "Wi-Fi" to (t.optString("wifi").ifBlank { "—" }),
+                "Recebido" to (if (rec.length >= 16) rec.substring(8, 10) + "/" + rec.substring(5, 7) + " " + rec.substring(11, 16) + " UTC" else "—")))
+            a.addView(c, 2)
+        }
+        val tituloVoz = b.getChildAt(0) as TextView
+        b.removeViewAt(0); tituloVoz.setPadding(0, dp(24), 0, 0); a.addView(tituloVoz)
+        while (b.childCount > 0) { val v = b.getChildAt(0); b.removeViewAt(0); a.addView(v) }
+        return ScrollView(this).apply { overScrollMode = View.OVER_SCROLL_NEVER; addView(a) }
     }
 
     // ---------------------------------------------------------------- Sistema
@@ -312,7 +512,7 @@ class MainActivity : Activity() {
         lista.addView(Button(this).apply {
             text = "Atualizar agora"; isAllCaps = false; typeface = Tipografia.inter(this@MainActivity, 600); textSize = 15f; setTextColor(Cores.TEXTO); stateListAnimator = null
             background = fundoArredondado(Cores.BALAO_VOCE, dp(14).toFloat())
-            setOnClickListener { AckQueue.drenarAgora(context); NotifFila.drenarAgora(context); NotificacaoService.atualizarEmSegundoPlano(context); mostrar(1) }
+            setOnClickListener { AckQueue.drenarAgora(context); NotifFila.drenarAgora(context); NotificacaoService.atualizarEmSegundoPlano(context); mostrar(2) }
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)).apply { topMargin = dp(12) })
 
         return ScrollView(this).apply { overScrollMode = View.OVER_SCROLL_NEVER; addView(lista) }

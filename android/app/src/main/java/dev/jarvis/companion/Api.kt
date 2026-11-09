@@ -12,7 +12,7 @@ import java.net.URL
  */
 object Api {
     /** POST com o token do pareamento. Devolve o JSON da resposta, ou null se não deu para falar com o servidor. */
-    fun post(ctx: Context, corpo: JSONObject): JSONObject? {
+    fun post(ctx: Context, corpo: JSONObject, leituraMs: Int = 30000): JSONObject? {
         val url = Config.url(ctx) ?: return null
         val token = Config.token(ctx) ?: return null
         return try {
@@ -21,7 +21,7 @@ object Api {
             c.requestMethod = "POST"
             c.doOutput = true
             c.connectTimeout = 15000
-            c.readTimeout = 30000
+            c.readTimeout = leituraMs
             c.instanceFollowRedirects = true
             c.setRequestProperty("Content-Type", "application/json")
             c.outputStream.use { it.write(corpo.toString().toByteArray(Charsets.UTF_8)) }
@@ -53,4 +53,4 @@ object Api {
 }
 
 /** A versão do app, sem depender do BuildConfig (desligado por padrão nas versões novas do AGP). */
-object BuildConfigVersao { const val NOME = "0.5.6-religa-escuta" }
+object BuildConfigVersao { const val NOME = "0.6.0-chat-dashboard" }

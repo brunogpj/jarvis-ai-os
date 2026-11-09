@@ -103,6 +103,7 @@ class FalaService : Service() {
             }
             Config.evento(this, "conversa: resposta de ${texto.length} caracteres em ${(System.currentTimeMillis() - t0) / 1000} s")
             Config.estado(this).edit().putString("ultima_resposta", texto.take(600)).apply()
+            Historico.add(this, false, texto)
             // Voz do Jarvis: o servidor sintetiza e manda o áudio por push (toca depois que esta tarefa termina, a fila é de uma thread só).
             // Resposta curta (hora, saldo) sai na hora pela voz do celular, ajustada para soar como o Jarvis; a premium soma uns 13 s
             // de síntese e só vale a espera para respostas longas, que o dono para para ouvir (mesma regra do MacroDroid).

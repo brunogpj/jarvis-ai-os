@@ -35,6 +35,12 @@ import java.util.concurrent.atomic.AtomicInteger
  * Uma fala por vez: ordens que chegam juntas esperam a anterior acabar (fila de uma thread só).
  */
 class FalaService : Service() {
+    companion object {
+        const val LIMITE_CURTA = 160        // até aqui a resposta da conversa sai pela voz do celular
+        const val PITCH_JARVIS = 0.88f      // 1.0 é o normal; mais grave que a voz padrão
+        const val RITMO_JARVIS = 0.95f
+    }
+
     private val fila = Executors.newSingleThreadExecutor()
     private val pendentes = AtomicInteger(0)
 
@@ -78,7 +84,9 @@ class FalaService : Service() {
             Config.evento(this, "conversa: resposta de ${texto.length} caracteres em ${(System.currentTimeMillis() - t0) / 1000} s")
             Config.estado(this).edit().putString("ultima_resposta", texto.take(600)).apply()
             // Voz do Jarvis: o servidor sintetiza e manda o áudio por push (toca depois que esta tarefa termina, a fila é de uma thread só).
-            if (Conversa.respostaReal && Conversa.vozPremium(this, texto)) {
+            // Resposta curta (hora, saldo) sai na hora pela voz do celular, ajustada para soar como o Jarvis; a premium soma uns 13 s
+            // de síntese e só vale a espera para respostas longas, que o dono para para ouvir (mesma regra do MacroDroid).
+            if (Conversa.respostaReal && texto.length > LIMITE_CURTA && Conversa.vozPremium(this, texto)) {
                 Config.evento(this, "conversa: voz do Jarvis pedida ao servidor")
                 return
             }
@@ -159,6 +167,28 @@ class FalaService : Service() {
         erro?.let { throw IllegalStateException(it) }
     }
 
+    /**
+     * Aproxima a voz do celular da do Jarvis (Gemini "Iapetus": masculina, grave, séria). O Android não informa o gênero das vozes;
+     * as do Google com sufixo "ptd" e "pte" em pt-BR são as masculinas, então entram primeiro. Grave um pouco (pitch) e fala um
+     * pouco mais devagar, como o narrador. A voz escolhida fica registrada para conferir de ouvido e trocar se não agradar.
+     */
+    private fun ajustarVoz(t: TextToSpeech) {
+        try {
+            val ptbr = t.voices?.filter { it.locale.language == "pt" && it.locale.country == "BR" } ?: emptyList()
+            val escolhida = listOf("ptd", "pte").firstNotNullOfOrNull { s -> ptbr.firstOrNull { it.name.contains(s) } } ?: ptbr.firstOrNull()
+            if (escolhida != null) {
+                t.voice = escolhida
+                val p = Config.estado(this)
+                if (p.getString("voz_usada", "") != escolhida.name) {
+                    p.edit().putString("voz_usada", escolhida.name).apply()
+                    Config.evento(this, "voz do celular: ${escolhida.name} (disponíveis: ${ptbr.joinToString(",") { it.name }.take(120)})")
+                }
+            }
+        } catch (e: Exception) { /* fica a voz padrão */ }
+        t.setPitch(PITCH_JARVIS)
+        t.setSpeechRate(RITMO_JARVIS)
+    }
+
     private fun falarComTts(texto: String) {
         val pronto = CountDownLatch(1)
         val fim = CountDownLatch(1)
@@ -173,6 +203,7 @@ class FalaService : Service() {
             erro?.let { throw IllegalStateException(it) }
             val t = tts!!
             t.language = Locale("pt", "BR")
+            ajustarVoz(t)
             t.setAudioAttributes(atributos)
             t.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(u: String?) {}

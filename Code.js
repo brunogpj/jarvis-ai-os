@@ -3292,7 +3292,7 @@ function doPost(e) {
       var _PERMITIDAS_CF = {
         FALA_PROATIVA_LOCAL: /^(sim|nao)$/, FALA_RESPOSTAS_LOCAL: /^(sim|nao)$/,
         MODO_FALA_VOZ: /^(nuvem|auto|local)$/, FALA_VOLUME_DB: /^(1[0-6]|[0-9])$/,
-        FALA_FORMATO: /^(ogg|wav)$/, FALA_ARQUIVO_UNICO: /^(sim|nao)$/, ANDROID_FALAR: /^(sim|nao)$/, ANDROID_API_TOKEN: /^[a-f0-9]{48}$/, ANDROID_API_ESTRITO: /^(sim|nao)$/, ANDROID_NOTIF: /^(sim|nao)$/, NOTIF_APPS: /^[a-z0-9áéíóúâêôãõç.=,_ -]{1,400}$/, ANDROID_NOTIF_APPS: /^[a-z0-9áéíóúâêôãõç.=,_ -]{1,400}$/, ROTA_JEV_NOVAS: /^(sim|nao)$/, FERRAMENTAS_JEV: /^(nao|adiciona|sim)$/, INJECAO_JEV: /^(sim|nao)$/, ACAO_JEV: /^(sim|nao)$/, CATEGORIA_JEV: /^(sim|nao)$/, TTS_STYLE: /^[A-Za-zÀ-ÿ ,.\-]{0,120}$/, FERRAMENTAS_JEV_ADD: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE_CONH: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE: /^0?\.\d{1,2}$/, CONFIRMA_JEV: /^(sim|nao)$/, MONITOR_GMAIL_JEV: /^(sim|nao)$/, BUSCA_DRIVE_ATIVA: /^(sim|nao)$/, FILE_SEARCH_ATIVA: /^(sim|nao)$/, FS_LOTE: /^\d{1,2}$/, FS_MAX_MB: /^\d{1,2}$/, FS_MAX: /^\d{2,4}$/, FS_EXCLUIR: /^[^\r\n]{0,200}$/, BUSCA_DRIVE_MAX: /^\d{2,4}$/, WEB_MONITOR_JEV: /^(sim|nao)$/, WEB_MONITOR_JEV_CORTE: /^0?\.\d{1,2}$/, MONITOR_GMAIL_JEV_CORTE: /^0?\.\d{1,2}$/, FIN_AVISOS_ATIVO: /^(sim|nao)$/, FIN_NOME_DONO: /^[a-zà-ÿ ]{3,80}$/, FIN_CPF_DONO: /^\d{3}\.\d{3}$/,
+        FALA_FORMATO: /^(ogg|wav)$/, FALA_ARQUIVO_UNICO: /^(sim|nao)$/, ANDROID_FALAR: /^(sim|nao)$/, ANDROID_API_TOKEN: /^[a-f0-9]{48}$/, ANDROID_API_ESTRITO: /^(sim|nao)$/, ANDROID_NOTIF: /^(sim|nao|sombra)$/, NOTIF_APPS: /^[a-z0-9áéíóúâêôãõç.=,_ -]{1,400}$/, ANDROID_NOTIF_APPS: /^[a-z0-9áéíóúâêôãõç.=,_ -]{1,400}$/, ROTA_JEV_NOVAS: /^(sim|nao)$/, FERRAMENTAS_JEV: /^(nao|adiciona|sim)$/, INJECAO_JEV: /^(sim|nao)$/, ACAO_JEV: /^(sim|nao)$/, CATEGORIA_JEV: /^(sim|nao)$/, TTS_STYLE: /^[A-Za-zÀ-ÿ ,.\-]{0,120}$/, FERRAMENTAS_JEV_ADD: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE_CONH: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE: /^0?\.\d{1,2}$/, CONFIRMA_JEV: /^(sim|nao)$/, MONITOR_GMAIL_JEV: /^(sim|nao)$/, BUSCA_DRIVE_ATIVA: /^(sim|nao)$/, FILE_SEARCH_ATIVA: /^(sim|nao)$/, FS_LOTE: /^\d{1,2}$/, FS_MAX_MB: /^\d{1,2}$/, FS_MAX: /^\d{2,4}$/, FS_EXCLUIR: /^[^\r\n]{0,200}$/, BUSCA_DRIVE_MAX: /^\d{2,4}$/, WEB_MONITOR_JEV: /^(sim|nao)$/, WEB_MONITOR_JEV_CORTE: /^0?\.\d{1,2}$/, MONITOR_GMAIL_JEV_CORTE: /^0?\.\d{1,2}$/, FIN_AVISOS_ATIVO: /^(sim|nao)$/, FIN_NOME_DONO: /^[a-zà-ÿ ]{3,80}$/, FIN_CPF_DONO: /^\d{3}\.\d{3}$/,
         // consultor (fase 4): margem na conta (R$), taxa ao mês (decimal), reserva-alvo (meses) e pausa do rebalanceamento (data)
         CONSULTOR_MARGEM: /^\d{1,6}$/, CONSULTOR_TAXA_MES: /^0?\.\d{1,4}$/, CONSULTOR_RESERVA_ALVO: /^\d{1,2}$/, CONSULTOR_PAUSA_ATE: /^\d{4}-\d{2}-\d{2}$/, CONSULTOR_AVISO_ATIVO: /^(sim|nao)$/, CONSULTOR_AVISO_MIN: /^\d{1,6}$/
       };
@@ -3359,9 +3359,21 @@ function doPost(e) {
     if (body && (body.action === "android_notif_config" || body.action === "android_notificacao")) {
       var _spNt = PropertiesService.getScriptProperties(), _tkNt = _spNt.getProperty('ANDROID_API_TOKEN');
       if (!body.token || !_tkNt || body.token !== _tkNt) return json({ ok: false, erro: 'não autorizado' });
-      var _ativoNt = String(_spNt.getProperty('ANDROID_NOTIF') || 'nao').toLowerCase() === 'sim';
+      // ANDROID_NOTIF: nao (desligado) | sombra (o app manda, o servidor só GUARDA numa coleção à parte para comparar com a macro, sem
+      // processar: nada vira gasto, aviso ou lembrete) | sim (processa de verdade). A sombra existe porque o app lê o texto grande da
+      // notificação e a macro o texto curto: se diferirem, a deduplicação de 5 min não reconheceria e o gasto entraria em dobro.
+      var _modoNt = String(_spNt.getProperty('ANDROID_NOTIF') || 'nao').toLowerCase();
+      var _ativoNt = (_modoNt === 'sim' || _modoNt === 'sombra');
       if (body.action === "android_notif_config") return json({ ok: true, ativo: _ativoNt, apps: _notifListaProp(_spNt.getProperty('ANDROID_NOTIF_APPS') ? 'ANDROID_NOTIF_APPS' : 'NOTIF_APPS') });
       if (!_ativoNt) return json({ ok: true, ignorado: 'canal de notificações do app desligado' });
+      if (_modoNt === 'sombra') {
+        try {
+          var _emSb = Date.now(), _aSb = _notifTxt(body.app), _tSb = _notifTxt(body.titulo), _xSb = _notifTxt(body.texto) || _notifTxt(body.ticker);
+          Firestore.setDoc('notif_sombra', String(1e13 - _emSb) + '_' + Math.floor(Math.random() * 1000),
+            { app: _aSb, pacote: _notifTxt(body.pacote), titulo: _tSb, texto: _xSb, em: _emSb, hash: _notifHash(_aSb + '|' + _tSb + '|' + _xSb) });
+          return json({ ok: true, sombra: true });
+        } catch (eSb) { return json({ ok: false, erro: eSb.message }); }
+      }
       try {
         return json(registrarNotificacao({ app: body.app, pacote: body.pacote, titulo: body.titulo,
                                            texto: _notifTxt(body.texto) || _notifTxt(body.ticker), falar: body.falar }));
@@ -4184,6 +4196,8 @@ function doPost(e) {
         var saida = { telemetria: telemetria, eventos: eventos };
         // Opcionais, só leitura. Alertas: sem eles não dá para ver QUEM agenda cada fala repetida.
         // Notificações: o texto que de fato chegou, para distinguir corte da ORIGEM de corte nosso.
+        // Notificações que o app mandou em modo sombra (com o hash da deduplicação), para comparar com as da macro.
+        if (body.notifSombra) { try { saida.notifSombra = Firestore.listDocs('notif_sombra', Math.min(100, Number(body.notifSombra) || 30)); } catch (eNs) { saida.notifSombra = { erro: eNs.message }; } }
         if (body.alertas) { try { saida.alertas = (typeof AlertasVoz !== 'undefined') ? AlertasVoz.listar() : null; } catch (eA) { saida.alertas = { erro: eA.message }; } }
         if (body.notificacoes) { try { saida.notificacoes = Firestore.listDocs(_NOTIF_COL, Math.min(200, Number(body.notificacoes) || 40)); } catch (eN) { saida.notificacoes = { erro: eN.message }; } }
         // Ensaio de briefing: gera o texto pelo MESMO caminho do disparo, SEM falar no celular e sem

@@ -25,13 +25,13 @@ test('Gemini TTS: o estilo vai num perfil antes da transcrição e a fala começ
   assert.strictEqual(r.status, 'success');
   var txt = enviado(s);
   assert.doesNotMatch(txt, /Leia em voz alta/i);
-  assert.match(txt, /^# PERFIL DE ÁUDIO\nEstilo: caloroso, simpático e acolhedor\.\n\n## TRANSCRIÇÃO\nBom dia, Bruno\./);
+  assert.match(txt, /^# PERFIL DE ÁUDIO\nIdioma: português do Brasil \(pt-BR\), sotaque brasileiro\.\nEstilo: caloroso, simpático e acolhedor\.\n\n## TRANSCRIÇÃO\nBom dia, Bruno\./);
 });
 
-test('Gemini TTS: sem estilo manda só o texto; ponto final do estilo não duplica; TTS_STYLE da propriedade é usado', function () {
+test('Gemini TTS: sem estilo manda só o idioma e o texto (idioma sempre vai, 09/11); ponto final do estilo não duplica; TTS_STYLE da propriedade é usado', function () {
   var s = sb();
   s.Voz.sintetizarGemini('Bom dia, Bruno.', { estilo: '' });
-  assert.strictEqual(enviado(s), 'Bom dia, Bruno.');
+  assert.strictEqual(enviado(s), '# PERFIL DE ÁUDIO' + String.fromCharCode(10) + 'Idioma: português do Brasil (pt-BR), sotaque brasileiro.' + String.fromCharCode(10, 10) + '## TRANSCRIÇÃO' + String.fromCharCode(10) + 'Bom dia, Bruno.');
   s.Voz.sintetizarGemini('Oi.', { estilo: 'tom calmo.  ' });
   assert.match(enviado(s), /Estilo: tom calmo\.\n\n## TRANSCRIÇÃO\nOi\./);
   var p = sb({ TTS_STYLE: 'animado' });

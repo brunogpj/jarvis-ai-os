@@ -5604,6 +5604,9 @@ function _notifCorpoFalavel(titulo, texto, em) {
       return 'Catraca da escola: ' + nome + (hora ? ', às ' + hora : '') + '.';
     }
   }
+  // Versículo do app da Bíblia: "[105]" (número do versículo) e a sigla da tradução (ARC, NVI…) eram lidos ao pé da letra, o que confunde o
+  // sintetizador (09/11: falou em outra língua). Sai o número entre colchetes e a sigla depois da referência.
+  x = x.replace(/\[\d+\]\s*/g, '').replace(/(\d+:\d+)\s*(ARC|ARA|NVI|NAA|ACF|NVT|NTLH|AA)\b/g, '$1').replace(/”(?=\S)/g, '” ').replace(/\s{2,}/g, ' ').trim();
   var corpo = t + (x ? (t ? '. ' : '') + x : '');
   if (cortado) corpo += '. O restante está no aplicativo.';
   return corpo;
@@ -7652,7 +7655,9 @@ var _GOLDEN_VOZ = [
   ['quanto tenho no cartao alimentacao', 'financeiro'],
   ['Ok quanto eu tenho no cartão alimentação', 'financeiro'],
   ['quanto tem na mobilidade', 'financeiro'],
-  ['quanto eu gastei essa semana', 'financeiro'],
+  // Desde 15/10 a caderneta soma TODAS as despesas da semana (Financas, 'gastos_semana'); 'financeiro' (Swile) so vale sem a caderneta.
+  // O autodiagnostico cobrava 'financeiro' e falava todo dia, as 08:21, que este atalho 'parou de funcionar' (09/11).
+  ['quanto eu gastei essa semana', 'caderneta|financeiro'],
   ['qual o saldo do swile', 'financeiro'],
   // --- turno: o \b antes de 'manha' e o que impede 'amanha' de casar
   ['essa semana eu trabalho a tarde', 'turno'],
@@ -7708,7 +7713,7 @@ function diagGoldenVoz(args) {
   casos.forEach(function (c) {
     var frase = c[0], esperado = c[1], obtido;
     try { obtido = _preverRotaDeterministica(frase); } catch (e) { obtido = 'ERRO: ' + e.message; }
-    if (obtido === esperado) passou++;
+    if (String(esperado).split('|').indexOf(obtido) >= 0) passou++;
     else falhas.push({ frase: frase, esperado: esperado, obtido: obtido });
   });
   return { ok: falhas.length === 0, total: casos.length, passou: passou,

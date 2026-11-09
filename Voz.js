@@ -359,7 +359,9 @@ var Voz = (function () {
    *   Sem estilo a voz Iapetus já soa séria. */
   function _promptTts(estilo, conteudo) {
     var e = String(estilo || '').replace(/[\s.]+$/, '').trim();
-    return e ? ('# PERFIL DE ÁUDIO\nEstilo: ' + e + '.\n\n## TRANSCRIÇÃO\n' + conteudo) : conteudo;
+    // O idioma vai SEMPRE: o modelo lite adivinha a língua pelo texto e, em frase curta ou cheia de nome próprio/sigla (versículo da Bíblia, "ARC"),
+    // pode falar em outra língua (09/11). A linha não é falada (provado com ttsEco, transcrevendo o áudio).
+    return '# PERFIL DE ÁUDIO\nIdioma: português do Brasil (pt-BR), sotaque brasileiro.' + (e ? '\nEstilo: ' + e + '.' : '') + '\n\n## TRANSCRIÇÃO\n' + conteudo;
   }
 
   function sintetizarGemini(texto, opts) {

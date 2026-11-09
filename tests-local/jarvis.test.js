@@ -1797,3 +1797,10 @@ test('lerBiblia: aleatório usa ?random=verse; referência vai para o livro/cap:
   assert.ok(r.ok); assert.match(urls[1], /JHN%2B3%3A16|JHN\+3:16/);
   assert.strictEqual(s.lerBiblia({ referencia: 'blablabla' }).ok, false);
 });
+
+test('Notificação do app da Bíblia: tira o número [105] e a sigla ARC antes de falar (09/11, falou em outra língua)', function () {
+  var s = code({});
+  var f = s._notifCorpoFalavel('Versículo do Dia', '“[105] Lâmpada para os meus pés é tua palavra. ”Salmos 119:105 ARC', 1);
+  assert.doesNotMatch(f, /\[105\]|ARC/);
+  assert.match(f, /Salmos 119:105$/);
+});

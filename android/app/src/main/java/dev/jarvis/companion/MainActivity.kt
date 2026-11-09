@@ -478,6 +478,11 @@ class MainActivity : Activity() {
         if (i.hasExtra("ritmo")) { e.putFloat("ritmo", i.getFloatExtra("ritmo", 0.95f).coerceIn(0.5f, 1.5f)); mudou = true }
         if (i.hasExtra("voz")) { e.putString("voz_preferida", i.getStringExtra("voz") ?: ""); mudou = true }
         if (mudou) { e.apply(); Config.evento(this, "ajuste de voz gravado") }
+        // Abre a tela "Ouvindo" por ADB (a atividade não é exportada): --ez ouvir true [--ez demo true]
+        if (i.getBooleanExtra("ouvir", false)) {
+            startActivity(Intent(this, ConversaActivity::class.java).putExtra("demo", i.getBooleanExtra("demo", false)))
+            i.removeExtra("ouvir"); i.removeExtra("demo")
+        }
         val frase = i.getStringExtra("testar")
         if (frase != null) {
             val s = Intent(this, FalaService::class.java).putExtra("id", "t" + System.currentTimeMillis().toString(36)).putExtra("texto", frase).putExtra("local", true)

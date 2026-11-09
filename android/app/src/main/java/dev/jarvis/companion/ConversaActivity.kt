@@ -44,6 +44,8 @@ class ConversaActivity : Activity() {
         window.statusBarColor = Cores.FUNDO
         window.navigationBarColor = Cores.FUNDO
         montarTela()
+        if (intent.getBooleanExtra("demo", false)) { demonstrar(); return }
+        Config.evento(this, "ouvindo: tela aberta (microfone ${if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) "liberado" else "sem permissão"})")
         if (!SpeechRecognizer.isRecognitionAvailable(this)) { usarTelaDoSistema("sem serviço de reconhecimento"); return }
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) comecar()
         else requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 11)
@@ -119,20 +121,22 @@ class ConversaActivity : Activity() {
         val r = SpeechRecognizer.createSpeechRecognizer(this)
         reconhecedor = r
         r.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) { dica.text = "Fale agora." }
-            override fun onBeginningOfSpeech() { dica.text = "Fale normalmente. Toque no quadrado quando terminar." }
+            override fun onReadyForSpeech(params: Bundle?) { Config.evento(this@ConversaActivity, "ouvindo: reconhecedor pronto"); dica.text = "Fale agora." }
+            override fun onBeginningOfSpeech() { Config.evento(this@ConversaActivity, "ouvindo: começou a captar voz"); dica.text = "Fale normalmente. Toque no quadrado quando terminar." }
             override fun onRmsChanged(rmsdB: Float) { onda.empurrar((rmsdB + 2f) / 12f) }       // -2..10 dB → 0..1
             override fun onBufferReceived(buffer: ByteArray?) {}
-            override fun onEndOfSpeech() { dica.text = "Processando…" }
+            override fun onEndOfSpeech() { Config.evento(this@ConversaActivity, "ouvindo: fim da fala"); dica.text = "Processando…" }
             override fun onPartialResults(partialResults: Bundle?) {
                 val t = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull() ?: return
                 if (t.isNotBlank()) { ultimaParcial = t; frase.text = t }
             }
             override fun onResults(results: Bundle?) {
                 val t = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.trim().orEmpty()
+                Config.evento(this@ConversaActivity, "ouvindo: resultado de ${t.length} caracteres")
                 enviar(if (t.isNotBlank()) t else ultimaParcial)
             }
             override fun onError(error: Int) {
+                Config.evento(this@ConversaActivity, "ouvindo: erro $error do reconhecedor" + if (encerrada) " (já encerrada)" else "")
                 if (encerrada) return
                 if (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
                     if (ultimaParcial.isNotBlank()) { enviar(ultimaParcial); return }
@@ -156,7 +160,7 @@ class ConversaActivity : Activity() {
     private fun enviar(frase: String) {
         if (encerrada) return
         encerrada = true
-        if (frase.isBlank()) { finish(); return }
+        if (frase.isBlank()) { Config.evento(this, "ouvindo: nada reconhecido; fechando"); finish(); return }
         val rid = System.currentTimeMillis().toString()      // numérico e longo: é o que o servidor exige para repetir sem re-executar
         Config.evento(this, "conversa: pedido de ${frase.length} caracteres")
         Config.estado(this).edit().putString("ultima_pergunta", frase).putString("ultima_resposta", "(aguardando…)").apply()
@@ -165,9 +169,24 @@ class ConversaActivity : Activity() {
     }
 
     private fun cancelarTudo() {
+        Config.evento(this, "ouvindo: cancelado")
         encerrada = true
         try { reconhecedor?.cancel() } catch (e: Exception) { }
         finish()
+    }
+
+    /** Modo de demonstração (adb: --ez ouvir true --ez demo true): mostra a tela com uma frase e barras animadas, sem ligar o microfone. */
+    private fun demonstrar() {
+        frase.text = "Quanto eu tenho livre hoje"
+        dica.text = "Fale normalmente. Toque no quadrado quando terminar."
+        val inicio = System.currentTimeMillis()
+        relogio.post(object : Runnable {
+            override fun run() {
+                val s = (System.currentTimeMillis() - inicio) / 1000.0
+                onda.empurrar((0.45 + 0.45 * Math.sin(s * 5.0) * Math.cos(s * 2.3)).toFloat().coerceIn(0.1f, 1f))
+                if (s < 25) relogio.postDelayed(this, 110) else finish()
+            }
+        })
     }
 
     /** Plano B: a tela de reconhecimento do Google (não exige permissão de microfone). */

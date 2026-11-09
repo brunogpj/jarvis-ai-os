@@ -464,7 +464,10 @@ class MainActivity : Activity() {
 
         // abre já atualizado: se o que há é velho (mais de 2 min), busca em segundo plano
         if (!buscandoPainel && painelErro == null && (d == null || idade > 120_000)) relogio.post { atualizarPainel() }
-        return ScrollView(this).apply { overScrollMode = View.OVER_SCROLL_NEVER; addView(lista) }
+        return ScrollView(this).apply {
+            overScrollMode = View.OVER_SCROLL_NEVER; addView(lista)
+            descendantFocusability = ViewGroup.FOCUS_BEFORE_DESCENDANTS; isFocusable = true; isFocusableInTouchMode = true; requestFocus()
+        }
     }
 
     private fun atualizarPainel() {
@@ -548,7 +551,11 @@ class MainActivity : Activity() {
         // Voz do celular entra ANTES de Conexão (logo depois dos cartões do servidor e da telemetria)
         b.removeViewAt(0); tituloVoz.setPadding(0, dp(20), 0, 0); a.addView(tituloVoz, pos++)
         while (b.childCount > 0) { val v = b.getChildAt(0); b.removeViewAt(0); a.addView(v, pos++) }
-        return ScrollView(this).apply { overScrollMode = View.OVER_SCROLL_NEVER; addView(a) }
+        return ScrollView(this).apply {
+            overScrollMode = View.OVER_SCROLL_NEVER; addView(a)
+            // sem isto o Android rola até o primeiro controle focável (o ajuste de voz) quando a tela é refeita depois da busca do painel
+            descendantFocusability = ViewGroup.FOCUS_BEFORE_DESCENDANTS; isFocusable = true; isFocusableInTouchMode = true; requestFocus()
+        }
     }
 
     // ---------------------------------------------------------------- Sistema

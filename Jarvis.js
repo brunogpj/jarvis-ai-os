@@ -3138,6 +3138,15 @@ var Jarvis = (function () {
               try { _FALA_FEITA = true; } catch (eFl2) {}
               return { status: 'success', via: 'android', acao: 'falar', ordem: _ordA.id, confirmacao: _ackA.estado, spans: (typeof _spansFala !== 'undefined' ? _spansFala : null) };
             }
+            /* O FCM ACEITOU a ordem mas a confirmação não voltou em 6 s: NÃO é falha. Em 08/11 (briefing das 21:00) o app recebeu
+             * e falou os 92 s inteiros, só o ack demorou no /exec; o servidor deu "falhou", o briefing foi refeito e o dono ouviu
+             * duas vezes. Fica como entrega pendente (o ack ainda chega e atualiza o estado); só erro explícito do app ou recusa
+             * do FCM contam como falha. */
+            if (_ordA.ok && !_ackA) {
+              try { _FALA_FEITA = true; } catch (eFl3) {}
+              try { _registrarEvento({ tool: 'android:sem_ack', ok: true, ms: 6000, resumo: 'ordem ' + _ordA.id + ' aceita pelo FCM; confirmação não voltou em 6 s' }); } catch (eEv) {}
+              return { status: 'success', via: 'android', acao: 'falar', ordem: _ordA.id, confirmacao: 'pendente', spans: (typeof _spansFala !== 'undefined' ? _spansFala : null) };
+            }
             var _motivoA = !_ordA.ok ? _ordA.erro : (_ackA ? 'o app respondeu erro: ' + (_ackA.detalhe || '') : 'o app não confirmou o recebimento em 6 s');
             if (String(_prop('ANDROID_FALAR_FALLBACK') || 'nao').toLowerCase() !== 'sim') {
               return { status: 'error', via: 'android', acao: 'falar', ordem: _ordA.id, erro: 'Não consegui falar pelo app Android: ' + _motivoA };

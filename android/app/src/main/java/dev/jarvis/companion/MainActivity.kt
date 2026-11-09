@@ -683,6 +683,8 @@ class MainActivity : Activity() {
             startActivity(Intent(this, ConversaActivity::class.java).putExtra("demo", i.getBooleanExtra("demo", false)))
             i.removeExtra("ouvir"); i.removeExtra("demo")
         }
+        // Abre uma aba por ADB (o MIUI bloqueia toques injetados): --ei aba 0|1|2
+        if (i.hasExtra("aba")) { mostrar(i.getIntExtra("aba", 0).coerceIn(0, 2)); i.removeExtra("aba") }
         val frase = i.getStringExtra("testar")
         if (frase != null) {
             val s = Intent(this, FalaService::class.java).putExtra("id", "t" + System.currentTimeMillis().toString(36)).putExtra("texto", frase).putExtra("local", true)

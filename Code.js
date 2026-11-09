@@ -3292,7 +3292,7 @@ function doPost(e) {
       var _PERMITIDAS_CF = {
         FALA_PROATIVA_LOCAL: /^(sim|nao)$/, FALA_RESPOSTAS_LOCAL: /^(sim|nao)$/,
         MODO_FALA_VOZ: /^(nuvem|auto|local)$/, FALA_VOLUME_DB: /^(1[0-6]|[0-9])$/,
-        FALA_FORMATO: /^(ogg|wav)$/, FALA_ARQUIVO_UNICO: /^(sim|nao)$/, ANDROID_FALAR: /^(sim|nao)$/, ANDROID_API_TOKEN: /^[a-f0-9]{48}$/, ANDROID_API_ESTRITO: /^(sim|nao)$/, ANDROID_NOTIF: /^(sim|nao)$/, NOTIF_APPS: /^[a-z0-9áéíóúâêôãõç.=,_ -]{1,400}$/, ROTA_JEV_NOVAS: /^(sim|nao)$/, FERRAMENTAS_JEV: /^(nao|adiciona|sim)$/, INJECAO_JEV: /^(sim|nao)$/, ACAO_JEV: /^(sim|nao)$/, CATEGORIA_JEV: /^(sim|nao)$/, TTS_STYLE: /^[A-Za-zÀ-ÿ ,.\-]{0,120}$/, FERRAMENTAS_JEV_ADD: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE_CONH: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE: /^0?\.\d{1,2}$/, CONFIRMA_JEV: /^(sim|nao)$/, MONITOR_GMAIL_JEV: /^(sim|nao)$/, BUSCA_DRIVE_ATIVA: /^(sim|nao)$/, FILE_SEARCH_ATIVA: /^(sim|nao)$/, FS_LOTE: /^\d{1,2}$/, FS_MAX_MB: /^\d{1,2}$/, FS_MAX: /^\d{2,4}$/, FS_EXCLUIR: /^[^\r\n]{0,200}$/, BUSCA_DRIVE_MAX: /^\d{2,4}$/, WEB_MONITOR_JEV: /^(sim|nao)$/, WEB_MONITOR_JEV_CORTE: /^0?\.\d{1,2}$/, MONITOR_GMAIL_JEV_CORTE: /^0?\.\d{1,2}$/, FIN_AVISOS_ATIVO: /^(sim|nao)$/, FIN_NOME_DONO: /^[a-zà-ÿ ]{3,80}$/, FIN_CPF_DONO: /^\d{3}\.\d{3}$/,
+        FALA_FORMATO: /^(ogg|wav)$/, FALA_ARQUIVO_UNICO: /^(sim|nao)$/, ANDROID_FALAR: /^(sim|nao)$/, ANDROID_API_TOKEN: /^[a-f0-9]{48}$/, ANDROID_API_ESTRITO: /^(sim|nao)$/, ANDROID_NOTIF: /^(sim|nao)$/, NOTIF_APPS: /^[a-z0-9áéíóúâêôãõç.=,_ -]{1,400}$/, ANDROID_NOTIF_APPS: /^[a-z0-9áéíóúâêôãõç.=,_ -]{1,400}$/, ROTA_JEV_NOVAS: /^(sim|nao)$/, FERRAMENTAS_JEV: /^(nao|adiciona|sim)$/, INJECAO_JEV: /^(sim|nao)$/, ACAO_JEV: /^(sim|nao)$/, CATEGORIA_JEV: /^(sim|nao)$/, TTS_STYLE: /^[A-Za-zÀ-ÿ ,.\-]{0,120}$/, FERRAMENTAS_JEV_ADD: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE_CONH: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE: /^0?\.\d{1,2}$/, CONFIRMA_JEV: /^(sim|nao)$/, MONITOR_GMAIL_JEV: /^(sim|nao)$/, BUSCA_DRIVE_ATIVA: /^(sim|nao)$/, FILE_SEARCH_ATIVA: /^(sim|nao)$/, FS_LOTE: /^\d{1,2}$/, FS_MAX_MB: /^\d{1,2}$/, FS_MAX: /^\d{2,4}$/, FS_EXCLUIR: /^[^\r\n]{0,200}$/, BUSCA_DRIVE_MAX: /^\d{2,4}$/, WEB_MONITOR_JEV: /^(sim|nao)$/, WEB_MONITOR_JEV_CORTE: /^0?\.\d{1,2}$/, MONITOR_GMAIL_JEV_CORTE: /^0?\.\d{1,2}$/, FIN_AVISOS_ATIVO: /^(sim|nao)$/, FIN_NOME_DONO: /^[a-zà-ÿ ]{3,80}$/, FIN_CPF_DONO: /^\d{3}\.\d{3}$/,
         // consultor (fase 4): margem na conta (R$), taxa ao mês (decimal), reserva-alvo (meses) e pausa do rebalanceamento (data)
         CONSULTOR_MARGEM: /^\d{1,6}$/, CONSULTOR_TAXA_MES: /^0?\.\d{1,4}$/, CONSULTOR_RESERVA_ALVO: /^\d{1,2}$/, CONSULTOR_PAUSA_ATE: /^\d{4}-\d{2}-\d{2}$/, CONSULTOR_AVISO_ATIVO: /^(sim|nao)$/, CONSULTOR_AVISO_MIN: /^\d{1,6}$/
       };
@@ -3355,12 +3355,12 @@ function doPost(e) {
     // Devolve texto puro (text/plain) para simplificar a leitura direta no celular.
     // NOTIFICAÇÕES CAPTURADAS PELO APP ANDROID (0.4.0). Mesmo destino da macro (registrarNotificacao), token PRÓPRIO do app.
     // Nasce DESLIGADO (ANDROID_NOTIF=sim liga): com o MacroDroid ainda capturando, os dois mandariam o mesmo gasto. A lista de apps
-    // (NOTIF_APPS) vai ao app, que só envia o que está nela: notificação de app fora da lista nunca sai do celular.
+    // (ANDROID_NOTIF_APPS, ou NOTIF_APPS se não houver) vai ao app, que só envia o que está nela: notificação de app fora da lista nunca sai do celular.
     if (body && (body.action === "android_notif_config" || body.action === "android_notificacao")) {
       var _spNt = PropertiesService.getScriptProperties(), _tkNt = _spNt.getProperty('ANDROID_API_TOKEN');
       if (!body.token || !_tkNt || body.token !== _tkNt) return json({ ok: false, erro: 'não autorizado' });
       var _ativoNt = String(_spNt.getProperty('ANDROID_NOTIF') || 'nao').toLowerCase() === 'sim';
-      if (body.action === "android_notif_config") return json({ ok: true, ativo: _ativoNt, apps: _notifListaProp('NOTIF_APPS') });
+      if (body.action === "android_notif_config") return json({ ok: true, ativo: _ativoNt, apps: _notifListaProp(_spNt.getProperty('ANDROID_NOTIF_APPS') ? 'ANDROID_NOTIF_APPS' : 'NOTIF_APPS') });
       if (!_ativoNt) return json({ ok: true, ignorado: 'canal de notificações do app desligado' });
       try {
         return json(registrarNotificacao({ app: body.app, pacote: body.pacote, titulo: body.titulo,

@@ -57,7 +57,8 @@ class NotificacaoService : NotificationListenerService() {
 
         private fun naLista(lista: List<String>, app: String, pacote: String): Boolean {
             val a = app.lowercase(); val p = pacote.lowercase()
-            return lista.any { a.contains(it) || p.contains(it) }      // mesma regra do servidor (_notifNaLista)
+            // mesma regra do servidor (_notifNaLista): "=pacote" é pacote exato; o resto casa por trecho do nome ou do pacote
+            return lista.any { if (it.startsWith("=")) p == it.substring(1) else a.contains(it) || p.contains(it) }
         }
 
         fun ativo(ctx: android.content.Context) = Config.estado(ctx).getBoolean("notif_ativo", false)

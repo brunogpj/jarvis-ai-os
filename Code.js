@@ -3269,7 +3269,13 @@ function doPost(e) {
     // APP ANDROID (fase 1, 08/11): o aparelho registra o token do FCM e confirma cada ordem recebida.
     // Mesmo token das demais rotas do celular (VOICE_API_TOKEN). Só grava o token e o estado da ordem.
     if (body && (body.action === 'android_registrar' || body.action === 'android_ack')) {
-      if (!body.token || body.token !== PropertiesService.getScriptProperties().getProperty('VOICE_API_TOKEN')) {
+      // Token PRÓPRIO do app (ANDROID_API_TOKEN, 08/11): só abre estas duas rotas (registrar aparelho e confirmar ordem), então um
+      // celular perdido não entrega o VOICE_API_TOKEN, que abre todas as outras. O VOICE_API_TOKEN segue aceito na transição;
+      // ANDROID_API_ESTRITO=sim passa a exigir só o do app.
+      var _spAn = PropertiesService.getScriptProperties(), _tokAn = _spAn.getProperty('ANDROID_API_TOKEN');
+      var _okAn = !!body.token && ((!!_tokAn && body.token === _tokAn) ||
+        (String(_spAn.getProperty('ANDROID_API_ESTRITO') || 'nao') !== 'sim' && body.token === _spAn.getProperty('VOICE_API_TOKEN')));
+      if (!_okAn) {
         return json({ ok: false, erro: 'não autorizado' });
       }
       try { return json(body.action === 'android_registrar' ? Android.registrar(body) : Android.ack(body)); }
@@ -3286,7 +3292,7 @@ function doPost(e) {
       var _PERMITIDAS_CF = {
         FALA_PROATIVA_LOCAL: /^(sim|nao)$/, FALA_RESPOSTAS_LOCAL: /^(sim|nao)$/,
         MODO_FALA_VOZ: /^(nuvem|auto|local)$/, FALA_VOLUME_DB: /^(1[0-6]|[0-9])$/,
-        FALA_FORMATO: /^(ogg|wav)$/, FALA_ARQUIVO_UNICO: /^(sim|nao)$/, ANDROID_FALAR: /^(sim|nao)$/, ROTA_JEV_NOVAS: /^(sim|nao)$/, FERRAMENTAS_JEV: /^(nao|adiciona|sim)$/, INJECAO_JEV: /^(sim|nao)$/, ACAO_JEV: /^(sim|nao)$/, CATEGORIA_JEV: /^(sim|nao)$/, TTS_STYLE: /^[A-Za-zÀ-ÿ ,.\-]{0,120}$/, FERRAMENTAS_JEV_ADD: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE_CONH: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE: /^0?\.\d{1,2}$/, CONFIRMA_JEV: /^(sim|nao)$/, MONITOR_GMAIL_JEV: /^(sim|nao)$/, BUSCA_DRIVE_ATIVA: /^(sim|nao)$/, FILE_SEARCH_ATIVA: /^(sim|nao)$/, FS_LOTE: /^\d{1,2}$/, FS_MAX_MB: /^\d{1,2}$/, FS_MAX: /^\d{2,4}$/, FS_EXCLUIR: /^[^\r\n]{0,200}$/, BUSCA_DRIVE_MAX: /^\d{2,4}$/, WEB_MONITOR_JEV: /^(sim|nao)$/, WEB_MONITOR_JEV_CORTE: /^0?\.\d{1,2}$/, MONITOR_GMAIL_JEV_CORTE: /^0?\.\d{1,2}$/, FIN_AVISOS_ATIVO: /^(sim|nao)$/, FIN_NOME_DONO: /^[a-zà-ÿ ]{3,80}$/, FIN_CPF_DONO: /^\d{3}\.\d{3}$/,
+        FALA_FORMATO: /^(ogg|wav)$/, FALA_ARQUIVO_UNICO: /^(sim|nao)$/, ANDROID_FALAR: /^(sim|nao)$/, ANDROID_API_TOKEN: /^[a-f0-9]{48}$/, ANDROID_API_ESTRITO: /^(sim|nao)$/, ROTA_JEV_NOVAS: /^(sim|nao)$/, FERRAMENTAS_JEV: /^(nao|adiciona|sim)$/, INJECAO_JEV: /^(sim|nao)$/, ACAO_JEV: /^(sim|nao)$/, CATEGORIA_JEV: /^(sim|nao)$/, TTS_STYLE: /^[A-Za-zÀ-ÿ ,.\-]{0,120}$/, FERRAMENTAS_JEV_ADD: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE_CONH: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE: /^0?\.\d{1,2}$/, CONFIRMA_JEV: /^(sim|nao)$/, MONITOR_GMAIL_JEV: /^(sim|nao)$/, BUSCA_DRIVE_ATIVA: /^(sim|nao)$/, FILE_SEARCH_ATIVA: /^(sim|nao)$/, FS_LOTE: /^\d{1,2}$/, FS_MAX_MB: /^\d{1,2}$/, FS_MAX: /^\d{2,4}$/, FS_EXCLUIR: /^[^\r\n]{0,200}$/, BUSCA_DRIVE_MAX: /^\d{2,4}$/, WEB_MONITOR_JEV: /^(sim|nao)$/, WEB_MONITOR_JEV_CORTE: /^0?\.\d{1,2}$/, MONITOR_GMAIL_JEV_CORTE: /^0?\.\d{1,2}$/, FIN_AVISOS_ATIVO: /^(sim|nao)$/, FIN_NOME_DONO: /^[a-zà-ÿ ]{3,80}$/, FIN_CPF_DONO: /^\d{3}\.\d{3}$/,
         // consultor (fase 4): margem na conta (R$), taxa ao mês (decimal), reserva-alvo (meses) e pausa do rebalanceamento (data)
         CONSULTOR_MARGEM: /^\d{1,6}$/, CONSULTOR_TAXA_MES: /^0?\.\d{1,4}$/, CONSULTOR_RESERVA_ALVO: /^\d{1,2}$/, CONSULTOR_PAUSA_ATE: /^\d{4}-\d{2}-\d{2}$/, CONSULTOR_AVISO_ATIVO: /^(sim|nao)$/, CONSULTOR_AVISO_MIN: /^\d{1,6}$/
       };
@@ -3295,7 +3301,8 @@ function doPost(e) {
         var v = String(body.valores[k]).toLowerCase().trim();
         if (!_PERMITIDAS_CF[k]) { errCf.push(k + ': chave não permitida'); return; }
         if (!_PERMITIDAS_CF[k].test(v)) { errCf.push(k + ': valor inválido "' + v + '"'); return; }
-        mudCf[k] = { antes: spCf.getProperty(k), agora: v };
+        // Segredo nunca volta na resposta (nem o valor de antes).
+        mudCf[k] = (k === 'ANDROID_API_TOKEN') ? { antes: spCf.getProperty(k) ? '(oculto)' : null, agora: '(oculto)' } : { antes: spCf.getProperty(k), agora: v };
         spCf.setProperty(k, v);
       });
       return json({ ok: !errCf.length, mudou: mudCf, erros: errCf });

@@ -528,7 +528,7 @@ class MainActivity : Activity() {
                 val o = mo.getJSONObject(i)
                 cm.addView(LinearLayout(this).apply {
                     orientation = LinearLayout.VERTICAL; setPadding(0, dp(5), 0, dp(5))
-                    addView(texto(o.optString("descricao").ifBlank { "(sem descrição)" }, 14f, Cores.TEXTO)); addView(texto(o.optString("url"), 12f, Cores.SECUNDARIO))
+                    addView(texto(android.text.Html.fromHtml(o.optString("descricao").ifBlank { "(sem descrição)" }, android.text.Html.FROM_HTML_MODE_LEGACY).toString().trim(), 14f, Cores.TEXTO)); addView(texto(o.optString("url"), 12f, Cores.SECUNDARIO))
                 })
             }
             a.addView(cm, pos++)
@@ -545,8 +545,9 @@ class MainActivity : Activity() {
             a.addView(c, pos++)
         }
         val tituloVoz = b.getChildAt(0) as TextView
-        b.removeViewAt(0); tituloVoz.setPadding(0, dp(24), 0, 0); a.addView(tituloVoz)
-        while (b.childCount > 0) { val v = b.getChildAt(0); b.removeViewAt(0); a.addView(v) }
+        // Voz do celular entra ANTES de Conexão (logo depois dos cartões do servidor e da telemetria)
+        b.removeViewAt(0); tituloVoz.setPadding(0, dp(20), 0, 0); a.addView(tituloVoz, pos++)
+        while (b.childCount > 0) { val v = b.getChildAt(0); b.removeViewAt(0); a.addView(v, pos++) }
         return ScrollView(this).apply { overScrollMode = View.OVER_SCROLL_NEVER; addView(a) }
     }
 
@@ -559,7 +560,7 @@ class MainActivity : Activity() {
         val notifOk = Build.VERSION.SDK_INT < 33 || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
 
         val lista = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(12), dp(20), dp(24)) }
-        lista.addView(texto("Sistema", 28f, Cores.TEXTO).apply { typeface = Tipografia.grotesk(this@MainActivity, 700) })
+        lista.addView(texto("Dispositivo", 28f, Cores.TEXTO).apply { typeface = Tipografia.grotesk(this@MainActivity, 700) })
         lista.addView(texto(if (pareado && AckQueue.pendentes(this) == 0) "Tudo certo." else "Há algo para olhar abaixo.", 13f, Cores.SECUNDARIO).apply { setPadding(0, dp(4), 0, dp(4)) })
 
         lista.addView(cartao("Conexão", if (pareado) "Pareado" else "Sem pareamento", pareado,

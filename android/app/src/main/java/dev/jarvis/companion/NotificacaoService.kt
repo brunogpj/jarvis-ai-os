@@ -66,6 +66,7 @@ class NotificacaoService : NotificationListenerService() {
             val a = JSONArray(Config.estado(ctx).getString("notif_apps", "[]"))
             (0 until a.length()).map { a.getString(it).lowercase() }.filter { it.isNotBlank() }
         } catch (e: Exception) { emptyList() }
+        fun atualizarEmSegundoPlano(ctx: android.content.Context) { val app = ctx.applicationContext; Thread { atualizarConfig(app) }.start() }
         private fun configPronta(ctx: android.content.Context) =
             System.currentTimeMillis() - Config.estado(ctx).getLong("notif_config_em", 0) < VALIDADE_MS
 

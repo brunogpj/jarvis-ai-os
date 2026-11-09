@@ -322,6 +322,7 @@ class MainActivity : Activity() {
 
     private var buscandoPainel = false
     private var painelErro: String? = null
+    private var tocandoControle = false
 
     private fun brl(v: Double?): String = if (v == null || v.isNaN()) "—" else java.text.NumberFormat.getCurrencyInstance(java.util.Locale("pt", "BR")).format(v)
 
@@ -329,7 +330,22 @@ class MainActivity : Activity() {
         val lista = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(12), dp(20), dp(24)) }
         val d = Painel.cache(this)
         val idade = Painel.idadeMs(this)
-        lista.addView(texto("Dashboard", 28f, Cores.TEXTO).apply { typeface = Tipografia.grotesk(this@MainActivity, 700) })
+        val hora = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        val saud = (if (hora in 6..11) "Bom dia" else if (hora in 12..17) "Boa tarde" else "Boa noite") + ", " + (d?.optString("nome")?.ifBlank { null } ?: "Bruno") + "!"
+        val turno = d?.optString("turno") ?: ""
+        lista.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            addView(texto(saud, 26f, Cores.TEXTO).apply { typeface = Tipografia.grotesk(this@MainActivity, 700) })
+            if (turno == "manha" || turno == "tarde") addView(texto("Turno da " + (if (turno == "manha") "manhã" else "tarde"), 12f, Cores.DESTAQUE).apply {
+                typeface = Tipografia.inter(this@MainActivity, 600); setPadding(dp(10), dp(4), dp(10), dp(4))
+                background = fundoArredondado(Color.parseColor("#0f2a33"), dp(12).toFloat(), Cores.DESTAQUE, 1)
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(10) })
+        })
+        if (d != null) {
+            val nEv = d.optJSONArray("eventos")?.length() ?: 0; val nTa = d.optJSONArray("tarefas")?.length() ?: 0
+            lista.addView(texto((if (nEv == 0) "agenda livre" else "$nEv eventos") + " · " + (if (nTa == 0) "sem tarefas" else "$nTa tarefas") +
+                (if (d.isNull("emailsNaoLidos")) "" else " · ${d.optInt("emailsNaoLidos")} e-mails"), 13f, Cores.SECUNDARIO).apply { setPadding(0, dp(4), 0, 0) })
+        }
         val estado = when {
             buscandoPainel -> "Atualizando…"
             painelErro != null -> painelErro!!
@@ -365,50 +381,78 @@ class MainActivity : Activity() {
                 lista.addView(c)
             } else if (f != null) lista.addView(cartaoTexto("Finanças", f.optString("erro", "indisponível")))
 
-            val ev = d.optJSONArray("eventos"); val ta = d.optJSONArray("tarefas")
-            val cAg = cartaoBase("Agenda e tarefas")
-            if (ev == null || ev.length() == 0) cAg.addView(texto("Nenhum compromisso nos próximos 7 dias.", 14f, Cores.SECUNDARIO).apply { setPadding(0, 0, 0, dp(6)) })
-            else for (i in 0 until ev.length()) { val o = ev.getJSONObject(i); cAg.addView(linhaDupla(o.optString("inicio"), o.optString("titulo"))) }
-            if (ta != null && ta.length() > 0) {
-                cAg.addView(texto("TAREFAS PENDENTES", 11f, Cores.SECUNDARIO).apply { letterSpacing = 0.08f; setPadding(0, dp(10), 0, dp(2)) })
-                for (i in 0 until ta.length()) cAg.addView(linhaDupla("•", ta.getJSONObject(i).optString("titulo")))
-            }
-            if (!d.isNull("emailsNaoLidos")) cAg.addView(texto("E-mails não lidos: ${d.optInt("emailsNaoLidos")}", 14f, Cores.TEXTO2).apply { setPadding(0, dp(10), 0, dp(6)) })
-            lista.addView(cAg)
-
+            // Notificações do celular
             val nt = d.optJSONArray("notificacoes")
-            val cNt = cartaoBase("Notificações")
+            val cNt = cartaoBase("Notificações do celular")
             if (nt == null || nt.length() == 0) cNt.addView(texto("Nada por enquanto.", 14f, Cores.SECUNDARIO).apply { setPadding(0, 0, 0, dp(6)) })
             else for (i in 0 until minOf(nt.length(), 8)) {
                 val o = nt.getJSONObject(i)
-                val hora = try { java.text.SimpleDateFormat("dd/MM HH:mm", java.util.Locale("pt", "BR")).format(java.util.Date(o.optLong("em"))) } catch (e: Exception) { "" }
+                val h = try { java.text.SimpleDateFormat("dd/MM HH:mm", java.util.Locale("pt", "BR")).format(java.util.Date(o.optLong("em"))) } catch (e: Exception) { "" }
                 cNt.addView(LinearLayout(this).apply {
                     orientation = LinearLayout.VERTICAL; setPadding(0, dp(8), 0, dp(8))
-                    addView(texto(o.optString("app") + " · " + hora, 12f, Cores.SECUNDARIO))
+                    addView(texto(o.optString("app") + " · " + h, 12f, Cores.SECUNDARIO))
                     addView(texto((o.optString("titulo") + " " + o.optString("texto")).trim(), 14f, Cores.TEXTO))
                 })
                 cNt.addView(View(this).apply { setBackgroundColor(Cores.DIVISOR) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1))
             }
             lista.addView(cNt)
 
-            val cu = d.optJSONObject("custos")
-            if (cu != null && cu.has("gastoBRL")) {
-                val ok = cu.optString("status") == "ok"
-                lista.addView(cartao("Custos de IA", if (ok) "Dentro do teto" else "Atenção", ok, listOf(
-                    "Gasto no mês (estimado)" to brl(cu.optDouble("gastoBRL")), "Teto" to brl(cu.optDouble("tetoBRL")),
-                    "Uso do teto" to String.format(java.util.Locale("pt", "BR"), "%.0f%%", cu.optDouble("pct")), "Projeção do mês" to brl(cu.optDouble("projecaoBRL")))))
+            // Alertas de voz (Android)
+            val av = d.optJSONArray("alertasVoz")
+            val cAv = cartaoBase("Alertas de voz (Android)")
+            if (av == null || av.length() == 0) cAv.addView(texto("Nenhum alerta de voz agendado.", 14f, Cores.SECUNDARIO).apply { setPadding(0, 0, 0, dp(6)) })
+            else for (i in 0 until av.length()) {
+                val o = av.getJSONObject(i)
+                val dias = o.optJSONArray("dias"); val nomes = arrayOf("Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb")
+                val quando = String.format("%02d:%02d", o.optInt("hora"), o.optInt("minuto")) + " · " +
+                    (if (dias == null || dias.length() == 0) "todos os dias" else (0 until dias.length()).joinToString(",") { nomes[dias.optInt(it).coerceIn(0, 6)] })
+                cAv.addView(LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL; setPadding(0, dp(6), 0, dp(6))
+                    addView(texto(quando + if (o.optBoolean("dinamico")) " · dinâmico" else "", 12f, Cores.SECUNDARIO))
+                    addView(texto(o.optString("texto"), 14f, Cores.TEXTO))
+                })
             }
-            val sa = d.optJSONObject("saude")
-            if (sa != null && sa.has("nivel")) {
-                val nivel = sa.optString("nivel"); val ok = nivel == "ok"
-                val cs = cartao("Saúde do sistema", if (ok) "Tudo certo" else nivel, ok, emptyList()) as LinearLayout
-                val al = sa.optJSONArray("alertas")
-                if (al != null) for (i in 0 until al.length()) {
-                    val a = al.get(i)
-                    cs.addView(texto("• " + (if (a is org.json.JSONObject) a.optString("texto", a.toString()) else a.toString()), 14f, Cores.TEXTO2).apply { setPadding(0, dp(3), 0, dp(3)) })
-                }
-                lista.addView(cs)
+            lista.addView(cAv)
+
+            // Comunicação (WhatsApp desligado: e-mails)
+            val em = d.optJSONArray("emails")
+            val cCo = cartaoBase("Comunicação")
+            cCo.addView(texto("WhatsApp desligado · e-mails não lidos: " + (if (d.isNull("emailsNaoLidos")) "—" else d.optInt("emailsNaoLidos").toString()), 13f, Cores.SECUNDARIO).apply { setPadding(0, 0, 0, dp(6)) })
+            if (em != null) for (i in 0 until em.length()) {
+                val o = em.getJSONObject(i)
+                cCo.addView(LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL; setPadding(0, dp(5), 0, dp(5))
+                    addView(texto(o.optString("de"), 12f, Cores.SECUNDARIO)); addView(texto(o.optString("assunto"), 14f, Cores.TEXTO))
+                })
             }
+            lista.addView(cCo)
+
+            // Próximos eventos
+            val ev = d.optJSONArray("eventos")
+            val cEv = cartaoBase("Próximos eventos")
+            if (ev == null || ev.length() == 0) cEv.addView(texto("Nenhum compromisso nos próximos 7 dias.", 14f, Cores.SECUNDARIO).apply { setPadding(0, 0, 0, dp(6)) })
+            else for (i in 0 until ev.length()) { val o = ev.getJSONObject(i); cEv.addView(linhaDupla(o.optString("inicio"), o.optString("titulo"))) }
+            lista.addView(cEv)
+
+            // Tarefas
+            val ta = d.optJSONArray("tarefas")
+            val cTa = cartaoBase("Tarefas")
+            if (ta == null || ta.length() == 0) cTa.addView(texto("Sem tarefas pendentes.", 14f, Cores.SECUNDARIO).apply { setPadding(0, 0, 0, dp(6)) })
+            else for (i in 0 until ta.length()) cTa.addView(linhaDupla("•", ta.getJSONObject(i).optString("titulo")))
+            lista.addView(cTa)
+
+            // Autorizações pendentes
+            val au = d.optJSONArray("autorizacoes")
+            val cAu = cartaoBase("Autorizações pendentes")
+            if (au == null || au.length() == 0) cAu.addView(texto("Nenhuma autorização aguardando.", 14f, Cores.SECUNDARIO).apply { setPadding(0, 0, 0, dp(6)) })
+            else for (i in 0 until au.length()) {
+                val o = au.getJSONObject(i)
+                cAu.addView(LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL; setPadding(0, dp(5), 0, dp(5))
+                    addView(texto(o.optString("de"), 12f, Cores.SECUNDARIO)); addView(texto(o.optString("pedido"), 14f, Cores.TEXTO))
+                })
+            }
+            lista.addView(cAu)
         }
 
         lista.addView(Button(this).apply {
@@ -433,7 +477,7 @@ class MainActivity : Activity() {
             runOnUiThread {
                 buscandoPainel = false
                 if (r == null) painelErro = "Não consegui atualizar agora."
-                if (aba == 1) mostrar(1)
+                if (aba == 1) mostrar(1) else if (aba == 2 && !tocandoControle) mostrar(2)
             }
         }.start()
     }
@@ -455,7 +499,42 @@ class MainActivity : Activity() {
         val a = sistema.getChildAt(0) as LinearLayout
         val b = voz.getChildAt(0) as LinearLayout
         sistema.removeAllViews(); voz.removeAllViews()
-        val t = Painel.cache(this)?.optJSONObject("telemetria")
+        val d = Painel.cache(this)
+        var pos = 2
+        val cu = d?.optJSONObject("custos")
+        if (cu != null && cu.has("gastoBRL")) {
+            val ok = cu.optString("status") == "ok"
+            a.addView(cartao("Custos de IA · " + cu.optString("mes"), if (ok) "Dentro do teto" else "Atenção", ok, listOf(
+                "Gasto no mês (estimado)" to brl(cu.optDouble("gastoBRL")), "Teto" to brl(cu.optDouble("tetoBRL")),
+                "Uso do teto" to String.format(java.util.Locale("pt", "BR"), "%.0f%%", cu.optDouble("pct")), "Projeção do mês" to brl(cu.optDouble("projecaoBRL")))), pos++)
+        }
+        val sa = d?.optJSONObject("saude")
+        if (sa != null && sa.has("nivel")) {
+            val nivel = sa.optString("nivel"); val ok = nivel == "ok"
+            val cs = cartao("Saúde do sistema", if (ok) "Tudo certo" else nivel, ok, emptyList()) as LinearLayout
+            if (!sa.isNull("orcamentoPct")) cs.addView(texto("Gatilhos usam " + String.format(java.util.Locale("pt", "BR"), "%.0f%%", sa.optDouble("orcamentoPct")) + " do orçamento diário", 14f, Cores.TEXTO2).apply { setPadding(0, dp(3), 0, dp(3)) })
+            val al = sa.optJSONArray("alertas")
+            if (al != null) for (i in 0 until al.length()) {
+                val x = al.get(i)
+                cs.addView(texto("• " + (if (x is org.json.JSONObject) x.optString("texto", x.toString()) else x.toString()), 14f, Cores.TEXTO2).apply { setPadding(0, dp(3), 0, dp(3)) })
+            }
+            a.addView(cs, pos++)
+        }
+        val mo = d?.optJSONArray("monitores")
+        if (d != null) {
+            val cm = cartaoBase("Monitores web")
+            if (mo == null || mo.length() == 0) cm.addView(texto("Nenhuma página monitorada.", 14f, Cores.SECUNDARIO).apply { setPadding(0, 0, 0, dp(6)) })
+            else for (i in 0 until mo.length()) {
+                val o = mo.getJSONObject(i)
+                cm.addView(LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL; setPadding(0, dp(5), 0, dp(5))
+                    addView(texto(o.optString("descricao").ifBlank { "(sem descrição)" }, 14f, Cores.TEXTO)); addView(texto(o.optString("url"), 12f, Cores.SECUNDARIO))
+                })
+            }
+            a.addView(cm, pos++)
+        }
+        if (d == null && !buscandoPainel && painelErro == null) relogio.post { atualizarPainel() }
+        val t = d?.optJSONObject("telemetria")
         if (t != null) {
             val rec = t.optString("recebidoEm")
             val c = cartao("Celular (último aviso ao Jarvis)", if (t.optBoolean("carregando")) "Carregando" else "Na bateria", true, listOf(
@@ -463,7 +542,7 @@ class MainActivity : Activity() {
                 "Som" to (t.optString("modo_som").ifBlank { "—" }),
                 "Wi-Fi" to (t.optString("wifi").ifBlank { "—" }),
                 "Recebido" to (if (rec.length >= 16) rec.substring(8, 10) + "/" + rec.substring(5, 7) + " " + rec.substring(11, 16) + " UTC" else "—")))
-            a.addView(c, 2)
+            a.addView(c, pos++)
         }
         val tituloVoz = b.getChildAt(0) as TextView
         b.removeViewAt(0); tituloVoz.setPadding(0, dp(24), 0, 0); a.addView(tituloVoz)

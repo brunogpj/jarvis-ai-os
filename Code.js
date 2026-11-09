@@ -3395,6 +3395,16 @@ function doPost(e) {
         } catch (eD2) { _sdb.eventos = []; }
         try { _sdb.tarefas = (typeof Tarefas !== 'undefined' ? Tarefas.listar({}) : []).slice(0, 8).map(function (t) { return { titulo: String(t.titulo || '').substring(0, 70) }; }); } catch (eD3) { _sdb.tarefas = []; }
         try { _sdb.emailsNaoLidos = GmailApp.getInboxUnreadCount(); } catch (eD4) { _sdb.emailsNaoLidos = null; }
+        try { _sdb.nome = PropertiesService.getScriptProperties().getProperty('OWNER_NAME') || 'Bruno'; } catch (eN) { _sdb.nome = 'Bruno'; }
+        try { var _tu = (typeof AlertasVoz !== 'undefined' && AlertasVoz.turnoAtual) ? AlertasVoz.turnoAtual() : null; _sdb.turno = (_tu && typeof _tu === 'object') ? (_tu.turno || null) : _tu; } catch (eT) { _sdb.turno = null; }
+        try {
+          _sdb.emails = GmailApp.search('is:unread in:inbox', 0, 5).map(function (t) { var m = t.getMessages()[0]; return { assunto: (m.getSubject() || '(sem assunto)').substring(0, 70), de: String(m.getFrom() || '').replace(/<.*>/, '').trim().substring(0, 40) }; });
+        } catch (eEm) { _sdb.emails = []; }
+        try {
+          _sdb.alertasVoz = (typeof AlertasVoz !== 'undefined' ? AlertasVoz.listar() : []).slice(0, 15).map(function (a) { return { hora: a.hora, minuto: a.minuto || 0, dias: a.dias || [], texto: String(a.texto || '').substring(0, 90), dinamico: !!a.dinamico }; });
+        } catch (eAv) { _sdb.alertasVoz = []; }
+        try { _sdb.autorizacoes = (typeof Autorizacoes !== 'undefined' ? Autorizacoes.listar() : []).slice(0, 6).map(function (a) { return { de: String(a.de || '').substring(0, 40), pedido: String(a.pedido || '').substring(0, 120) }; }); } catch (eAu) { _sdb.autorizacoes = []; }
+        try { _sdb.monitores = (typeof Web !== 'undefined' ? Web.listar() : []).slice(0, 8).map(function (m) { return { descricao: String(m.descricao || '').substring(0, 70), url: String(m.url || '').substring(0, 80) }; }); } catch (eMo) { _sdb.monitores = []; }
         try {
           _sdb.notificacoes = (Firestore.listDocs(_NOTIF_COL, 20) || []).slice(0, 15).map(function (x) {
             var d = x.dados || x; return { app: String(d.app || ''), titulo: String(d.titulo || '').substring(0, 60), texto: String(d.texto || '').substring(0, 110), em: Number(d.em) || 0 };

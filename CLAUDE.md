@@ -25,7 +25,7 @@ Projeto Google Apps Script gerenciado localmente via clasp.
 
 | Deployment ID | Versão | Descrição |
 |---|---|---|
-| `<DEPLOYMENT_ID>` | **@573** | **ATIVA** — "Conversa por toque do app Android: rota android_conversa com token proprio". Anterior: @572 |  **ATIVA-ANTERIOR** — "Fala pelo app: ordem aceita pelo FCM sem ack nao e falha; token proprio do app Android (ANDROID_API_TOKEN)". Anterior: @571 |  **ATIVA-ANTERIOR** — "Ponto nao acumula marcas antigas; app Android registra o projeto do Firebase sozinho". Anteriores: @570 (canal Android, desligado), @569 (nova cara fases 2 a 4). Anteriores: @568 (fase 1, sem Laboratorio e Automacoes), @566 (File Search desligado, aviso do teto do Google) |
+| `<DEPLOYMENT_ID>` | **@574** | **ATIVA** — "Voz premium na conversa do app Android: rota android_voz". Anterior: @573 |  **ATIVA-ANTERIOR** — "Conversa por toque do app Android: rota android_conversa com token proprio". Anterior: @572 |  **ATIVA-ANTERIOR** — "Fala pelo app: ordem aceita pelo FCM sem ack nao e falha; token proprio do app Android (ANDROID_API_TOKEN)". Anterior: @571 |  **ATIVA-ANTERIOR** — "Ponto nao acumula marcas antigas; app Android registra o projeto do Firebase sozinho". Anteriores: @570 (canal Android, desligado), @569 (nova cara fases 2 a 4). Anteriores: @568 (fase 1, sem Laboratorio e Automacoes), @566 (File Search desligado, aviso do teto do Google) |
 | `<DEPLOYMENT_ID>` | @25 | Antiga — "TesteJobs" |
 | `<DEPLOYMENT_ID>` | @HEAD | Cabeça (muda a cada push, não é a de produção) |
 

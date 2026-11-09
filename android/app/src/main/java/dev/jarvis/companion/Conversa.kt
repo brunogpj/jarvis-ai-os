@@ -17,6 +17,22 @@ object Conversa {
     private const val FALHA = "\u0000"
 
     /** O texto para falar. Nunca lança: falha vira uma frase honesta. */
+    /**
+     * Frase com VÁRIAS perguntas ("que horas são, que dia é hoje, quanto eu tenho livre e o que vence hoje"): o servidor atende um pedido
+     * por mensagem e respondia só a última (08/11/2026). Divide nos começos de pergunta conhecidos; com menos de duas, devolve a frase inteira.
+     * "me diga" / "e" / "ou" de ligação ficam de fora de cada parte.
+     */
+    fun dividir(frase: String): List<String> {
+        val s = frase.trim()
+        val achados = Regex("""(?i)\b(que horas|que dia|quanto|quantos|quantas|qual|quais|o que|quando)\b""").findAll(s).toList()
+        if (achados.size < 2) return listOf(s)
+        val partes = achados.mapIndexed { k, m ->
+            val fim = if (k + 1 < achados.size) achados[k + 1].range.first else s.length
+            s.substring(m.range.first, fim).trim().replace(Regex("""(?i)(\s+(e|ou|também))+$"""), "").trim(' ', ',', '.')
+        }.filter { it.length >= 4 }
+        return if (partes.size >= 2) partes.take(5) else listOf(s)
+    }
+
     /** Verdadeiro quando o último texto devolvido é uma resposta do Jarvis (e não um aviso de falha do próprio app). */
     @Volatile var respostaReal = false
 

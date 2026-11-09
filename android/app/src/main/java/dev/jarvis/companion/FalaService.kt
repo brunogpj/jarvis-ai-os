@@ -82,7 +82,17 @@ class FalaService : Service() {
         val pergunta = i.getStringExtra("pergunta")
         if (pergunta != null) {
             val t0 = System.currentTimeMillis()
-            texto = Conversa.perguntar(this, pergunta, i.getStringExtra("rid") ?: id.removePrefix("c"))
+            val rid0 = i.getStringExtra("rid") ?: id.removePrefix("c")
+            val partes = Conversa.dividir(pergunta)
+            if (partes.size == 1) {
+                texto = Conversa.perguntar(this, pergunta, rid0)
+            } else {
+                // um pedido por vez, cada um com o SEU rid (rid0 × 10 + posição: numérico e longo, como o servidor exige)
+                Config.evento(this, "conversa: pedido dividido em ${partes.size} perguntas")
+                val rs = partes.mapIndexed { k, p -> Conversa.perguntar(this, p, (rid0.toLong() * 10 + k).toString()) to Conversa.respostaReal }
+                texto = rs.joinToString(" ") { it.first.trim().let { r -> if (r.endsWith(".") || r.endsWith("?") || r.endsWith("!")) r else "$r." } }
+                Conversa.respostaReal = rs.any { it.second }
+            }
             Config.evento(this, "conversa: resposta de ${texto.length} caracteres em ${(System.currentTimeMillis() - t0) / 1000} s")
             Config.estado(this).edit().putString("ultima_resposta", texto.take(600)).apply()
             // Voz do Jarvis: o servidor sintetiza e manda o áudio por push (toca depois que esta tarefa termina, a fila é de uma thread só).

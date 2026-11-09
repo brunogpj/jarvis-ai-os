@@ -81,3 +81,68 @@ fun GradientDrawableCantos(cor: Int, raios: FloatArray, borda: Int = 0): Gradien
         setColor(cor); cornerRadii = raios
         if (borda != 0) setStroke(1, borda)
     }
+
+/** Ícones de contorno da barra inferior (mesmo traço de 1,8 dp da proposta). tipo: 0 conversa, 1 sistema, 2 voz. */
+class IconeAbaView(ctx: Context, private val tipo: Int) : View(ctx) {
+    var cor: Int = Cores.SECUNDARIO
+        set(v) { field = v; invalidate() }
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
+    }
+
+    override fun onDraw(c: Canvas) {
+        val k = width / 24f
+        p.color = cor; p.strokeWidth = 1.8f * k
+        val path = android.graphics.Path()
+        when (tipo) {
+            0 -> { // balão de conversa
+                path.moveTo(21f * k, 12f * k)
+                path.cubicTo(21f * k, 16.4f * k, 16.97f * k, 20f * k, 12f * k, 20f * k)
+                path.cubicTo(10.7f * k, 20f * k, 9.5f * k, 19.8f * k, 9.4f * k, 19.1f * k)
+                path.lineTo(4f * k, 20f * k); path.lineTo(5f * k, 15.4f * k)
+                path.cubicTo(3.7f * k, 14.2f * k, 3f * k, 13.2f * k, 3f * k, 12f * k)
+                path.cubicTo(3f * k, 7.6f * k, 7.03f * k, 4f * k, 12f * k, 4f * k)
+                path.cubicTo(16.97f * k, 4f * k, 21f * k, 7.6f * k, 21f * k, 12f * k)
+            }
+            1 -> { // pulso
+                path.moveTo(3f * k, 12f * k); path.lineTo(7f * k, 12f * k); path.lineTo(10f * k, 20f * k)
+                path.lineTo(14f * k, 4f * k); path.lineTo(17f * k, 12f * k); path.lineTo(21f * k, 12f * k)
+            }
+            else -> { // barras de equalizador
+                path.moveTo(4f * k, 8f * k); path.lineTo(4f * k, 16f * k)
+                path.moveTo(8f * k, 5f * k); path.lineTo(8f * k, 19f * k)
+                path.moveTo(12f * k, 9f * k); path.lineTo(12f * k, 15f * k)
+                path.moveTo(16f * k, 6f * k); path.lineTo(16f * k, 18f * k)
+                path.moveTo(20f * k, 10f * k); path.lineTo(20f * k, 14f * k)
+            }
+        }
+        c.drawPath(path, p)
+    }
+}
+
+/** Barras que acompanham o volume da voz na tela "Ouvindo". */
+class OndaView(ctx: Context) : View(ctx) {
+    private val niveis = FloatArray(9) { 0.15f }
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Cores.DESTAQUE; strokeCap = Paint.Cap.ROUND }
+
+    /** nivel: 0..1. Empurra as barras para a esquerda e põe o novo valor na direita. */
+    fun empurrar(nivel: Float) {
+        for (i in 0 until niveis.size - 1) niveis[i] = niveis[i + 1]
+        niveis[niveis.size - 1] = nivel.coerceIn(0.1f, 1f)
+        invalidate()
+    }
+
+    override fun onDraw(c: Canvas) {
+        val d = resources.displayMetrics.density
+        val larg = 6f * d; val folga = 6f * d
+        val total = niveis.size * larg + (niveis.size - 1) * folga
+        var x = (width - total) / 2f + larg / 2f
+        p.strokeWidth = larg
+        for (n in niveis) {
+            val h = (height * (0.22f + 0.78f * n)) / 2f
+            p.alpha = (110 + 145 * n).toInt()
+            c.drawLine(x, height / 2f - h, x, height / 2f + h, p)
+            x += larg + folga
+        }
+    }
+}

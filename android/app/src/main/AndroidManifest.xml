@@ -2,10 +2,18 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Tela "Ouvindo": reconhecimento de fala dentro do app. Só liga o microfone depois do toque no orbe. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Android 13+: sem esta permissão a notificação fixa do serviço de fala não aparece (a fala toca do mesmo jeito). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+
+    <!-- Android 11+: enxergar o serviço de reconhecimento de fala instalado (o do Google). -->
+    <queries>
+        <intent><action android:name="android.speech.RecognitionService" /></intent>
+        <intent><action android:name="android.speech.action.RECOGNIZE_SPEECH" /></intent>
+    </queries>
 
     <application
         android:name=".JarvisApp"
@@ -41,7 +49,7 @@
             android:name=".ConversaActivity"
             android:exported="false"
             android:excludeFromRecents="true"
-            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+            android:theme="@android:style/Theme.Material.NoActionBar" />
 
         <!-- Atalho nas configurações rápidas. -->
         <service

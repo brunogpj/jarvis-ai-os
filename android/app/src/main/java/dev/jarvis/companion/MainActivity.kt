@@ -36,7 +36,7 @@ class MainActivity : Activity() {
     private lateinit var conteudo: FrameLayout
     private lateinit var selo: TextView
     private lateinit var subtitulo: TextView
-    private val abas = ArrayList<TextView>()
+    private val abas = ArrayList<Pair<IconeAbaView, TextView>>()
     private var aba = 0
     private var assinatura = ""
     private val relogio = Handler(Looper.getMainLooper())
@@ -90,14 +90,14 @@ class MainActivity : Activity() {
         // cabeçalho: marca + nome + aparelho/versão, e o selo de estado à direita
         val marca = MarcaView(this).apply { layoutParams = LinearLayout.LayoutParams(dp(36), dp(36)) }
         val titulo = TextView(this).apply {
-            text = "Jarvis"; textSize = 24f; setTextColor(Cores.TEXTO); typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+            text = "Jarvis"; textSize = 24f; setTextColor(Cores.TEXTO); typeface = Tipografia.grotesk(this@MainActivity, 700)
         }
         subtitulo = TextView(this).apply { textSize = 12f; setTextColor(Cores.SECUNDARIO) }
         val nomes = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, 0, 0)
             addView(titulo); addView(subtitulo)
         }
-        selo = TextView(this).apply { textSize = 12f; typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL); gravity = Gravity.CENTER }
+        selo = TextView(this).apply { textSize = 12f; typeface = Tipografia.inter(this@MainActivity, 500); gravity = Gravity.CENTER }
         val cabecalho = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(20), dp(28), dp(20), dp(8))
@@ -111,13 +111,17 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL; setBackgroundColor(Cores.BARRA); setPadding(dp(12), dp(6), dp(12), dp(10))
         }
         listOf("Conversa", "Sistema", "Voz").forEachIndexed { i, nome ->
-            val t = TextView(this).apply {
-                text = nome; textSize = 13f; gravity = Gravity.CENTER; minimumHeight = dp(52)
+            val icone = IconeAbaView(this, i)
+            val t = TextView(this).apply { text = nome; textSize = 12f; gravity = Gravity.CENTER }
+            val celula = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; minimumHeight = dp(56)
                 isClickable = true; isFocusable = true; contentDescription = nome
+                addView(icone, LinearLayout.LayoutParams(dp(22), dp(22)))
+                addView(t, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(4) })
                 setOnClickListener { mostrar(i) }
             }
-            abas.add(t)
-            barra.addView(t, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            abas.add(Pair(icone, t))
+            barra.addView(celula, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         }
 
         raiz.addView(cabecalho)
@@ -130,9 +134,11 @@ class MainActivity : Activity() {
     private fun mostrar(i: Int) {
         aba = i
         assinatura = assinaturaAtual()
-        abas.forEachIndexed { idx, t ->
-            t.setTextColor(if (idx == i) Cores.DESTAQUE else Cores.SECUNDARIO)
-            t.typeface = Typeface.create("sans-serif-medium", if (idx == i) Typeface.BOLD else Typeface.NORMAL)
+        abas.forEachIndexed { idx, (icone, t) ->
+            val cor = if (idx == i) Cores.DESTAQUE else Cores.SECUNDARIO
+            icone.cor = cor
+            t.setTextColor(cor)
+            t.typeface = Tipografia.inter(this, if (idx == i) 600 else 500)
         }
         conteudo.removeAllViews()
         conteudo.addView(when (i) { 0 -> telaConversa(); 1 -> telaSistema(); else -> telaVoz() })
@@ -168,7 +174,7 @@ class MainActivity : Activity() {
             setPadding(dp(20), dp(16), dp(20), dp(8))
         }
         if (pergunta == null) {
-            baloes.addView(texto("Toque no orbe e fale. Por exemplo: \"que horas são\" ou \"quanto tenho livre hoje\".", 15f, Cores.SECUNDARIO).apply {
+            baloes.addView(texto("Toque no orbe e fale, ou use um atalho. Segure um atalho para trocar a frase.", 15f, Cores.SECUNDARIO).apply {
                 gravity = Gravity.CENTER; setPadding(dp(16), 0, dp(16), dp(24))
             })
         } else {
@@ -184,7 +190,7 @@ class MainActivity : Activity() {
             post { fullScroll(View.FOCUS_DOWN) }
         }
 
-        val frases = listOf("Que horas são", "Quanto tenho livre", "O que vence hoje")
+        val frases = atalhos()
         val linhaChips = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(dp(20), dp(8), dp(20), dp(4)) }
         frases.forEach { f ->
             linhaChips.addView(Button(this).apply {
@@ -192,13 +198,15 @@ class MainActivity : Activity() {
                 setPadding(dp(16), 0, dp(16), 0)
                 background = fundoArredondado(Cores.CARTAO, dp(22).toFloat(), Color.parseColor("#2a335e"), 1)
                 stateListAnimator = null
+                typeface = Tipografia.inter(this@MainActivity, 500)
                 setOnClickListener { perguntar(f) }
+                setOnLongClickListener { editarAtalho(frases.indexOf(f)); true }      // segurar = trocar a frase
             }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)).apply { rightMargin = dp(8) })
         }
         val chips = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(linhaChips) }
 
         val orbe = OrbeView(this).apply { setOnClickListener { startActivity(Intent(this@MainActivity, ConversaActivity::class.java)) } }
-        val legenda = texto("Toque para falar", 14f, Cores.TEXTO2).apply { gravity = Gravity.CENTER; typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL) }
+        val legenda = texto("Toque para falar", 14f, Cores.TEXTO2).apply { gravity = Gravity.CENTER; typeface = Tipografia.inter(this@MainActivity, 500) }
         val rodape = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; setPadding(0, dp(14), 0, dp(12))
             addView(orbe, LinearLayout.LayoutParams(dp(152), dp(152)))
@@ -211,6 +219,31 @@ class MainActivity : Activity() {
             addView(chips)
             addView(rodape)
         }
+    }
+
+    private val atalhosPadrao = listOf("Que horas são", "Quanto tenho livre", "O que vence hoje")
+
+    private fun atalhos(): List<String> = try {
+        val j = org.json.JSONArray(Config.estado(this).getString("atalhos", "") ?: "")
+        (0 until 3).map { j.optString(it, "").ifBlank { atalhosPadrao[it] } }
+    } catch (e: Exception) { atalhosPadrao }
+
+    /** Segurar uma pílula abre uma caixa para trocar a frase (até 40 caracteres); em branco volta à frase original. */
+    private fun editarAtalho(indice: Int) {
+        if (indice !in 0..2) return
+        val campo = android.widget.EditText(this).apply {
+            setText(atalhos()[indice]); setSelection(text.length); setSingleLine(true); filters = arrayOf(android.text.InputFilter.LengthFilter(40))
+            setTextColor(Cores.TEXTO); typeface = Tipografia.inter(this@MainActivity, 400)
+        }
+        android.app.AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
+            .setTitle("Frase do atalho")
+            .setView(LinearLayout(this).apply { setPadding(dp(20), dp(8), dp(20), 0); addView(campo, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)) })
+            .setPositiveButton("Salvar") { _, _ ->
+                val j = org.json.JSONArray(); atalhos().forEachIndexed { i, f -> j.put(if (i == indice) campo.text.toString().trim() else f) }
+                Config.estado(this).edit().putString("atalhos", j.toString()).apply(); mostrar(0)
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
     }
 
     /** Pergunta direta (as pílulas): o mesmo caminho do botão de voz, sem a tela de reconhecimento. */
@@ -247,7 +280,7 @@ class MainActivity : Activity() {
         val notifOk = Build.VERSION.SDK_INT < 33 || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
 
         val lista = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(12), dp(20), dp(24)) }
-        lista.addView(texto("Sistema", 28f, Cores.TEXTO).apply { typeface = Typeface.create("sans-serif-medium", Typeface.BOLD) })
+        lista.addView(texto("Sistema", 28f, Cores.TEXTO).apply { typeface = Tipografia.grotesk(this@MainActivity, 700) })
         lista.addView(texto(if (pareado && AckQueue.pendentes(this) == 0) "Tudo certo." else "Há algo para olhar abaixo.", 13f, Cores.SECUNDARIO).apply { setPadding(0, dp(4), 0, dp(4)) })
 
         lista.addView(cartao("Conexão", if (pareado) "Pareado" else "Sem pareamento", pareado,
@@ -277,7 +310,7 @@ class MainActivity : Activity() {
         lista.addView(cx)
 
         lista.addView(Button(this).apply {
-            text = "Atualizar agora"; isAllCaps = false; textSize = 15f; setTextColor(Cores.TEXTO); stateListAnimator = null
+            text = "Atualizar agora"; isAllCaps = false; typeface = Tipografia.inter(this@MainActivity, 600); textSize = 15f; setTextColor(Cores.TEXTO); stateListAnimator = null
             background = fundoArredondado(Cores.BALAO_VOCE, dp(14).toFloat())
             setOnClickListener { AckQueue.drenarAgora(context); NotifFila.drenarAgora(context); NotificacaoService.atualizarEmSegundoPlano(context); mostrar(1) }
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)).apply { topMargin = dp(12) })
@@ -289,7 +322,7 @@ class MainActivity : Activity() {
         orientation = LinearLayout.VERTICAL
         background = fundoArredondado(Cores.CARTAO, dp(16).toFloat(), Cores.BORDA, 1)
         setPadding(dp(16), dp(16), dp(16), dp(10))
-        addView(texto(titulo, 17f, Cores.TEXTO).apply { typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL); setPadding(0, 0, 0, dp(8)) })
+        addView(texto(titulo, 17f, Cores.TEXTO).apply { typeface = Tipografia.grotesk(this@MainActivity, 500); setPadding(0, 0, 0, dp(8)) })
         layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) }
     }
 
@@ -300,7 +333,7 @@ class MainActivity : Activity() {
         c.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
             addView(cab, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            addView(texto("● $estado", 12f, if (bom) Color.parseColor("#bff5dc") else Color.parseColor("#ffd9a0")).apply { typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL) })
+            addView(texto("● $estado", 12f, if (bom) Color.parseColor("#bff5dc") else Color.parseColor("#ffd9a0")).apply { typeface = Tipografia.inter(this@MainActivity, 500) })
         }, 0)
         linhas.forEach { (k, v) ->
             c.addView(LinearLayout(this).apply {
@@ -316,15 +349,28 @@ class MainActivity : Activity() {
 
     private fun telaVoz(): View {
         val e = Config.estado(this)
-        val tom = e.getFloat("pitch", FalaService.PITCH_JARVIS)
-        val ritmo = e.getFloat("ritmo", FalaService.RITMO_JARVIS)
+        val genero = e.getString("genero", "m") ?: "m"
+        val tom = e.getFloat("pitch", FalaService.pitchPadrao(genero))
+        val ritmo = e.getFloat("ritmo", FalaService.ritmoPadrao(genero))
         val voz = (e.getString("voz_usada", "") ?: "").ifBlank { "ainda não usada" }
 
         val lista = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(12), dp(20), dp(24)) }
-        lista.addView(texto("Voz do celular", 28f, Cores.TEXTO).apply { typeface = Typeface.create("sans-serif-medium", Typeface.BOLD) })
+        lista.addView(texto("Voz do celular", 28f, Cores.TEXTO).apply { typeface = Tipografia.grotesk(this@MainActivity, 700) })
         lista.addView(texto("Vale para respostas curtas (hora, saldo) e avisos. Respostas longas saem pela voz premium do Jarvis.", 13f, Cores.SECUNDARIO).apply { setPadding(0, dp(4), 0, dp(4)) })
 
         val c = cartaoBase("Ajuste")
+        c.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; setPadding(0, 0, 0, dp(8))
+            listOf("m" to "Masculina", "f" to "Feminina").forEach { (g, nome) ->
+                val ativo = g == genero
+                addView(Button(this@MainActivity).apply {
+                    text = nome; isAllCaps = false; textSize = 14f; stateListAnimator = null; typeface = Tipografia.inter(this@MainActivity, 600)
+                    setTextColor(if (ativo) Cores.FUNDO else Cores.TEXTO2)
+                    background = fundoArredondado(if (ativo) Cores.DESTAQUE else Color.TRANSPARENT, dp(12).toFloat(), if (ativo) Cores.DESTAQUE else Cores.BORDA, dp(1))
+                    setOnClickListener { trocarGenero(g) }
+                }, LinearLayout.LayoutParams(0, dp(44), 1f).apply { rightMargin = if (g == "m") dp(8) else 0 })
+            }
+        })
         c.addView(controle("Tom", tom, "pitch"))
         c.addView(controle("Ritmo", ritmo, "ritmo"))
         c.addView(LinearLayout(this).apply {
@@ -333,7 +379,7 @@ class MainActivity : Activity() {
             addView(texto(voz, 14f, Cores.TEXTO))
         })
         c.addView(Button(this).apply {
-            text = "Ouvir uma amostra"; isAllCaps = false; textSize = 15f; setTextColor(Cores.DESTAQUE); stateListAnimator = null
+            text = "Ouvir uma amostra"; isAllCaps = false; typeface = Tipografia.inter(this@MainActivity, 600); textSize = 15f; setTextColor(Cores.DESTAQUE); stateListAnimator = null
             background = fundoArredondado(Color.TRANSPARENT, dp(12).toFloat(), Cores.DESTAQUE, dp(1))
             setOnClickListener {
                 ContextCompat.startForegroundService(context, Intent(context, FalaService::class.java)
@@ -344,7 +390,7 @@ class MainActivity : Activity() {
         lista.addView(c)
 
         lista.addView(Button(this).apply {
-            text = "Voltar ao padrão"; isAllCaps = false; textSize = 14f; setTextColor(Cores.TEXTO2); stateListAnimator = null
+            text = "Voltar ao padrão"; isAllCaps = false; typeface = Tipografia.inter(this@MainActivity, 600); textSize = 14f; setTextColor(Cores.TEXTO2); stateListAnimator = null
             background = fundoArredondado(Color.TRANSPARENT, 0f)
             setOnClickListener {
                 Config.estado(context).edit().remove("pitch").remove("ritmo").apply()
@@ -353,6 +399,17 @@ class MainActivity : Activity() {
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)).apply { topMargin = dp(8) })
 
         return ScrollView(this).apply { overScrollMode = View.OVER_SCROLL_NEVER; addView(lista) }
+    }
+
+    /** Troca masculina/feminina: zera os ajustes de tom e ritmo (cada voz tem o seu ponto de partida) e já fala uma amostra. */
+    private fun trocarGenero(g: String) {
+        Config.estado(this).edit().putString("genero", g).remove("voz_preferida").remove("pitch").remove("ritmo").apply()
+        Config.evento(this, "voz do celular: " + if (g == "f") "feminina" else "masculina")
+        ContextCompat.startForegroundService(this, Intent(this, FalaService::class.java)
+            .putExtra("id", "t" + System.currentTimeMillis().toString(36))
+            .putExtra("texto", "Boa noite. Esta é a voz do Jarvis neste celular.").putExtra("local", true))
+        mostrar(2)
+        relogio.postDelayed({ if (aba == 2) mostrar(2) }, 3000)     // a voz escolhida aparece depois da amostra
     }
 
     /** Controle deslizante de 0,50 a 1,50 que grava na hora (e já vale na próxima fala). */
@@ -385,7 +442,7 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun texto(t: String, sp: Float, cor: Int) = TextView(this).apply { text = t; textSize = sp; setTextColor(cor) }
+    private fun texto(t: String, sp: Float, cor: Int) = TextView(this).apply { text = t; textSize = sp; setTextColor(cor); typeface = Tipografia.inter(this@MainActivity, 400) }
 
     // ---------------------------------------------------------------- pareamento e ajuste por ADB (como antes)
 

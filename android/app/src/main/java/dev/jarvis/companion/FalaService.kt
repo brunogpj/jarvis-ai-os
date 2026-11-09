@@ -39,6 +39,8 @@ class FalaService : Service() {
         const val LIMITE_CURTA = 160        // até aqui a resposta da conversa sai pela voz do celular
         const val PITCH_JARVIS = 0.88f      // 1.0 é o normal; mais grave que a voz padrão
         const val RITMO_JARVIS = 0.95f
+        fun pitchPadrao(genero: String) = if (genero == "f") 1.0f else PITCH_JARVIS      // a voz feminina não precisa ficar mais grave
+        fun ritmoPadrao(genero: String) = if (genero == "f") 0.97f else RITMO_JARVIS
     }
 
     private val fila = Executors.newSingleThreadExecutor()
@@ -173,23 +175,26 @@ class FalaService : Service() {
      * pouco mais devagar, como o narrador. A voz escolhida fica registrada para conferir de ouvido e trocar se não agradar.
      */
     private fun ajustarVoz(t: TextToSpeech) {
+        val e = Config.estado(this)
+        val genero = e.getString("genero", "m") ?: "m"
         try {
             val ptbr = t.voices?.filter { it.locale.language == "pt" && it.locale.country == "BR" } ?: emptyList()
-            val pedida = Config.estado(this).getString("voz_preferida", "") ?: ""
+            val pedida = e.getString("voz_preferida", "") ?: ""
+            val masculinas = listOf("ptd", "pte")
             val escolhida = (if (pedida.isNotBlank()) ptbr.firstOrNull { it.name == pedida } else null)
-                ?: listOf("ptd", "pte").firstNotNullOfOrNull { s -> ptbr.firstOrNull { it.name.contains(s) } } ?: ptbr.firstOrNull()
+                ?: (if (genero == "f") listOf("afs") else masculinas).firstNotNullOfOrNull { s -> ptbr.firstOrNull { it.name.contains(s) } }
+                ?: (if (genero == "f") ptbr.firstOrNull { v -> masculinas.none { v.name.contains(it) } } else null)
+                ?: ptbr.firstOrNull()
             if (escolhida != null) {
                 t.voice = escolhida
-                val p = Config.estado(this)
-                if (p.getString("voz_usada", "") != escolhida.name) {
-                    p.edit().putString("voz_usada", escolhida.name).apply()
+                if (e.getString("voz_usada", "") != escolhida.name) {
+                    e.edit().putString("voz_usada", escolhida.name).apply()
                     Config.evento(this, "voz do celular: ${escolhida.name} (disponíveis: ${ptbr.joinToString(",") { it.name }.take(120)})")
                 }
             }
-        } catch (e: Exception) { /* fica a voz padrão */ }
-        val ajuste = Config.estado(this)
-        t.setPitch(ajuste.getFloat("pitch", PITCH_JARVIS))
-        t.setSpeechRate(ajuste.getFloat("ritmo", RITMO_JARVIS))
+        } catch (ex: Exception) { /* fica a voz padrão */ }
+        t.setPitch(e.getFloat("pitch", pitchPadrao(genero)))
+        t.setSpeechRate(e.getFloat("ritmo", ritmoPadrao(genero)))
     }
 
     private fun falarComTts(texto: String) {

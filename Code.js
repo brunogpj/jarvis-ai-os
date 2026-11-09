@@ -6360,10 +6360,16 @@ function _finParse(titulo, texto) {
   var t = String((titulo || '') + '. ' + (texto || '')).replace(/\s+/g, ' ').trim();
   var b = t.toLowerCase();
 
+  // Propaganda não é movimento. 09/11: "Suas compras no Voucher podem valer um iPhone e cupons Uber
+  // de R$ 100. Cadastre-se na Promoção!" casou com /compra/, virou compra de R$ 100 e foi para a
+  // caderneta. Sem "estabelecimento" nem verbo de aprovação/débito, texto de promoção é descartado.
+  if (/promo[çc][ãa]o|cadastre-se|cupons?\b|sorteio|premiad|concorra|participe|ganhe/.test(b) &&
+      !/no estabelecimento|compra aprovada|debitad/.test(b)) return null;
+
   var tipo = null;
   if (/estorn|devolv|cancelad|reembols/.test(b)) tipo = 'estorno';
   else if (/carga nova|recarga|recarregad|cr[eé]dito dispon/.test(b)) tipo = 'recarga';
-  else if (/compra|pagamento|debitad|transa[çc][ãa]o/.test(b)) tipo = 'compra';
+  else if (/\bcompra\b|pagamento|debitad|transa[çc][ãa]o/.test(b)) tipo = 'compra';
   if (!tipo) return null;
 
   // Valor em formato BR. "R$ 1,19" · "R$ 1.234,56" · "R$ 89"

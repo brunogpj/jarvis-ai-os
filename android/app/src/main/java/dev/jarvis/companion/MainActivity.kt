@@ -49,13 +49,16 @@ class MainActivity : Activity() {
         status = TextView(this).apply {
             textSize = 14f; setTextColor(Color.parseColor("#c9cde4")); typeface = Typeface.MONOSPACE; setPadding(0, 24, 0, 24)
         }
+        val falar = botao("Falar com o Jarvis") { startActivity(Intent(this, ConversaActivity::class.java)) }.apply {
+            textSize = 22f; setPadding(0, 56, 0, 56); setTextColor(Color.parseColor("#0d0f1e")); setBackgroundColor(Color.parseColor("#22d3d3"))
+        }
         val atualizar = botao("Atualizar") { atualizar() }
         val testar = botao("Testar a voz do celular") { testarVoz() }
         val raiz = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(48, 96, 48, 48)
             setBackgroundColor(Color.parseColor("#0d0f1e"))
-            addView(titulo); addView(status); addView(atualizar); addView(testar)
+            addView(titulo); addView(falar); addView(status); addView(atualizar); addView(testar)
         }
         setContentView(ScrollView(this).apply { setBackgroundColor(Color.parseColor("#0d0f1e")); addView(raiz) })
     }
@@ -114,6 +117,13 @@ class MainActivity : Activity() {
             appendLine("pareado: ${if (pareado) "sim ($host)" else "NÃO"}")
             appendLine("notificações: $notif")
             appendLine("confirmações na fila: ${AckQueue.pendentes(this@MainActivity)}")
+            val perg = Config.estado(this@MainActivity).getString("ultima_pergunta", null)
+            if (perg != null) {
+                appendLine()
+                appendLine("última conversa:")
+                appendLine("você: $perg")
+                appendLine("Jarvis: ${Config.estado(this@MainActivity).getString("ultima_resposta", "")}")
+            }
             appendLine()
             appendLine("últimos eventos:")
             append(Config.eventos(this@MainActivity).ifBlank { "(nenhum)" })

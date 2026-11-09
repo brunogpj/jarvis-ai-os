@@ -25,6 +25,25 @@
             </intent-filter>
         </activity>
 
+        <!-- Conversa por toque: janela transparente que chama o reconhecimento de fala do sistema. -->
+        <activity
+            android:name=".ConversaActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <!-- Atalho nas configurações rápidas. -->
+        <service
+            android:name=".ConversaTile"
+            android:exported="true"
+            android:icon="@drawable/ic_launcher_foreground"
+            android:label="Jarvis"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
         <!-- Recebe as ordens do Jarvis por push (FCM). Exportado só para o FCM, que entrega pelo filtro abaixo. -->
         <service
             android:name=".JarvisMessagingService"

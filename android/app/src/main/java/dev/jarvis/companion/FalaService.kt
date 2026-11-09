@@ -68,9 +68,17 @@ class FalaService : Service() {
 
     private fun tocar(i: Intent) {
         val id = i.getStringExtra("id") ?: return
-        val texto = i.getStringExtra("texto") ?: ""
+        var texto = i.getStringExtra("texto") ?: ""
         val audioUrl = i.getStringExtra("audio_url") ?: ""
-        val local = i.getBooleanExtra("local", false)
+        // Conversa por toque: pergunta ao Jarvis e fala a resposta pelo celular. Sem ack: não há ordem do servidor a confirmar.
+        val pergunta = i.getStringExtra("pergunta")
+        if (pergunta != null) {
+            val t0 = System.currentTimeMillis()
+            texto = Conversa.perguntar(this, pergunta, i.getStringExtra("rid") ?: id.removePrefix("c"))
+            Config.evento(this, "conversa: resposta de ${texto.length} caracteres em ${(System.currentTimeMillis() - t0) / 1000} s")
+            Config.estado(this).edit().putString("ultima_resposta", texto.take(600)).apply()
+        }
+        val local = i.getBooleanExtra("local", false) || pergunta != null
         val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val alarmeAntes = am.getStreamVolume(AudioManager.STREAM_ALARM)
         try {
@@ -82,16 +90,16 @@ class FalaService : Service() {
                     tocarArquivo(arq)
                 } finally { arq.delete() }
             } else if (texto.isNotBlank()) {
-                AckQueue.enviar(this, id, "tocando")
+                if (pergunta == null) AckQueue.enviar(this, id, "tocando")
                 falarComTts(texto)
             } else {
                 throw IllegalStateException("ordem sem áudio e sem texto")
             }
             Config.evento(this, "fala concluída ($id)")
-            AckQueue.enviar(this, id, "concluido")
+            if (pergunta == null) AckQueue.enviar(this, id, "concluido")
         } catch (e: Exception) {
             Config.evento(this, "fala falhou ($id): ${e.message}")
-            AckQueue.enviar(this, id, "erro", (e.message ?: e.javaClass.simpleName).take(150))
+            if (pergunta == null) AckQueue.enviar(this, id, "erro", (e.message ?: e.javaClass.simpleName).take(150))
         } finally {
             try { am.setStreamVolume(AudioManager.STREAM_ALARM, alarmeAntes, 0) } catch (e: Exception) { }
         }

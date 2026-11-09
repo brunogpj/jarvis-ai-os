@@ -3353,6 +3353,16 @@ function doPost(e) {
     }
 
     // Devolve texto puro (text/plain) para simplificar a leitura direta no celular.
+    // CONVERSA DO APP ANDROID (0.3.0): mesmo caminho do voice_command (cadeia determinística, rid idempotente, falar:'local'),
+    // mas autenticado pelo token PRÓPRIO do app. Só troca a ação e o token aqui; o resto do fluxo é o da macro.
+    if (body && body.action === "android_conversa") {
+      var _spCv = PropertiesService.getScriptProperties(), _tkCv = _spCv.getProperty('ANDROID_API_TOKEN');
+      if (!body.token || !_tkCv || body.token !== _tkCv) return ContentService.createTextOutput("Erro: Não autorizado").setMimeType(ContentService.MimeType.TEXT);
+      body.action = "voice_command";
+      body.token = _spCv.getProperty('VOICE_API_TOKEN');
+      body.falar = 'local';
+    }
+
     if (body && body.action === "voice_command") {
       var token = body.token || (e && e.parameter && e.parameter.token);
       if (!token) return ContentService.createTextOutput("Erro: Token ausente").setMimeType(ContentService.MimeType.TEXT);

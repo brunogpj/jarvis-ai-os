@@ -17,7 +17,11 @@ object Conversa {
     private const val FALHA = "\u0000"
 
     /** O texto para falar. Nunca lança: falha vira uma frase honesta. */
+    /** Verdadeiro quando o último texto devolvido é uma resposta do Jarvis (e não um aviso de falha do próprio app). */
+    @Volatile var respostaReal = false
+
     fun perguntar(ctx: Context, pergunta: String, rid: String): String {
+        respostaReal = false
         val url = Config.url(ctx)
         val token = Config.token(ctx)
         if (url == null || token == null) return "O aplicativo ainda não está pareado com o Jarvis."
@@ -28,12 +32,37 @@ object Conversa {
                 r.startsWith(FALHA) -> motivo = r.substring(1)
                 r.isBlank() -> motivo = "resposta vazia"
                 r.startsWith("Erro:") -> return "O Jarvis recusou o pedido. " + r.removePrefix("Erro:").trim()
-                else -> return r.trim()
+                else -> { respostaReal = true; return r.trim() }
             }
             Config.evento(ctx, "conversa: tentativa $t falhou ($motivo)")
             if (t < TENTATIVAS) try { Thread.sleep(3000L * t) } catch (e: InterruptedException) { }
         }
         return "Não consegui falar com o Jarvis agora: $motivo."
+    }
+
+    /**
+     * Pede ao servidor a fala na voz premium do Jarvis. O áudio chega depois como uma ordem comum de fala (push) e toca quando a
+     * fila liberar. Uma tentativa só: repetir falaria duas vezes. true = o servidor aceitou; false = fale pela voz do celular.
+     */
+    fun vozPremium(ctx: Context, texto: String): Boolean {
+        val url = Config.url(ctx) ?: return false
+        val token = Config.token(ctx) ?: return false
+        return try {
+            val c = URL(url).openConnection() as HttpURLConnection
+            c.requestMethod = "POST"
+            c.doOutput = true
+            c.connectTimeout = 15000
+            c.readTimeout = 60000
+            c.instanceFollowRedirects = true
+            c.setRequestProperty("Content-Type", "application/json")
+            c.outputStream.use { it.write(JSONObject().put("action", "android_voz").put("token", token).put("texto", texto).toString().toByteArray(Charsets.UTF_8)) }
+            val ok = c.responseCode in 200..299
+            val r = (if (ok) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() } ?: ""
+            c.disconnect()
+            ok && JSONObject(r).optBoolean("ok")
+        } catch (e: Exception) {
+            false
+        }
     }
 
     /** Uma tentativa. Falha de rede ou página HTML (o 404 do segundo salto) volta com o prefixo de falha. */

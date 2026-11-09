@@ -3353,6 +3353,20 @@ function doPost(e) {
     }
 
     // Devolve texto puro (text/plain) para simplificar a leitura direta no celular.
+    // VOZ PREMIUM DA CONVERSA (0.3.1): o app pega o TEXTO da resposta (android_conversa) e pede aqui a fala na voz do Jarvis. O servidor
+    // sintetiza e empurra o áudio ao app pelo mesmo canal FCM dos briefings; o app toca quando a fila de fala liberar. Falhou → o app fala
+    // pela voz do celular. Uma tentativa só do lado do app: repetir falaria duas vezes.
+    if (body && body.action === "android_voz") {
+      var _tkVz = PropertiesService.getScriptProperties().getProperty('ANDROID_API_TOKEN');
+      if (!body.token || !_tkVz || body.token !== _tkVz) return json({ ok: false, erro: 'não autorizado' });
+      var _txVz = String(body.texto || '').trim().substring(0, 1500);
+      if (!_txVz) return json({ ok: false, erro: 'texto vazio' });
+      try {
+        var _rVz = Jarvis.controlarDispositivo({ acao: 'falar', texto: _txVz });
+        return json({ ok: !!(_rVz && _rVz.status === 'success'), via: _rVz && _rVz.via, erro: (_rVz && _rVz.erro) || null });
+      } catch (eVz) { return json({ ok: false, erro: eVz.message }); }
+    }
+
     // CONVERSA DO APP ANDROID (0.3.0): mesmo caminho do voice_command (cadeia determinística, rid idempotente, falar:'local'),
     // mas autenticado pelo token PRÓPRIO do app. Só troca a ação e o token aqui; o resto do fluxo é o da macro.
     if (body && body.action === "android_conversa") {

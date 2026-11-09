@@ -77,6 +77,12 @@ class FalaService : Service() {
             texto = Conversa.perguntar(this, pergunta, i.getStringExtra("rid") ?: id.removePrefix("c"))
             Config.evento(this, "conversa: resposta de ${texto.length} caracteres em ${(System.currentTimeMillis() - t0) / 1000} s")
             Config.estado(this).edit().putString("ultima_resposta", texto.take(600)).apply()
+            // Voz do Jarvis: o servidor sintetiza e manda o áudio por push (toca depois que esta tarefa termina, a fila é de uma thread só).
+            if (Conversa.respostaReal && Conversa.vozPremium(this, texto)) {
+                Config.evento(this, "conversa: voz do Jarvis pedida ao servidor")
+                return
+            }
+            Config.evento(this, "conversa: falando pela voz do celular")
         }
         val local = i.getBooleanExtra("local", false) || pergunta != null
         val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager

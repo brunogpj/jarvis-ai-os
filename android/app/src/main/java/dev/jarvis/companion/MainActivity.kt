@@ -44,6 +44,7 @@ class MainActivity : Activity() {
         super.onResume()
         atualizar()
         AckQueue.drenarAgora(this)
+        NotifFila.drenarAgora(this)
     }
 
     private fun montarTela() {
@@ -141,6 +142,8 @@ class MainActivity : Activity() {
             appendLine("pareado: ${if (pareado) "sim ($host)" else "NÃO"}")
             appendLine("notificações: $notif")
             appendLine("confirmações na fila: ${AckQueue.pendentes(this@MainActivity)}")
+            val acesso = android.provider.Settings.Secure.getString(contentResolver, "enabled_notification_listeners")?.contains(packageName) == true
+            appendLine("notificações: acesso ${if (acesso) "concedido" else "NÃO concedido"} · canal ${if (NotificacaoService.ativo(this@MainActivity)) "ligado" else "desligado"} · apps ${NotificacaoService.apps(this@MainActivity).size} · fila ${NotifFila.pendentes(this@MainActivity)}")
             val perg = Config.estado(this@MainActivity).getString("ultima_pergunta", null)
             if (perg != null) {
                 appendLine()

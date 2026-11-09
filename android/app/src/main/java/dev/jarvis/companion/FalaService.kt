@@ -175,7 +175,9 @@ class FalaService : Service() {
     private fun ajustarVoz(t: TextToSpeech) {
         try {
             val ptbr = t.voices?.filter { it.locale.language == "pt" && it.locale.country == "BR" } ?: emptyList()
-            val escolhida = listOf("ptd", "pte").firstNotNullOfOrNull { s -> ptbr.firstOrNull { it.name.contains(s) } } ?: ptbr.firstOrNull()
+            val pedida = Config.estado(this).getString("voz_preferida", "") ?: ""
+            val escolhida = (if (pedida.isNotBlank()) ptbr.firstOrNull { it.name == pedida } else null)
+                ?: listOf("ptd", "pte").firstNotNullOfOrNull { s -> ptbr.firstOrNull { it.name.contains(s) } } ?: ptbr.firstOrNull()
             if (escolhida != null) {
                 t.voice = escolhida
                 val p = Config.estado(this)
@@ -185,8 +187,9 @@ class FalaService : Service() {
                 }
             }
         } catch (e: Exception) { /* fica a voz padrão */ }
-        t.setPitch(PITCH_JARVIS)
-        t.setSpeechRate(RITMO_JARVIS)
+        val ajuste = Config.estado(this)
+        t.setPitch(ajuste.getFloat("pitch", PITCH_JARVIS))
+        t.setSpeechRate(ajuste.getFloat("ritmo", RITMO_JARVIS))
     }
 
     private fun falarComTts(texto: String) {

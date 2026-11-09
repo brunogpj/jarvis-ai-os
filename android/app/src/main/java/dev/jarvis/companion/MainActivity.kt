@@ -29,6 +29,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         montarTela()
         tratarPareamento(intent)
+        tratarAjusteDeVoz(intent)
         pedirPermissaoDeNotificacao()
     }
 
@@ -36,6 +37,7 @@ class MainActivity : Activity() {
         super.onNewIntent(intent)
         setIntent(intent)
         tratarPareamento(intent)
+        tratarAjusteDeVoz(intent)
     }
 
     override fun onResume() {
@@ -85,6 +87,28 @@ class MainActivity : Activity() {
             }.start()
         }
         atualizar()
+    }
+
+    /**
+     * Ajuste fino da voz do celular por ADB, sem reinstalar (o dono ouve e eu regulo):
+     *   adb shell am start -n dev.jarvis.companion/.MainActivity --ef pitch 0.8 --ef ritmo 0.92 --es voz pt-br-x-pte-network --es testar "frase"
+     * pitch/ritmo: 0.5 a 1.5; voz: nome exato de uma voz pt-BR (a lista sai no diário do app); testar: fala a frase agora.
+     * "voz" vazia volta à escolha automática.
+     */
+    private fun tratarAjusteDeVoz(i: Intent?) {
+        if (i == null) return
+        val e = Config.estado(this).edit()
+        var mudou = false
+        if (i.hasExtra("pitch")) { e.putFloat("pitch", i.getFloatExtra("pitch", 0.88f).coerceIn(0.5f, 1.5f)); mudou = true }
+        if (i.hasExtra("ritmo")) { e.putFloat("ritmo", i.getFloatExtra("ritmo", 0.95f).coerceIn(0.5f, 1.5f)); mudou = true }
+        if (i.hasExtra("voz")) { e.putString("voz_preferida", i.getStringExtra("voz") ?: ""); mudou = true }
+        if (mudou) { e.apply(); Config.evento(this, "ajuste de voz gravado") }
+        val frase = i.getStringExtra("testar")
+        if (frase != null) {
+            val s = Intent(this, FalaService::class.java).putExtra("id", "t" + System.currentTimeMillis().toString(36)).putExtra("texto", frase).putExtra("local", true)
+            androidx.core.content.ContextCompat.startForegroundService(this, s)
+        }
+        i.removeExtra("pitch"); i.removeExtra("ritmo"); i.removeExtra("voz"); i.removeExtra("testar")
     }
 
     private fun pedirPermissaoDeNotificacao() {

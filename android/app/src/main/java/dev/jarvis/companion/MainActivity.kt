@@ -772,6 +772,11 @@ class MainActivity : Activity() {
         }
         // Abre uma aba por ADB (o MIUI bloqueia toques injetados): --ei aba 0|1|2
         if (i.hasExtra("aba")) { mostrar(i.getIntExtra("aba", 0).coerceIn(0, 2)); i.removeExtra("aba") }
+        // Rola a aba aberta por ADB (toque e swipe são bloqueados no MIUI): --ei rolar <pixels>. Serve para capturar a tela inteira em partes.
+        if (i.hasExtra("rolar")) {
+            val y = i.getIntExtra("rolar", 0); i.removeExtra("rolar")
+            conteudo.postDelayed({ (conteudo.getChildAt(0) as? ScrollView)?.scrollTo(0, y) }, 400)
+        }
         val frase = i.getStringExtra("testar")
         if (frase != null) {
             val s = Intent(this, FalaService::class.java).putExtra("id", "t" + System.currentTimeMillis().toString(36)).putExtra("texto", frase).putExtra("local", true)

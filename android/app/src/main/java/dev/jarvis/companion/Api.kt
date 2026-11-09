@@ -53,4 +53,4 @@ object Api {
 }
 
 /** A versão do app, sem depender do BuildConfig (desligado por padrão nas versões novas do AGP). */
-object BuildConfigVersao { const val NOME = "0.6.4-sem-pulo" }
+object BuildConfigVersao { const val NOME = "0.6.5-rolar" }

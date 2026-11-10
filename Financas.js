@@ -1050,6 +1050,31 @@ var Financas = (function () {
     return dono.filter(function (t) { return n.indexOf(' ' + t + ' ') !== -1; }).length >= 2;
   }
 
+  /**
+   * Remetente de confiança cujo Pix recebido vira receita SEM perguntar (10/11: o Pix de quem ajuda nas despesas de casa passava sem registro).
+   * FIN_REMETENTES_AUTO (Script Property; nomes reais não vão ao repositório): "nome[=categoria]; outro nome". Casa quando TODAS as palavras do
+   * nome configurado estão no remetente ("maria" casa "MARIA SOUZA"; "maria souza" não casa "MARIA LIMA"). Categoria fora da lista do Worker = Outros.
+   * → { nome, categoria } ou null.
+   */
+  var _CATS_RECEITA_WORKER = ['Serviço extra', 'Ajuda da esposa nas despesas', 'Presente ou doação recebida', 'Venda', 'Reembolso', 'Outros'];
+  function remetenteAutomatico(remetente) {
+    var cfg = String(_p('FIN_REMETENTES_AUTO') || '').trim();
+    if (!cfg || !remetente) return null;
+    var n = ' ' + _norm(remetente).replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ') + ' ';
+    var itens = cfg.split(/[;\n]/);
+    for (var i = 0; i < itens.length; i++) {
+      var partes = itens[i].split('='), nome = _norm(partes[0] || '').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+      var toks = nome.split(' ').filter(function (t) { return t.length > 1; });
+      if (!toks.length) continue;
+      if (toks.every(function (t) { return n.indexOf(' ' + t + ' ') !== -1; })) {
+        var cat = _norm(partes[1] || ''), ok = null;
+        _CATS_RECEITA_WORKER.forEach(function (c) { if (_norm(c) === cat) ok = c; });
+        return { nome: nome, categoria: ok || 'Outros' };
+      }
+    }
+    return null;
+  }
+
   function registrarReceita(r) {
     var x = _post('/api/jarvis/receita', r);
     if (x.ok) return { ok: true, criado: x.dados.criado !== false, motivo: x.dados.motivo || null };
@@ -2033,7 +2058,7 @@ var Financas = (function () {
            registrarGastoSwile: registrarGastoSwile, desfazerGastoSwile: desfazerGastoSwile, falarSaldoSwile: falarSaldoSwile,
            interpretarRecarga: interpretarRecarga, conversar: conversar, registrarRecarga: registrarRecarga, desfazerRecarga: desfazerRecarga,
            interpretarGasto: interpretarGasto, categoriaDe: categoriaDe, registrarGasto: registrarGasto, desfazerGasto: desfazerGasto, guardarDesfazer: guardarDesfazer,
-           _postBruto: _post, ehDoDono: ehDoDono, proporEntrada: proporEntrada, proporBancoGenerico: proporBancoGenerico, proporPagamentoFatura: proporPagamentoFatura, sugerirCategoria: sugerirCategoria, relatorio: relatorio, interpretarRelatorio: interpretarRelatorio, perguntarCategoria: _perguntarCategoria, registrarReceita: registrarReceita, desfazerReceita: desfazerReceita };
+           _postBruto: _post, ehDoDono: ehDoDono, proporEntrada: proporEntrada, proporBancoGenerico: proporBancoGenerico, proporPagamentoFatura: proporPagamentoFatura, sugerirCategoria: sugerirCategoria, relatorio: relatorio, interpretarRelatorio: interpretarRelatorio, perguntarCategoria: _perguntarCategoria, registrarReceita: registrarReceita, desfazerReceita: desfazerReceita, remetenteAutomatico: remetenteAutomatico, nomeCurto: nomeCurto };
 })();
 
 /** Diagnóstico no editor: mostra se está conectado e o que ele responderia, sem falar no celular. */

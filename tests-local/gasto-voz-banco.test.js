@@ -43,7 +43,7 @@ test('_bancoParse: os formatos reais do Mercado Pago e do Bradesco', function ()
   var b = J(s._bancoParse(BD.app, BD.titulo, BD.texto));
   assert.deepStrictEqual([b.origem, b.valor, b.estabelecimento, b.meio, b.auto], ['bd', 5.9, 'SAM S CLUB LJ 6', 'Pix / débito', true]);
   var c = J(s._bancoParse('Mercado Pago', 'Você pagou R$ 1.234,56 a LOJA X', 'Pagamento feito com o saldo da conta.'));
-  assert.deepStrictEqual([c.valor, c.meio, c.auto], [1234.56, 'Pix / débito', false], 'sem a linha da fatura não registra sozinho');
+  assert.deepStrictEqual([c.valor, c.meio, c.auto], [1234.56, 'Pix / débito', true], 'sem a linha da fatura é Pix pago com o saldo: desde 10/11 registra sozinho');
   var d = J(s._bancoParse('Bradesco', 'BRADESCO', 'Você fez um Pix de R$ 80,00 para Maria Silva.'));
   assert.deepStrictEqual([d.valor, d.auto], [80, false]);
 });

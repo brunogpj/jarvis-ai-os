@@ -3,6 +3,8 @@ package dev.jarvis.companion
 import android.app.Notification
 import android.content.pm.PackageManager
 import android.service.notification.NotificationListenerService
+import android.os.Handler
+import android.os.Looper
 import android.service.notification.StatusBarNotification
 import org.json.JSONArray
 import org.json.JSONObject
@@ -23,9 +25,26 @@ import java.util.concurrent.Executors
 class NotificacaoService : NotificationListenerService() {
     private val exec = Executors.newSingleThreadExecutor()
 
+    // Abertura do Sisponto (AberturaApps): vigia o uso a cada 10 s enquanto a escuta está ligada.
+    private val relogio = Handler(Looper.getMainLooper())
+    private var sondando = false
+    private val sonda = object : Runnable {
+        override fun run() {
+            if (!sondando) return
+            exec.execute { try { AberturaApps.verificar(applicationContext) } catch (e: Exception) { Config.evento(applicationContext, "ponto: falha na leitura de uso (" + e.javaClass.simpleName + ")") } }
+            relogio.postDelayed(this, 10_000L)
+        }
+    }
+
     override fun onListenerConnected() {
         Config.evento(this, "notificações: escuta ligada")
         exec.execute { atualizarConfig(this) }
+        if (!sondando) { sondando = true; relogio.post(sonda) }
+    }
+
+    override fun onListenerDisconnected() {
+        sondando = false; relogio.removeCallbacks(sonda)
+        super.onListenerDisconnected()
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
@@ -53,9 +72,14 @@ class NotificacaoService : NotificationListenerService() {
     } catch (e: PackageManager.NameNotFoundException) { pacote }
 
     companion object {
+        /** Nome do app como o servidor o conhece; volta o próprio pacote quando o Android esconde o app (ver rotuloDe). */
+        fun rotuloPublico(ctx: android.content.Context, pacote: String): String = try {
+            ctx.packageManager.getApplicationLabel(ctx.packageManager.getApplicationInfo(pacote, 0)).toString()
+        } catch (e: PackageManager.NameNotFoundException) { pacote }
+
         private const val VALIDADE_MS = 30 * 60 * 1000L
 
-        private fun naLista(lista: List<String>, app: String, pacote: String): Boolean {
+        fun naLista(lista: List<String>, app: String, pacote: String): Boolean {
             val a = app.lowercase(); val p = pacote.lowercase()
             // mesma regra do servidor (_notifNaLista): "=pacote" é pacote exato; o resto casa por trecho do nome ou do pacote
             return lista.any { if (it.startsWith("=")) p == it.substring(1) else a.contains(it) || p.contains(it) }

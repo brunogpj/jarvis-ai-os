@@ -577,8 +577,18 @@ class MainActivity : Activity() {
         lista.addView(cartao("Notificações", if (acesso && canalLigado) "Ativas" else if (acesso) "Canal desligado" else "Sem acesso", acesso && canalLigado,
             listOf("Acesso do Android" to (if (acesso) "Concedido" else "Não concedido"),
                 "Aviso do app" to (if (notifOk) "Permitido" else "Negado"),
+                "Abertura do Sisponto" to (if (AberturaApps.temAcesso(this)) "Vigiada" else "Sem acesso a dados de uso"),
                 "Apps vigiados" to NotificacaoService.apps(this).size.toString(),
                 "Fila de envio" to NotifFila.pendentes(this).toString())))
+
+        // Nome do Wi-Fi na telemetria: o Android só o entrega com localização. O MIUI recusa conceder por ADB, então o pedido é aqui.
+        val locOk = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        if (!locOk) lista.addView(Button(this).apply {
+            text = "Permitir localização (nome do Wi-Fi na telemetria)"; isAllCaps = false; typeface = Tipografia.inter(this@MainActivity, 600); textSize = 14f
+            setTextColor(Cores.TEXTO); stateListAnimator = null
+            background = fundoArredondado(Cores.BALAO_VOCE, dp(14).toFloat())
+            setOnClickListener { requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION), 77) }
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)).apply { topMargin = dp(12) })
 
         val eventos = Config.eventos(this).split("\n").filter { it.isNotBlank() }
         val cx = cartaoBase("Últimos eventos")
@@ -759,12 +769,19 @@ class MainActivity : Activity() {
      */
     private fun tratarAjusteDeVoz(i: Intent?) {
         if (i == null) return
+        Thread { Telemetria.lembrarWifi(applicationContext) }.start()
         val e = Config.estado(this).edit()
         var mudou = false
         if (i.hasExtra("pitch")) { e.putFloat("pitch", i.getFloatExtra("pitch", 0.88f).coerceIn(0.5f, 1.5f)); mudou = true }
         if (i.hasExtra("ritmo")) { e.putFloat("ritmo", i.getFloatExtra("ritmo", 0.95f).coerceIn(0.5f, 1.5f)); mudou = true }
         if (i.hasExtra("voz")) { e.putString("voz_preferida", i.getStringExtra("voz") ?: ""); mudou = true }
         if (mudou) { e.apply(); Config.evento(this, "ajuste de voz gravado") }
+        // Diagnóstico por ADB (só leitura): --ez rotulos true grava nos eventos o nome que o app resolve para cada pacote da lista de notificações.
+        // Se o nome não resolve, o servidor recebe o pacote no lugar do nome e descarta a notificação (visto em 10/11 com a Bíblia).
+        if (i.getBooleanExtra("rotulos", false)) {
+            NotificacaoService.apps(this).filter { it.startsWith("=") }.forEach { Config.evento(this, "rótulo " + it.substring(1).take(34) + " → " + NotificacaoService.rotuloPublico(this, it.substring(1))) }
+            i.removeExtra("rotulos")
+        }
         // Abre a tela "Ouvindo" por ADB (a atividade não é exportada): --ez ouvir true [--ez demo true]
         if (i.getBooleanExtra("ouvir", false)) {
             startActivity(Intent(this, ConversaActivity::class.java).putExtra("demo", i.getBooleanExtra("demo", false)))

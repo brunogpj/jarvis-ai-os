@@ -3174,20 +3174,15 @@ function doPost(e) {
       if (!tokTel || tokTel !== propsTel.getProperty('VOICE_API_TOKEN')) {
         return json({ ok: false, erro: 'não autorizado' });
       }
-      try {
-        var bodyTel = {};
-        Object.keys(body).forEach(function (k) { if (k !== 'token' && k !== 'action') bodyTel[k] = body[k]; });
-        bodyTel.origem = bodyTel.origem || 'telemetria';
-        Firestore.setDoc('telemetria_dispositivo', String(1e13 - Date.now()), {
-          recebidoEm: new Date().toISOString(),
-          body: bodyTel
-        });
-        // EVENTOS PROATIVOS: a telemetria chega a cada 15 min — é o gatilho natural para o Jarvis
-        // AGIR sozinho (antes ele só reagia a comando). Determinístico, sem LLM (custo zero).
-        var _proat = null;
-        try { _proat = _avaliarEventosProativos(bodyTel); } catch (eP) { Logger.log('[Proativo] ' + eP.message); }
-        return json({ ok: true, proativo: _proat });
-      } catch (eTel) { return json({ ok: false, erro: eTel.message }); }
+      try { return json(_telemetriaRegistrar(body)); } catch (eTel) { return json({ ok: false, erro: eTel.message }); }
+    }
+
+    // TELEMETRIA PELO APP ANDROID (substitui a macro Jarvis Telemetria): mesmos campos, token PRÓPRIO do app.
+    if (body && body.action === "android_telemetria") {
+      var _tkTl = PropertiesService.getScriptProperties().getProperty('ANDROID_API_TOKEN');
+      if (!body.token || !_tkTl || body.token !== _tkTl) return json({ ok: false, erro: 'não autorizado' });
+      try { return json(_telemetriaRegistrar({ bateria_nivel: body.bateria_nivel, carregando: body.carregando, wifi_nome: body.wifi_nome, volume_toque: body.volume_toque, origem: 'app' })); }
+      catch (eTl2) { return json({ ok: false, erro: eTl2.message }); }
     }
 
     // APPS DO CELULAR: lista de apps instalados (pacote → Activity) + apelidos falados, para o
@@ -3292,7 +3287,7 @@ function doPost(e) {
       var _PERMITIDAS_CF = {
         FALA_PROATIVA_LOCAL: /^(sim|nao)$/, FALA_RESPOSTAS_LOCAL: /^(sim|nao)$/,
         MODO_FALA_VOZ: /^(nuvem|auto|local)$/, FALA_VOLUME_DB: /^(1[0-6]|[0-9])$/,
-        FALA_FORMATO: /^(ogg|wav)$/, FALA_ARQUIVO_UNICO: /^(sim|nao)$/, ANDROID_FALAR: /^(sim|nao)$/, ANDROID_API_TOKEN: /^[a-f0-9]{48}$/, ANDROID_API_ESTRITO: /^(sim|nao)$/, ANDROID_NOTIF: /^(sim|nao|sombra)$/, NOTIF_APPS: /^[a-z0-9áéíóúâêôãõç.=,_ -]{1,400}$/, ANDROID_NOTIF_APPS: /^[a-z0-9áéíóúâêôãõç.=,_ -]{1,400}$/, ROTA_JEV_NOVAS: /^(sim|nao)$/, FERRAMENTAS_JEV: /^(nao|adiciona|sim)$/, INJECAO_JEV: /^(sim|nao)$/, ACAO_JEV: /^(sim|nao)$/, CATEGORIA_JEV: /^(sim|nao)$/, TTS_STYLE: /^[A-Za-zÀ-ÿ ,.\-]{0,120}$/, FERRAMENTAS_JEV_ADD: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE_CONH: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE: /^0?\.\d{1,2}$/, CONFIRMA_JEV: /^(sim|nao)$/, MONITOR_GMAIL_JEV: /^(sim|nao)$/, BUSCA_DRIVE_ATIVA: /^(sim|nao)$/, FILE_SEARCH_ATIVA: /^(sim|nao)$/, FS_LOTE: /^\d{1,2}$/, FS_MAX_MB: /^\d{1,2}$/, FS_MAX: /^\d{2,4}$/, FS_EXCLUIR: /^[^\r\n]{0,200}$/, BUSCA_DRIVE_MAX: /^\d{2,4}$/, WEB_MONITOR_JEV: /^(sim|nao)$/, WEB_MONITOR_JEV_CORTE: /^0?\.\d{1,2}$/, MONITOR_GMAIL_JEV_CORTE: /^0?\.\d{1,2}$/, FIN_AVISOS_ATIVO: /^(sim|nao)$/, FIN_NOME_DONO: /^[a-zà-ÿ ]{3,80}$/, FIN_CPF_DONO: /^\d{3}\.\d{3}$/,
+        FALA_FORMATO: /^(ogg|wav)$/, FALA_ARQUIVO_UNICO: /^(sim|nao)$/, ANDROID_FALAR: /^(sim|nao)$/, ANDROID_CONTROLES: /^(sim|nao)$/, ANDROID_CONTROLES_FALLBACK: /^(sim|nao)$/, ANDROID_TELEMETRIA: /^(sim|nao)$/, ANDROID_NOTIFICAR: /^(sim|nao)$/, ANDROID_API_TOKEN: /^[a-f0-9]{48}$/, ANDROID_API_ESTRITO: /^(sim|nao)$/, ANDROID_NOTIF: /^(sim|nao|sombra)$/, NOTIF_APPS: /^[a-z0-9áéíóúâêôãõç.=,_ -]{1,400}$/, ANDROID_NOTIF_APPS: /^[a-z0-9áéíóúâêôãõç.=,_ -]{1,400}$/, ROTA_JEV_NOVAS: /^(sim|nao)$/, FERRAMENTAS_JEV: /^(nao|adiciona|sim)$/, INJECAO_JEV: /^(sim|nao)$/, ACAO_JEV: /^(sim|nao)$/, CATEGORIA_JEV: /^(sim|nao)$/, TTS_STYLE: /^[A-Za-zÀ-ÿ ,.\-]{0,120}$/, FERRAMENTAS_JEV_ADD: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE_CONH: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE: /^0?\.\d{1,2}$/, CONFIRMA_JEV: /^(sim|nao)$/, MONITOR_GMAIL_JEV: /^(sim|nao)$/, BUSCA_DRIVE_ATIVA: /^(sim|nao)$/, FILE_SEARCH_ATIVA: /^(sim|nao)$/, FS_LOTE: /^\d{1,2}$/, FS_MAX_MB: /^\d{1,2}$/, FS_MAX: /^\d{2,4}$/, FS_EXCLUIR: /^[^\r\n]{0,200}$/, BUSCA_DRIVE_MAX: /^\d{2,4}$/, WEB_MONITOR_JEV: /^(sim|nao)$/, WEB_MONITOR_JEV_CORTE: /^0?\.\d{1,2}$/, MONITOR_GMAIL_JEV_CORTE: /^0?\.\d{1,2}$/, FIN_AVISOS_ATIVO: /^(sim|nao)$/, FIN_NOME_DONO: /^[a-zà-ÿ ]{3,80}$/, FIN_CPF_DONO: /^\d{3}\.\d{3}$/, FIN_REMETENTES_AUTO: /^[a-zà-ÿ ;=]{0,300}$/,
         // consultor (fase 4): margem na conta (R$), taxa ao mês (decimal), reserva-alvo (meses) e pausa do rebalanceamento (data)
         CONSULTOR_MARGEM: /^\d{1,6}$/, CONSULTOR_TAXA_MES: /^0?\.\d{1,4}$/, CONSULTOR_RESERVA_ALVO: /^\d{1,2}$/, CONSULTOR_PAUSA_ATE: /^\d{4}-\d{2}-\d{2}$/, CONSULTOR_AVISO_ATIVO: /^(sim|nao)$/, CONSULTOR_AVISO_MIN: /^\d{1,6}$/
       };
@@ -3771,8 +3766,12 @@ function doPost(e) {
             if (nvl && /\bvolume\b|silencia|muta|\bmudo\b/.test(s2))
               return { args: { acao: 'volume', nivel: nvl }, resp: 'Volume ' + (nvl === 'mudo' ? 'no mudo' : nvl) + '.' };
           }
-          if (/\b(lanterna|flash\s*light)\b/.test(s2))
+          if (/\b(lanterna|flash\s*light)\b/.test(s2)) {
+            // 10/11: "liga"/"desliga" iam sem estado e a lanterna ALTERNAVA ("desliga" com ela apagada acendia). Estado explícito quando a frase o diz.
+            if (/\b(desliga\w*|apaga\w*|desativ\w*|tira)\b/.test(s2)) return { args: { acao: 'lanterna', estado: 'off' }, resp: 'Apagando a lanterna.' };
+            if (/\b(liga\w*|acende\w*|ativ\w*|abre)\b/.test(s2)) return { args: { acao: 'lanterna', estado: 'on' }, resp: 'Ligando a lanterna.' };
             return { args: { acao: 'lanterna' }, resp: 'Alternando a lanterna.' };
+          }
           if (/\b(nao\s+perturbe|dnd|modo\s+prioridade)\b/.test(s2)) {
             var offD = /desativ|deslig|tira|sai(a|r)?\s+do|remove|cancela/.test(s2);
             return { args: { acao: 'naoperturbe', estado: offD ? 'off' : 'on' }, resp: offD ? 'Não perturbe desativado.' : 'Não perturbe ativado.' };
@@ -4508,6 +4507,24 @@ function doPost(e) {
             var _env = Android.enviarFala({ texto: String(_at.texto || 'Teste do aplicativo Android do Jarvis.'), local: _at.local !== false });
             saida.androidTeste = { enviado: _env.ok, id: _env.id, erro: _env.erro || null, ack: _env.ok ? Android.aguardarAck(_env.id, 8000) : null };
           } catch (eAt) { saida.androidTeste = { erro: eAt.message }; }
+        }
+        // Controle do celular pelo app, UM por vez e sem depender de ANDROID_CONTROLES: androidControle:{acao, nivel|comando|estado|pacote|classe|url|destino}.
+        if (body.androidControle) {
+          try {
+            var _ac = body.androidControle, _acao = String(_ac.acao || ''), _cmp = {};
+            ['nivel', 'comando', 'estado', 'pacote', 'classe', 'url', 'destino', 'titulo', 'texto'].forEach(function (k) { if (_ac[k] !== undefined) _cmp[k] = _ac[k]; });
+            var _eo = Android.enviarControle(_acao, _cmp);
+            saida.androidControle = { enviado: _eo.ok, id: _eo.id, erro: _eo.erro || null, ack: _eo.ok ? Android.aguardarAck(_eo.id, 10000) : null };
+          } catch (eAc) { saida.androidControle = { erro: eAc.message }; }
+        }
+        // Telemetria pelo app: androidTelemetria:true pede AGORA (não depende de ANDROID_TELEMETRIA); o app responde em android_telemetria e a leitura mais recente vem em `telemetriaUltima`.
+        if (body.androidTelemetria) {
+          try {
+            var _ot = Android.pedirTelemetria();
+            saida.androidTelemetria = { enviado: _ot.ok, id: _ot.id, erro: _ot.erro || null, ack: _ot.ok ? Android.aguardarAck(_ot.id, 15000) : null };
+            var _ult = (Firestore.listDocs('telemetria_dispositivo', 3) || []).map(function (x) { return x.dados || x; }).sort(function (a, b) { return String(b.recebidoEm || '') > String(a.recebidoEm || '') ? 1 : -1; })[0];
+            saida.androidTelemetria.ultima = _ult ? { recebidoEm: _ult.recebidoEm, body: _ult.body } : null;
+          } catch (eAt3) { saida.androidTelemetria = { erro: eAt3.message }; }
         }
         // Avisos proativos da caderneta: o que sairia agora na janela pedida ('manha'|'noite'), sem enviar nem gravar.
         if (body.cadernetaAvisos) { try { saida.cadernetaAvisos = Financas.verificarAvisos({ ensaio: true, janela: String(body.cadernetaAvisos) === 'noite' ? 'noite' : 'manha' }); } catch (eCa) { saida.cadernetaAvisos = { erro: eCa.message }; } }
@@ -6100,10 +6117,35 @@ function _bancoParse(app, titulo, texto) {
   var a = String(app || '').toLowerCase(), t = String(titulo || '').replace(/\s+/g, ' ').trim(), x = String(texto || '').replace(/\s+/g, ' ').trim();
   var junto = (t + ' ' + x).trim(), m;
   if (/mercado ?pago/.test(a)) {
+    // ENTRADA no Mercado Pago (10/11: um Pix recebido passou sem registro; o texto real do push não foi guardado). Além do "Você recebeu um Pix de R$ X de NOME"
+    // (genérico, mais abaixo), aceita "NOME te enviou (um Pix de) R$ X" e "NOME enviou/transferiu R$ X para você", no corpo ou no título.
+    var reEnv = /^(.+?)\s+(?:te enviou|te transferiu|enviou|transferiu)(?:\s+um\s+pix)?(?:\s+de)?\s+R\$\s*([\d.,]*\d)(?:\s+para\s+voc[eê])?\.?$/i;
+    m = x.match(reEnv) || t.match(reEnv);
+    if (m && !/^voc[eê]\b/i.test(m[1].trim())) return { entrada: true, origem: 'mp', valor: _finNum(m[2]), remetente: m[1].trim(), instituicao: '', auto: false };
+    // Título "Você recebeu R$ X" / "Você recebeu um Pix de R$ X" e o NOME só no corpo ("De NOME" ou "NOME te enviou um Pix").
+    m = t.match(/voc[eê] recebeu (?:um )?(?:pix|dinheiro|transfer[eê]ncia)?\s*(?:de )?R\$\s*([\d.,]*\d)\.?$/i);
+    if (m) {
+      var quem = (x.match(/^(?:de|enviado por)\s+(.+?)\.?$/i) || x.match(/^(.+?)\s+(?:te enviou|te transferiu|enviou|transferiu)\b/i) || [])[1];
+      if (quem && !/^voc[eê]\b/i.test(quem.trim())) return { entrada: true, origem: 'mp', valor: _finNum(m[1]), remetente: quem.trim(), instituicao: '', auto: false };
+    }
+    // PIX ENVIADO e PAGAMENTO DE CONTA (10/11: Cemig, Copasa e Implay pagos pelo saldo não entraram; o texto real não foi guardado). Saída do saldo da conta
+    // = Pix/débito; conta com código de barras = Boleto. Registra sozinho; se for uma conta fixa da caderneta, _bancoParaCaderneta marca a conta como paga
+    // em vez de criar gasto (não conta duas vezes). Pix para ele mesmo vira transferência entre contas.
+    m = junto.match(/voc[eê] (?:enviou|transferiu|fez)(?: um)?(?: pix)?(?: de)?\s+R\$\s*([\d.,]*\d)\s+(?:para|pra|a)\s+(.+?)\.?$/i);
+    if (m) return { origem: 'mp', valor: _finNum(m[1]), estabelecimento: m[2].trim(), meio: 'Pix / débito', auto: true, pixEnviado: true };
+    if (/pagamento de conta|conta paga|voc[eê] pagou (?:uma|sua|a) conta|pagamos (?:a |sua )?conta|pagamento (?:da conta|do boleto)|boleto pago/i.test(junto)
+        && !/agend|vence|vencimento|lembrete|n[aã]o (?:foi|conseguimos)|recusad|falhou|cancelad/i.test(junto)) {
+      var vc = junto.match(/R\$\s*([\d.,]*\d)/);
+      if (vc) {
+        var benef = (junto.replace(/R\$\s*[\d.,]*\d/g, ' ').match(/\b(?:para|pra|a|de|da|do)\s+([A-ZÀ-Ý0-9][^.,;|]{2,60})/) || [])[1] || '';
+        return { origem: 'mp', valor: _finNum(vc[1]), estabelecimento: benef.trim() || 'Pagamento de conta', meio: 'Boleto', auto: true, contaPaga: true };
+      }
+    }
     m = t.match(/voc[eê] pagou R\$\s*([\d.,]*\d)\s+a\s+(.+?)\.?$/i);
     if (m) {
+      // "Você pagou R$ X a Y": com a linha da fatura é crédito; sem ela é Pix/QR pago com o saldo (desde 10/11 também registra sozinho).
       var credito = /fatura/i.test(x);
-      return { origem: 'mp', valor: _finNum(m[1]), estabelecimento: m[2].trim(), meio: credito ? 'Cartão de crédito' : 'Pix / débito', auto: credito };
+      return { origem: 'mp', valor: _finNum(m[1]), estabelecimento: m[2].trim(), meio: credito ? 'Cartão de crédito' : 'Pix / débito', auto: true, pixEnviado: !credito };
     }
     // FORMATO 2 (REAL, 15/10 12:52, compra que ficou sem registro): título "Você pagou <ESTABELECIMENTO>" (sem valor) e corpo "Debitamos R$ 32,99 da sua conta." = saída do saldo da conta
     // (débito/Pix/QR). O valor vem do CORPO; "fatura" no corpo com valor = cartão de crédito. Estabelecimento truncado pelo push ("Divino fogao-comi") fica como veio.
@@ -6164,6 +6206,35 @@ function _bancoParse(app, titulo, texto) {
   return null;
 }
 
+/**
+ * O pagamento (Pix/boleto pelo saldo) é de uma CONTA FIXA da caderneta? → { mes, o } ou null. Só contas e faturas abertas (não pagas, com valor) do mês.
+ * 1º pela pista do beneficiário (concessionária de luz/água, provedor de internet) contra o nome da conta; 2º pelo valor EXATO (±1 centavo), se só uma conta
+ * tem esse valor. Na dúvida (duas candidatas), null: vira gasto comum e o "desfaz" resolve.
+ */
+var _CONTA_DICAS = [
+  [/\b(cemig|copel|enel|light|cpfl|energisa|equatorial|coelba|celpe|cosern|elektro|neoenergia|celesc|rge|energia eletrica)\b/, /\b(luz|energia)\b/],
+  [/\b(copasa|sabesp|cedae|sanepar|embasa|compesa|saae|casan|corsan|caesb|saneago|cagece|saneamento|aguas?)\b/, /\bagua\b/],
+  [/\b(internet|telecom|fibra|vivo|claro|tim|algar|brisanet|implay|provedor|banda larga)\b/, /\binternet\b/],
+  [/\b(aluguel|imobiliaria)\b/, /\baluguel\b/]
+];
+function _bancoContaFixa(p) {
+  try {
+    var r = Financas.resumo();
+    if (!r || !r.ok || !r.dados || !r.dados.obrigacoes) return null;
+    var nrm = function (s) { return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim(); };
+    var abertas = r.dados.obrigacoes.filter(function (o) { return o.chave && !o.pago && Number(o.valor) > 0 && o.tipo !== 'parcela'; });
+    var est = nrm(p.estabelecimento);
+    var porDica = abertas.filter(function (o) {
+      var nome = nrm(o.nome);
+      return _CONTA_DICAS.some(function (dc) { return dc[0].test(est) && dc[1].test(nome); });
+    });
+    if (porDica.length === 1) return { mes: r.dados.mes, o: porDica[0] };
+    if (porDica.length > 1) return null;
+    var porValor = abertas.filter(function (o) { return Math.abs(Number(o.valor) - p.valor) < 0.01; });
+    return porValor.length === 1 ? { mes: r.dados.mes, o: porValor[0] } : null;
+  } catch (e) { return null; }
+}
+
 /** Texto de notificação de banco que PARECE uma transação (valor + verbo de movimentação) e não é propaganda nem aviso de fatura. PURA. */
 function _pareceTransacao(s) {
   s = String(s || '');
@@ -6203,7 +6274,7 @@ function _bancoParaCaderneta(d, opts) {
       _finAvisarCaderneta('Itaú', fraseF, 'validacao');
       return { regra: 'gasto_banco', acao: 'pagamento_fatura', status: 'aguarda_confirmacao' };
     }
-    if (p.generico && !p.entrada && Financas.ehDoDono(p.estabelecimento, p.cpf)) {
+    if ((p.generico || p.pixEnviado) && !p.entrada && Financas.ehDoDono(p.estabelecimento, p.cpf)) {
       // Pix enviado para ele mesmo (CPF mascarado igual ao dele): transferência entre as contas, não é gasto.
       var docT = { app: d.app || '', pacote: d.pacote || '', titulo: d.titulo || '', texto: d.texto || '', bruto: ((d.titulo || '') + ' | ' + (d.texto || '')).trim(),
                    em: em, dia: dia, tipo: 'transferencia_propria', valor: p.valor, origem: p.origem, parseado: true, versaoParser: 1, caderneta: 'transferencia_propria' };
@@ -6224,9 +6295,27 @@ function _bancoParaCaderneta(d, opts) {
     if (p.entrada) {
       var docE = { app: d.app || '', pacote: d.pacote || '', titulo: d.titulo || '', texto: d.texto || '', bruto: ((d.titulo || '') + ' | ' + (d.texto || '')).trim(),
                    em: em, dia: dia, tipo: 'entrada_banco', valor: p.valor, remetente: p.remetente, origem: p.origem, parseado: true, versaoParser: 1 };
+      var rAuto = Financas.ehDoDono(p.remetente, p.cpf) ? null : (Financas.remetenteAutomatico ? Financas.remetenteAutomatico(p.remetente) : null);
       if (Financas.ehDoDono(p.remetente, p.cpf)) {
         docE.caderneta = 'transferencia_propria';
         _finAvisarCaderneta('Pix recebido', 'Pix de ' + _fmtBRL(p.valor) + ' de você mesmo' + (p.instituicao ? ' (' + p.instituicao + ')' : '') + '. É transferência entre as suas contas, não registrei como receita.', 'entrada');
+      } else if (rAuto && !opts.simular) {
+        // Remetente de confiança (FIN_REMETENTES_AUTO): grava direto, sem pergunta; o Worker não duplica receita igual digitada (±1 dia). "Desfaz" tira.
+        var nomeR = Financas.nomeCurto(p.remetente);
+        var rr = Financas.registrarReceita({ origem: p.origem, chave: idFin, data: dia, valor: p.valor, categoria: rAuto.categoria, descricao: nomeR + ' – Pix recebido' });
+        docE.categoria = rAuto.categoria;
+        if (rr.ok && rr.criado) {
+          docE.caderneta = 'registrado';
+          try { Financas.guardarDesfazer({ tipo: 'receita', chave: idFin, valor: p.valor, descricao: p.remetente }); } catch (eUr) {}
+          _finAvisarCaderneta('Pix → caderneta', 'Registrei o Pix de ' + _fmtBRL(p.valor) + ' de ' + nomeR + ' como receita (' + rAuto.categoria + '). Diga desfaz para tirar.', 'registro');
+        } else if (rr.ok) {
+          docE.caderneta = 'duplicado_manual';
+          _finAvisarCaderneta('Pix recebido', 'Já havia uma receita igual na caderneta (' + _fmtBRL(p.valor) + ' de ' + nomeR + '). Não dupliquei.', 'registro');
+        } else {
+          // Caderneta fora do ar ou recusou: volta ao caminho de sempre (pergunta e o "sim" grava), para não perder a entrada.
+          docE.caderneta = 'aguarda_confirmacao'; docE.cadernetaErro = String(rr.erro || '').substring(0, 120);
+          _finAvisarCaderneta('Pix recebido', 'Não consegui registrar sozinho. ' + Financas.proporEntrada({ valor: p.valor, remetente: p.remetente, chave: idFin, data: dia, origem: p.origem }), 'falha');
+        }
       } else {
         docE.caderneta = 'aguarda_confirmacao';
         var frase = Financas.proporEntrada({ valor: p.valor, remetente: p.remetente, chave: idFin, data: dia, origem: p.origem });
@@ -6235,7 +6324,32 @@ function _bancoParaCaderneta(d, opts) {
       if (!opts.simular) Firestore.setDoc(_FIN_COL, idFin, docE);
       return { regra: 'gasto_banco', acao: 'entrada_banco', status: docE.caderneta };
     }
-    var cat = Financas.categoriaDe(p.estabelecimento);
+    // Pix/boleto que paga uma CONTA FIXA da caderneta (luz, água, internet, aluguel…): marca a conta como paga em vez de criar gasto. A previsão já
+    // está na caderneta; um gasto novo contaria duas vezes. Conta que outra pessoa paga: o dinheiro saiu do saldo dele, então vira gasto (Casa).
+    var contaFixa = (p.auto && p.meio !== 'Cartão de crédito' && p.origem === 'mp') ? _bancoContaFixa(p) : null;
+    if (contaFixa && !contaFixa.o.outroPaga) {
+      var o = contaFixa.o;
+      var docC = { app: d.app || '', pacote: d.pacote || '', titulo: d.titulo || '', texto: d.texto || '', bruto: ((d.titulo || '') + ' | ' + (d.texto || '')).trim(),
+                   em: em, dia: dia, tipo: 'conta_fixa', valor: p.valor, estabelecimento: p.estabelecimento, conta: o.nome, origem: p.origem, parseado: true, versaoParser: 2 };
+      if (opts.simular) { docC.caderneta = 'simulado'; return { regra: 'gasto_banco', acao: 'conta_fixa', status: 'simulado', conta: o.nome }; }
+      var xp = Financas._postBruto('/api/jarvis/pagamento', { mes: contaFixa.mes, chave: o.chave, pago: true, valor_esperado: o.valor });
+      var difV = Math.abs(Number(o.valor) - p.valor) >= 0.01 ? ' Na caderneta a previsão era ' + _fmtBRL(o.valor) + '; ajuste no app se o valor mudou.' : '';
+      if (xp.ok && xp.dados && xp.dados.mudou) {
+        docC.caderneta = 'conta_paga';
+        try { Financas.guardarDesfazer({ tipo: 'pagar', mes: contaFixa.mes, chave: o.chave, nome: o.nome }); } catch (eUc) {}
+        _finAvisarCaderneta('Conta paga → caderneta', 'Pagamento de ' + _fmtBRL(p.valor) + ' (' + p.estabelecimento + '): marquei ' + o.nome + ' como paga.' + difV + ' Diga desfaz para tirar.', 'registro');
+      } else if (xp.ok) {
+        docC.caderneta = 'conta_ja_paga';
+        _finAvisarCaderneta('Conta paga', o.nome + ' já estava marcada como paga na caderneta. Não registrei de novo o pagamento de ' + _fmtBRL(p.valor) + '.', 'registro');
+      } else {
+        docC.caderneta = 'recusado'; docC.cadernetaErro = String(xp.erro || '').substring(0, 120);
+        _finAvisarCaderneta('Conta paga', 'Vi o pagamento de ' + _fmtBRL(p.valor) + ' (' + p.estabelecimento + '), mas não consegui marcar ' + o.nome + ' como paga. Marque no app.', 'falha');
+      }
+      Firestore.setDoc(_FIN_COL, idFin, docC);
+      return { regra: 'gasto_banco', acao: 'conta_fixa', status: docC.caderneta, conta: o.nome };
+    }
+    if (contaFixa && contaFixa.o.outroPaga) p.estabelecimento = contaFixa.o.nome + ' – ' + p.estabelecimento + ' (conta que outra pessoa paga, saiu do seu saldo)';
+    var cat = contaFixa ? 'Casa' : Financas.categoriaDe(p.estabelecimento);
     var doc = { app: d.app || '', pacote: d.pacote || '', titulo: d.titulo || '', texto: d.texto || '', bruto: ((d.titulo || '') + ' | ' + (d.texto || '')).trim(),
                 em: em, dia: dia, tipo: 'gasto_banco', valor: p.valor, estabelecimento: p.estabelecimento, meio: p.meio, categoria: cat, origem: p.origem, parseado: true, versaoParser: 1 };
     var rotulo = p.meio === 'Cartão de crédito' ? 'no crédito' : 'no débito/pix';
@@ -8829,6 +8943,22 @@ function configurarProativo(args) {
 
 /** TELEMETRIA PERIÓDICA · pinga o webhook jarvis_telemetria do MacroDroid; a macro responde POSTando
  *  o status atual do aparelho na rota action:'telemetria'. Instalado a cada 15 min por configurarPingTelemetria(). */
+/** Guarda a telemetria e avalia os eventos proativos. Fonte única das duas portas (macro e app). */
+function _telemetriaRegistrar(body) {
+  var bodyTel = {};
+  Object.keys(body || {}).forEach(function (k) { if (k !== 'token' && k !== 'action') bodyTel[k] = body[k]; });
+  bodyTel.origem = bodyTel.origem || 'telemetria';
+  Firestore.setDoc('telemetria_dispositivo', String(1e13 - Date.now()), {
+    recebidoEm: new Date().toISOString(),
+    body: bodyTel
+  });
+  // EVENTOS PROATIVOS: a telemetria chega a cada 15 min — é o gatilho natural para o Jarvis
+  // AGIR sozinho (antes ele só reagia a comando). Determinístico, sem LLM (custo zero).
+  var _proat = null;
+  try { _proat = _avaliarEventosProativos(bodyTel); } catch (eP) { Logger.log('[Proativo] ' + eP.message); }
+  return { ok: true, proativo: _proat };
+}
+
 function pingTelemetria() {
   var _t0 = Date.now();
   try { return _pingTelemetria(); }
@@ -8837,6 +8967,12 @@ function pingTelemetria() {
 // Corpo do ping (separado para o diário de gatilhos medir o handler inteiro).
 function _pingTelemetria() {
   var p = PropertiesService.getScriptProperties();
+  // APP ANDROID: com ANDROID_TELEMETRIA=sim o pedido vai por FCM (o app responde em android_telemetria). Se o FCM recusar, cai na macro:
+  // telemetria é idempotente, repetir só grava mais uma leitura.
+  if (typeof Android !== 'undefined' && Android.telemetriaAtiva()) {
+    var _o = Android.pedirTelemetria();
+    if (_o.ok) return { ok: true, via: 'android', ordem: _o.id };
+  }
   var url = p.getProperty('MACRODROID_WEBHOOK_URL');
   if (!url) return { ok: false, erro: 'MACRODROID_WEBHOOK_URL ausente' };
   var alvo = url.replace(/\/[^\/]*$/, '/jarvis_telemetria');           // troca o último trecho pelo evento

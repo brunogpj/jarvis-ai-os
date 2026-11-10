@@ -88,6 +88,23 @@ var Android = (function () {
     return String(_p('ANDROID_FALAR') || 'nao').toLowerCase() === 'sim' && !!_p('ANDROID_FCM_TOKEN');
   }
 
+  /** Os controles do celular (volume, mídia, lanterna, não perturbe, abrir app/link, navegar) só vão por aqui com ANDROID_CONTROLES=sim. */
+  function controlesAtivo() {
+    return String(_p('ANDROID_CONTROLES') || 'nao').toLowerCase() === 'sim' && !!_p('ANDROID_FCM_TOKEN');
+  }
+
+  /** Telemetria pelo app (ordem `telemetria`): o app lê bateria, tomada, Wi-Fi e volume e devolve pela rota android_telemetria. */
+  function telemetriaAtiva() {
+    return String(_p('ANDROID_TELEMETRIA') || 'nao').toLowerCase() === 'sim' && !!_p('ANDROID_FCM_TOKEN');
+  }
+  /** Avisos do Jarvis como notificação no celular (ordem `controle` acao `notificar`), no lugar da macro Jarvis Notificar. */
+  function notificarAtivo() {
+    return String(_p('ANDROID_NOTIFICAR') || 'nao').toLowerCase() === 'sim' && !!_p('ANDROID_FCM_TOKEN');
+  }
+
+  /** Lista fechada do que o app aceita como ordem `controle` (o app repete a checagem do lado dele). */
+  var CONTROLES_PERMITIDOS = ['volume', 'midia', 'lanterna', 'naoperturbe', 'abrirapp', 'abrirurl', 'navegar', 'notificar'];
+
   // ------------------------------------------------------------------- envio ----
   function _novoId() { return 'a' + _agora().toString(36) + Math.floor(Math.random() * 1296).toString(36); }
 
@@ -135,6 +152,17 @@ var Android = (function () {
     return enviar('falar', dados);
   }
 
+  /** Ordem de controle do celular. `campos` já normalizados (nivel, comando, estado, pacote, classe, url, destino). */
+  function enviarControle(acao, campos) {
+    if (CONTROLES_PERMITIDOS.indexOf(acao) === -1) return { ok: false, id: '', erro: 'controle fora da lista: ' + acao };
+    var dados = { acao: acao };
+    Object.keys(campos || {}).forEach(function (k) { dados[k] = String(campos[k]).substring(0, 1500); });
+    return enviar('controle', dados);
+  }
+
+  /** Pede a telemetria ao app. Não espera resposta: o app a manda sozinho para android_telemetria. → { ok, id, erro? } */
+  function pedirTelemetria() { return enviar('telemetria', {}); }
+
   // ------------------------------------------------------------ confirmação ----
   function _guardarEstado(id, obj) {
     try { CacheService.getScriptCache().put('android_ordem_' + id, JSON.stringify(obj), 21600); } catch (e) {}
@@ -171,9 +199,11 @@ var Android = (function () {
   function status() {
     var d = dispositivo();
     return { dispositivo: d, ativo: falarAtivo(), projeto: _projeto() ? 'configurado' : 'faltando',
-             canalFalar: String(_p('ANDROID_FALAR') || 'nao').toLowerCase() };
+             canalFalar: String(_p('ANDROID_FALAR') || 'nao').toLowerCase(),
+             canalControles: String(_p('ANDROID_CONTROLES') || 'nao').toLowerCase(),
+             canalTelemetria: String(_p('ANDROID_TELEMETRIA') || 'nao').toLowerCase(), canalNotificar: String(_p('ANDROID_NOTIFICAR') || 'nao').toLowerCase() };
   }
 
-  return { registrar: registrar, dispositivo: dispositivo, falarAtivo: falarAtivo, montarMensagem: montarMensagem,
-           enviar: enviar, enviarFala: enviarFala, ack: ack, estado: estado, aguardarAck: aguardarAck, status: status };
+  return { registrar: registrar, dispositivo: dispositivo, falarAtivo: falarAtivo, controlesAtivo: controlesAtivo, telemetriaAtiva: telemetriaAtiva, notificarAtivo: notificarAtivo, pedirTelemetria: pedirTelemetria, CONTROLES_PERMITIDOS: CONTROLES_PERMITIDOS, montarMensagem: montarMensagem,
+           enviar: enviar, enviarFala: enviarFala, enviarControle: enviarControle, ack: ack, estado: estado, aguardarAck: aguardarAck, status: status };
 })();

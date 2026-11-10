@@ -37,6 +37,20 @@ class JarvisMessagingService : FirebaseMessagingService() {
                     .putExtra("local", d["local"] == "1")
                 ContextCompat.startForegroundService(this, i)
             }
+            "telemetria" -> {
+                // O servidor pede a leitura (a cada 15 min); o app responde por android_telemetria e confirma.
+                Thread {
+                    val (ok, det) = try { Telemetria.enviar(this) } catch (e: Exception) { false to (e.javaClass.simpleName + ": " + (e.message ?: "")).take(80) }
+                    Config.evento(this, "telemetria: " + (if (ok) "enviada" else "FALHOU") + " · " + det)
+                    AckQueue.enviar(this, id, if (ok) "concluido" else "erro", det)
+                }.start()
+            }
+            "controle" -> {
+                // Controles do celular (fase 4): lista fechada em Controles; o resultado volta como concluido ou erro.
+                val r = Controles.executar(this, d)
+                Config.evento(this, "controle ${d["acao"]}: " + (if (r.ok) "ok" else "FALHOU") + " · " + r.detalhe)
+                AckQueue.enviar(this, id, if (r.ok) "concluido" else "erro", r.detalhe)
+            }
             else -> AckQueue.enviar(this, id, "erro", "tipo desconhecido: $tipo")
         }
     }

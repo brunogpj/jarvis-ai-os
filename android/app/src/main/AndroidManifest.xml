@@ -1,11 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Tela "Ouvindo": reconhecimento de fala dentro do app. Só liga o microfone depois do toque no orbe. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Android 13+: sem esta permissão a notificação fixa do serviço de fala não aparece (a fala toca do mesmo jeito). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Abrir app, link e navegação a partir do fundo (ordem do Jarvis): o Android 10+ só deixa com "exibir sobre outros apps". -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- Detectar a abertura do Sisponto (única evidência de que o ponto foi batido): acesso especial a dados de uso, concedido pelo dono. -->
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
+    <!-- Telemetria (nome do Wi-Fi): o Android só entrega o SSID a quem tem localização. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- Resolver o NOME dos apps cujas notificações o Jarvis lê. Sem isso o Android 11+ esconde o app (AppsFilter BLOCKED), o nome vira o pacote e o servidor descarta a notificação (Bíblia, 10/11). App de uso próprio, instalado por sideload. -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
 

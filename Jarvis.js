@@ -2847,6 +2847,7 @@ var Jarvis = (function () {
         a = { acao: 'abrirUrl', url: String(a.intent_data) };
         acao = 'abrirurl';
       }
+      var _urlOrig = (acao === 'abrirurl' && a.url) ? String(a.url) : '';   // o app abre a URL de verdade; _urlParaMacro é gambiarra da ação da macro
       if (acao === 'abrirurl' && a.url) a = Object.assign({}, a, { url: _urlParaMacro(String(a.url)) });
       // 🛡️ DEDUPE de FALA (cross-execução): a MESMA fala empurrada em ~20s (webhook/trigger repetido,
       // pós-passo + tool, etc.) é ignorada → nunca toca áudio duplicado no celular.
@@ -3150,6 +3151,32 @@ var Jarvis = (function () {
             var _motivoA = !_ordA.ok ? _ordA.erro : (_ackA ? 'o app respondeu erro: ' + (_ackA.detalhe || '') : 'o app não confirmou o recebimento em 6 s');
             if (String(_prop('ANDROID_FALAR_FALLBACK') || 'nao').toLowerCase() !== 'sim') {
               return { status: 'error', via: 'android', acao: 'falar', ordem: _ordA.id, erro: 'Não consegui falar pelo app Android: ' + _motivoA };
+            }
+          }
+          /* CONTROLES PELO APP (fase 4, 10/11): com ANDROID_CONTROLES=sim os controles da lista fechada vão por push e contam como
+           * feitos só se o app CONFIRMAR. Sem confirmação não cai para a macro (volume e mídia repetidos são inofensivos, mas
+           * lanterna alterna e abrir app/navegar duplicam); ANDROID_CONTROLES_FALLBACK=sim liga a volta. */
+          if (acao !== 'falar' && typeof Android !== 'undefined' && Android.CONTROLES_PERMITIDOS.indexOf(acao) !== -1 && (acao === 'notificar' ? Android.notificarAtivo() : Android.controlesAtivo())) {
+            var _cc = {};
+            if (acao === 'volume') _cc.nivel = triggerEvent.replace('jarvis_volume_', '');
+            else if (acao === 'midia') _cc.comando = triggerEvent.replace('jarvis_midia_', '');
+            else if (acao === 'lanterna') { var _el = String(args.estado || '').toLowerCase(); if (/^(on|lig|ativ|sim|true)/.test(_el)) _cc.estado = 'on'; else if (/^(off|desl|apag|n[aã]o|false)/.test(_el)) _cc.estado = 'off'; }
+            else if (acao === 'naoperturbe') _cc.estado = triggerEvent.replace('jarvis_dnd_', '');
+            else if (acao === 'abrirapp') { _cc.pacote = args.intent_package; _cc.classe = args.intent_class; }
+            else if (acao === 'abrirurl') _cc.url = _urlOrig || args.url;
+            else if (acao === 'navegar') _cc.destino = args.destino;
+            else if (acao === 'notificar') { _cc.titulo = args.titulo || 'Jarvis'; _cc.texto = args.texto; }
+            var _ordC = Android.enviarControle(acao, _cc);
+            var _ackC = _ordC.ok ? Android.aguardarAck(_ordC.id, 8000) : null;
+            if (_ackC && _ackC.estado !== 'erro') return { status: 'success', via: 'android', acao: acao, ordem: _ordC.id, confirmacao: _ackC.estado, detalhe: _ackC.detalhe || '' };
+            if (_ordC.ok && !_ackC) {
+              try { _registrarEvento({ tool: 'android:sem_ack', ok: true, ms: 8000, resumo: 'controle ' + acao + ' (' + _ordC.id + ') aceito pelo FCM; confirmação não voltou em 8 s' }); } catch (eEv2) {}
+              return { status: 'success', via: 'android', acao: acao, ordem: _ordC.id, confirmacao: 'pendente' };
+            }
+            var _motivoC = !_ordC.ok ? _ordC.erro : 'o app respondeu erro: ' + ((_ackC && _ackC.detalhe) || '');
+            // aviso perdido é pior que aviso repetido: notificar volta para a macro quando o app RECUSOU ou o FCM falhou (sem ack já foi tratado acima, como sucesso pendente)
+            if (acao !== 'notificar' && String(_prop('ANDROID_CONTROLES_FALLBACK') || 'nao').toLowerCase() !== 'sim') {
+              return { status: 'error', via: 'android', acao: acao, ordem: _ordC.id, erro: 'Não consegui executar pelo app Android: ' + _motivoC };
             }
           }
           var alvoFinal = qs ? (alvo + (alvo.indexOf('?') === -1 ? '?' : '&') + qs) : alvo;

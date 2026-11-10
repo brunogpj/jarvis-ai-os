@@ -21,11 +21,12 @@ Projeto Google Apps Script gerenciado localmente via clasp.
 | Web App | `executeAs: USER_DEPLOYING`, `access: ANYONE_ANONYMOUS` |
 | Repositório | https://github.com/brunogpj/jarvis-ai-os — **público** (ver "Repositório público" em Segurança) |
 
-## Implantações (`clasp deployments`, 14/10/2026)
+## Implantações (`clasp deployments`, 10/11/2026)
 
 | Deployment ID | Versão | Descrição |
 |---|---|---|
-| `<DEPLOYMENT_ID>` | **@578** | **ATIVA** — "Notificacoes do app Android em modo sombra (guarda sem processar)". Anterior: @577 |  **ATIVA-ANTERIOR** — "Lista de apps propria do app Android (ANDROID_NOTIF_APPS)". Anterior: @575 |  **ATIVA-ANTERIOR** — "Notificacoes pelo app Android: rotas android_notif_config e android_notificacao (canal desligado)". Anterior: @574 |  **ATIVA-ANTERIOR** — "Voz premium na conversa do app Android: rota android_voz". Anterior: @573 |  **ATIVA-ANTERIOR** — "Conversa por toque do app Android: rota android_conversa com token proprio". Anterior: @572 |  **ATIVA-ANTERIOR** — "Fala pelo app: ordem aceita pelo FCM sem ack nao e falha; token proprio do app Android (ANDROID_API_TOKEN)". Anterior: @571 |  **ATIVA-ANTERIOR** — "Ponto nao acumula marcas antigas; app Android registra o projeto do Firebase sozinho". Anteriores: @570 (canal Android, desligado), @569 (nova cara fases 2 a 4). Anteriores: @568 (fase 1, sem Laboratorio e Automacoes), @566 (File Search desligado, aviso do teto do Google) |
+| `<DEPLOYMENT_ID>` | **@589** | **ATIVA** — "Gancho androidControle do ler_debug repassa titulo e texto (teste direto de notificar)". Anteriores: **@588** (telemetria e avisos pelo app Android: rota `android_telemetria`, ordens `telemetria` e `notificar`, interruptores `ANDROID_TELEMETRIA` e `ANDROID_NOTIFICAR`), **@587** (lanterna por voz manda estado ligar/desligar quando a frase diz; controles do app Android ligados), **@586** (controles do celular pelo app Android: ordem `controle`, canal desligado ao subir), @585 (Pix enviado e pagamento de conta do Mercado Pago), @584 (remetente de confiança no Pix recebido), **@583** (parser do Swile ignora propaganda: o cupom de R$ 100 virava compra), @582/@581 (rota `android_dashboard`), @580 (autodiagnóstico, idioma da voz e limpeza do versículo; o @579 subiu código velho por um `clasp pull` antes do push e foi substituído) |
+| `<DEPLOYMENT_ID>` | @578 | Antiga ATIVA (até @580) — "Notificacoes do app Android em modo sombra (guarda sem processar)". Anterior: @577 |  **ATIVA-ANTERIOR** — "Lista de apps propria do app Android (ANDROID_NOTIF_APPS)". Anterior: @575 |  **ATIVA-ANTERIOR** — "Notificacoes pelo app Android: rotas android_notif_config e android_notificacao (canal desligado)". Anterior: @574 |  **ATIVA-ANTERIOR** — "Voz premium na conversa do app Android: rota android_voz". Anterior: @573 |  **ATIVA-ANTERIOR** — "Conversa por toque do app Android: rota android_conversa com token proprio". Anterior: @572 |  **ATIVA-ANTERIOR** — "Fala pelo app: ordem aceita pelo FCM sem ack nao e falha; token proprio do app Android (ANDROID_API_TOKEN)". Anterior: @571 |  **ATIVA-ANTERIOR** — "Ponto nao acumula marcas antigas; app Android registra o projeto do Firebase sozinho". Anteriores: @570 (canal Android, desligado), @569 (nova cara fases 2 a 4). Anteriores: @568 (fase 1, sem Laboratorio e Automacoes), @566 (File Search desligado, aviso do teto do Google) |
 | `<DEPLOYMENT_ID>` | @25 | Antiga — "TesteJobs" |
 | `<DEPLOYMENT_ID>` | @HEAD | Cabeça (muda a cada push, não é a de produção) |
 
@@ -126,7 +127,7 @@ tráfego interno; inclui `NOTIF` da fila de notificações) → rate limit globa
 `janela_notificacoes` / `fala_direta` / `config_fala` / `config_financas` / `config_gemini` / `ler_debug` (todas com
 `VOICE_API_TOKEN`) → diag (`DIAG_TOKEN`). `config_fala` troca, por HTTP, só uma
 lista fechada de chaves da entrega da fala (`FALA_PROATIVA_LOCAL`,
-`FALA_RESPOSTAS_LOCAL`, `MODO_FALA_VOZ`, `FALA_VOLUME_DB` 0–16, `FALA_FORMATO`, `FALA_ARQUIVO_UNICO`, `ROTA_JEV_NOVAS` sim|nao, `FIN_AVISOS_ATIVO` sim|nao, `FIN_NOME_DONO`, `FIN_CPF_DONO`).
+`FALA_RESPOSTAS_LOCAL`, `MODO_FALA_VOZ`, `FALA_VOLUME_DB` 0–16, `FALA_FORMATO`, `FALA_ARQUIVO_UNICO`, `ROTA_JEV_NOVAS` sim|nao, `FIN_AVISOS_ATIVO` sim|nao, `FIN_NOME_DONO`, `FIN_CPF_DONO`, `ANDROID_FALAR`, `ANDROID_NOTIF`, `ANDROID_CONTROLES`, `ANDROID_CONTROLES_FALLBACK`, `ANDROID_TELEMETRIA` e `ANDROID_NOTIFICAR` sim|nao).
 
 ## Voz no Android (estado em 28/09/2026)
 
@@ -295,6 +296,23 @@ Receita, id `rc_`, categorias do formulário "Receita extra"; "sim, é reembolso
 igual); "não" descarta. Se o remetente é ele mesmo (`FIN_NOME_DONO`, Script Property com 2+ palavras do nome; não vai ao repositório),
 avisa que é transferência entre contas e não pergunta. Por voz: "recebi 450 da Maria no pix" propõe do mesmo jeito (salário,
 rendimento, recarga e aluguel têm previsão própria e ficam de fora). "Desfaz" vale para a receita.
+**Exceção (10/11, @584): remetente de confiança.** `FIN_REMETENTES_AUTO` (Script Property, minúsculas, `nome[=categoria]; outro`; nomes reais NÃO
+vão ao repositório) faz o Pix recebido desse remetente virar receita SEM pergunta (`Financas.remetenteAutomatico`: todas as palavras do nome
+configurado no remetente; categoria fora da lista do Worker = Outros). Avisa "Registrei o Pix de R$ X de Y como receita (…). Diga desfaz para
+tirar."; receita igual digitada (±1 dia) não duplica; caderneta fora do ar volta à pergunta. Motivo: em 09/11 um Pix de R$ 1.400 da pessoa que
+ajuda nas contas de casa ficou sem registro. O texto real desse push do Mercado Pago não foi guardado; `_bancoParse` passou a aceitar também
+"NOME te enviou (um Pix de) R$ X", "NOME enviou/transferiu R$ X para você" e título "Você recebeu R$ X" com "De NOME" no corpo
+(`tests-local/pix-remetente-auto.test.js`). Se o próximo Pix vier em outro formato, cai em `formato_desconhecido` com o texto bruto guardado.
+
+**Pix enviado e pagamento de conta do Mercado Pago (10/11, @585).** Cemig, Copasa e Implay pagos pelo saldo em 10/11 não
+entraram: "Você pagou R$ X a Y" sem a linha da fatura era `aguarda_validacao` (só avisava) e "Você enviou…"/"Pagamento de conta" não tinham
+formato (caíam em `formato_desconhecido`). Agora, no Mercado Pago: "Você enviou/transferiu/fez um Pix de R$ X para Y" e "Você pagou R$ X a Y"
+sem fatura = Pix/débito, **auto**; "Pagamento de conta / conta paga / boleto pago" com R$ = Boleto, **auto** (agendado, vencimento, recusado
+ficam de fora). Antes de criar o gasto, `_bancoContaFixa` procura uma CONTA FIXA aberta do mês no resumo (pista do beneficiário em
+`_CONTA_DICAS`: concessionária de luz/água, provedor, aluguel; senão valor exato ±1 centavo, só se único): conta dele = **marca como paga**
+(`/api/jarvis/pagamento`, com desfaz; avisa se o valor difere da previsão), não cria gasto; conta que outra pessoa paga = gasto **Casa**
+("Água – COPASA … saiu do seu saldo"). Pix para ele mesmo (`FIN_NOME_DONO`) = transferência. `tests-local/pix-enviado-conta.test.js`.
+O texto real desses pushes ainda não foi visto: conferir com `financeiroAmostra` depois do próximo pagamento.
 
 **O modelo não grava na caderneta.** Se uma frase de gasto/receita/recarga chegar ao LLM e ele responder "registrei/anotei…", a
 resposta é trocada por "Não registrei nada" (14/10: ele disse "Anotado! Registrei o gasto de 35 reais" sem registrar). Repetir o gasto
@@ -546,6 +564,55 @@ Peculiaridades medidas via ADB:
 **Dashboard: cartão Finanças e caixa de notificações (16/10).** Dois cartões no topo do Dashboard, cada um com a sua chamada (`dashboardFinancas`, `dashboardNotificacoes`; o resto do painel não espera por eles). **Finanças** (`Financas.painel`): livre hoje, previsão do fim do mês, a pagar, vencimentos, investido, reserva, gastos hoje/semana/mês e as últimas ações do Jarvis, tudo vindo do resumo da caderneta. **Notificações**: as 40 últimas do celular; as de Swile, Mercado Pago, Bradesco e Itaú são classificadas por `_notifFinClassificar` cruzando com a coleção `financeiro` (registrada, aguardando, pendente, recusada) e, sem registro, com os parsers: *reconheci mas não há registro* (botão **Reprocessar**, idempotente, só banco) ou *formato não reconhecido* (vermelho, selo ⚠, **Copiar texto** e **Visto**; o Visto vale só no navegador). Mercado Pago e Bradesco com valor + verbo de transação que nenhum formato conhece agora viram `desconhecido` em `_bancoParse` (guarda o texto bruto e AVISA, como o Itaú já fazia; `_pareceTransacao` deixa de fora promoção, saque, limite, fatura, rendimento): foi assim que o formato novo do Mercado Pago de 15/10 passou em silêncio. Teste ao vivo sem tocar na caderneta: POST `notificacao` (webhook real) com texto marcado TESTE.
 
 **Mercado dos FIIs, cotas e proventos (15/10).** O relatório de FIIs (`Financas.relatorio` com `classe:'fii'`) agora traz, ao lado da caderneta, a seção "Mercado dos fundos" lida por `MercadoFii` do Funds Explorer (parser sobre o HTML real, cache 15 min, link da fonte e hora da leitura; a página não informa a hora da cotação; página fora do ar → só a caderneta). O relatório de **cofrinhos** (`classe:'liquidez'`, botão Cofrinhos) soma uma pesquisa na web com fontes (`Gemini.pesquisarWeb`, cache 6 h), rotulada como resumo de busca. **Cotas**: coluna `cotas` em `investimentos` (migração 005 aplicada no D1; campo no app; `POST /api/jarvis/cotas` com `cotas_esperadas`). Por voz, no molde propor → sim → desfaz: "tenho 5 cotas do KNRI11 e 65 do MXRF11" (`ACOES.cotas`) e "lança os proventos dos fundos" (`ACOES.provento`: cotas × valor do último rendimento, só dos que já pagaram, soma ao `rendimento_ano` via `POST /api/jarvis/rendimento` com `rendimento_esperado`; `FIN_PROVENTOS` impede lançar o mesmo data-com duas vezes; NÃO mexe no saldo nem no livre). O chat passou a renderizar markdown seguro (tabelas, títulos, negrito, citação, link http(s), HTML escapado antes) só quando o texto tem tabela ou título (`pareceMd`/`mdSeguro` em `Javascript.html`; antes era `textContent` puro e as tabelas saíam como `| a | b |`).
+
+### App Android próprio (substitui o MacroDroid; código em `android/`, plano em `docs/android-app/PLANO.md`)
+
+App Kotlin (`dev.jarvis.companion`) que recebe ordens do Jarvis por **FCM** e as confirma (ack). Versão atual **0.7.5-wifi** (versionCode 31; 0.7.0 controles, 0.7.1 abertura do Sisponto, 0.7.2/0.7.3 telemetria e avisos, 0.7.4 nome dos apps com `QUERY_ALL_PACKAGES`, 0.7.5 último Wi-Fi guardado), instalada por
+`adb install -r` ou pelo Arquivos (`node android/entregar.mjs` compila e copia o APK para `Download/jarvis-fase1.apk`; depois do build, `git checkout
+android/gradle/wrapper/gradle-wrapper.properties`, que o Gradle sobe para uma versão incompatível). Abas **Chat | Dashboard | Dispositivo** (Dashboard lê a rota
+`android_dashboard`, só leitura). Rotas do Web App com `ANDROID_API_TOKEN` próprio: `android_registrar`, `android_ack`, `android_conversa`, `android_voz`,
+`android_notif_config`, `android_notificacao` (modos `ANDROID_NOTIF` nao|sombra|sim), `android_dashboard`, `android_telemetria`.
+
+**Canais, cada um com seu interruptor** (`config_fala`): `ANDROID_FALAR` (fala, desde 08/11), `ANDROID_NOTIF` (**`sim` desde 10/11**; passou pela sombra com 11 pares de texto idêntico, 1 de app financeiro: o saque do Bradesco),
+**`ANDROID_CONTROLES`** (fase 4, ligado em 10/11), **`ANDROID_CONTROLES_FALLBACK`** (nao por padrão), **`ANDROID_NOTIFICAR`** (sim, 10/11) e **`ANDROID_TELEMETRIA`** (**`sim`** desde 10/11 18:16, depois de resolvido o Wi-Fi em segundo plano; ver abaixo).
+
+**Notificações pelo app com `ANDROID_NOTIF=sim` (10/11).** `NotificacaoService` captura só os apps da lista `ANDROID_NOTIF_APPS` (pacote exato com `=` ou trecho do nome) e manda pela fila com reenvio
+(`NotifFila`); o servidor deduplica por 5 min o hash `app|título|texto`. Notificações que o app envia levam o campo `pacote` preenchido; as da macro têm `pacote` vazio, e é assim que se distingue
+a origem em `ler_debug` (`notificacoes`). Desativados no MacroDroid em 10/11: **Jarvis Notificações Premium** e **Jarvis Ponto**. Ainda sem a prova de uma compra real (Swile, Mercado Pago, cartão) passando só
+pelo app. A macro vigiava também Gmail, Itaú Investimentos, BHBUS+ e o app de transporte, que NÃO estão na lista do app. Reverter: `config_fala` `ANDROID_NOTIF=sombra|nao`.
+**Achado de 10/11 (a notificação da Bíblia que "não falou"): o app mandava o PACOTE no lugar do NOME.** O Android 11+ escondeu o app da Bíblia do Jarvis (`AppsFilter: dev.jarvis.companion -> <pacote> BLOCKED` no logcat), o
+`getApplicationLabel` falhou, o app mandou `app = pacote`, e o servidor, que filtra por NOME (`NOTIF_APPS`, `NOTIF_FALAR_APPS`), descartou em silêncio: sem evento, sem documento, e foi por isso que nada chegou depois que o canal virou `sim`. Correção (0.7.4):
+`QUERY_ALL_PACKAGES` no manifest. Conferência: `adb shell am start -n dev.jarvis.companion/.MainActivity --ez rotulos true` grava nos eventos do app o nome que ele resolve para cada pacote da lista (todos resolveram). A fala vem de `NOTIF_FALAR_APPS` por nome;
+o app nunca mandou `falar` (a macro também não). Lição: o servidor ignora notificação de app fora do `NOTIF_APPS` sem deixar rastro; ao suspeitar de notificação perdida, olhar o logcat do aparelho antes do servidor.
+
+**Abertura do Sisponto pelo app (0.7.1, `AberturaApps.kt`).** O Sisponto não emite notificação ao bater o ponto (confirma por tela); a macro Jarvis Ponto usava o gatilho "Aplicativo iniciado" e mandava "Ponto registrado | Abertura do app Sisponto".
+O app faz o mesmo com `UsageStatsManager`: a cada 10 s, enquanto o `NotificacaoService` está vivo, lê os eventos de uso; um `ACTIVITY_RESUMED` do app do Sisponto com o app antes fora da frente vale uma abertura (trocar de tela
+não repete; no mínimo 2 min entre eventos). Envia o MESMO evento pela fila de notificações (app `Sisponto`, título `Ponto registrado`, texto `Abertura do app Sisponto`, `pacote` preenchido) e só com o canal ligado e o Sisponto na lista.
+Exige o "acesso a dados de uso" (`adb shell appops set dev.jarvis.companion GET_USAGE_STATS allow`; a tela Dispositivo → Notificações mostra "Abertura do Sisponto: Vigiada"). Provado em 10/11 às 17:03 (app 3 s depois da macro, evento idêntico).
+Atenção: abrir o Sisponto num teste conta como ponto batido e cala o lembrete seguinte.
+
+**Telemetria e avisos pelo app (0.7.2/0.7.3, @588).** `android_telemetria` (token do app) grava na mesma coleção `telemetria_dispositivo` e roda os eventos proativos pela função única `_telemetriaRegistrar` (a rota `telemetria` da macro usa a mesma).
+Com `ANDROID_TELEMETRIA=sim`, o gatilho de 15 min (`pingTelemetria`) manda a ordem `telemetria` por FCM em vez do webhook da macro (se o FCM recusar, cai na macro); o app (`Telemetria.kt`) responde com bateria, `carregando`
+(`Ligar`/`Desligar`, como a macro), `wifi_nome` e `volume_toque`, com `origem:"app"`. `ANDROID_NOTIFICAR=sim` leva o aviso proativo (`acao: notificar`) para o app (canal "Avisos do Jarvis", importância alta); aviso perdido é pior que repetido,
+então se o app recusar ou o FCM falhar volta para a macro (sem ack = sucesso pendente, sem repetir). Testes: `ler_debug` com `androidTelemetria:true` (pede agora, devolve a leitura mais recente) e `androidControle:{acao:'notificar',titulo,texto}`
+(os campos `titulo` e `texto` passam desde o @589). **DEFEITO ACHADO E RESOLVIDO (10/11): o nome do Wi-Fi vinha VAZIO com a ordem chegando em segundo plano.** Com o app em primeiro plano o `wifi_nome` vinha certo; nos pings agendados de 17:47 e 18:02, vazio. O Android 13 só entrega o SSID em segundo plano a quem tem `ACCESS_BACKGROUND_LOCATION`
+("Permitir o tempo todo"; o MIUI recusa conceder localização por `adb pm grant`, então é o dono quem concede nas configurações do app). O Jarvis usa o SSID para a chegada em casa (`_localPorSsid`), por isso o canal ficou em `nao` até resolver. Resolvido: com a localização "o tempo todo" concedida
+(`dumpsys package` mostra `ACCESS_BACKGROUND_LOCATION: granted=true`) o ping das 18:17:51 veio com `wifi_nome` preenchido. **Reserva (0.7.5):** toda leitura boa do SSID é guardada com a hora (`ultimo_wifi`, também ao abrir o app); se a leitura vier vazia MAS o aparelho estiver num Wi-Fi ativo, vale o último nome guardado se tiver
+menos de 6 h; fora de Wi-Fi o nome é vazio de verdade (nunca se devolve nome guardado sem Wi-Fi, porque o vazio é como o Jarvis sabe que o dono saiu de casa). A macro **Jarvis Telemetria** pode ser desativada depois de alguns pings com `origem:"app"` e o nome preenchido.
+
+**Fase 4 — controles do celular pelo app (10/11, @586/@587/@588).** Com `ANDROID_CONTROLES=sim` e aparelho registrado, `_controlarDispositivo` (Jarvis.js) manda por FCM
+a ordem `controle` para as ações da **lista fechada** `Android.CONTROLES_PERMITIDOS`: `volume` (mudo 0%, baixo 20%, médio 50%, alto 100% da música — os presets da macro
+antiga), `midia` (pausar/tocar/próxima/anterior: sessão de mídia ativa pelo acesso a notificações, senão tecla de mídia), `lanterna` (`estado` on|off; sem estado alterna),
+`naoperturbe` (on|off), `abrirapp` (pacote + classe), `abrirurl` (esquemas conhecidos), `navegar` (Google Maps) e `notificar` (título + texto, interruptor próprio `ANDROID_NOTIFICAR`). `Controles.kt` repete a checagem da lista no aparelho e cada
+ordem volta como `concluido` ou `erro` com o motivo. O servidor espera o ack por 8 s; **sem confirmação NÃO cai para a macro** (lanterna alterna e abrir/navegar duplicam), a menos que
+`ANDROID_CONTROLES_FALLBACK=sim`; o FCM aceitar sem ack vira `confirmacao:'pendente'` e o evento `android:sem_ack`. `notificacao_interativa`, `intent` com extras, telemetria e viagem
+continuam na macro. Permissões do app: "exibir sobre outros apps" (para abrir app/link do fundo; `adb shell appops set dev.jarvis.companion SYSTEM_ALERT_WINDOW allow`) e acesso ao Não
+Perturbe (`cmd notification allow_dnd dev.jarvis.companion`). **Teste uma ação por vez, sem depender do interruptor:** `ler_debug` com
+`androidControle:{acao, nivel|comando|estado|pacote|classe|url|destino}` (devolve o ack; ações fora da lista são recusadas). O app guarda só os 8 últimos eventos
+(`jarvis_estado.xml`, `run-as`). Provado em 10/11 no Redmi: volume (conferido em `dumpsys audio`), lanterna, Não Perturbe, mídia com o Spotify tocando (`dumpsys media_session`
+estado 3 → 2 → 3), abrir app, abrir link e navegar, e por `voice_command` real "volume baixo", "liga/desliga a lanterna", "ativa/desativa o não perturbe", "abre o WhatsApp",
+"abre o Spotify" e "rota para a Praça da Liberdade". As macros Volume, Lanterna, Mídia e Não Perturbe deixaram de ser acionadas (o servidor não chama mais os webhooks delas);
+dá para desativá-las no MacroDroid. Voltar: `config_fala` com `ANDROID_CONTROLES=nao`. "Liga/desliga a lanterna" por voz agora manda o estado (antes alternava).
 
 ## Gatilhos de tempo
 

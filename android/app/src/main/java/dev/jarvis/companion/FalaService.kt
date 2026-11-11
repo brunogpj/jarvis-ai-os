@@ -34,6 +34,19 @@ import java.util.concurrent.atomic.AtomicInteger
  *
  * Uma fala por vez: ordens que chegam juntas esperam a anterior acabar (fila de uma thread só).
  */
+/**
+ * Em que pé está a CONVERSA em andamento, para a tela "Ouvindo" mostrar o orbe pensando e falando (0.12.0). Só vale para conversas por voz ou
+ * atalho (o serviço recebe `pergunta`); ordens de fala do servidor não mexem aqui. A tela marca PENSANDO ao enviar e o serviço atualiza.
+ */
+object FalaEstado {
+    const val OCIOSO = 0
+    const val PENSANDO = 1
+    const val FALANDO = 2
+    @Volatile var fase = OCIOSO
+    @Volatile var texto = ""            // a resposta, quando já existe
+    @Volatile var premium = false       // resposta longa: o áudio chega depois, pela voz premium do servidor
+}
+
 class FalaService : Service() {
     companion object {
         const val LIMITE_CURTA = 160        // até aqui a resposta da conversa sai pela voz do celular
@@ -76,13 +89,40 @@ class FalaService : Service() {
         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
         .build()
 
+    /** Ouvir de novo (0.13.0): toca o áudio guardado da última fala; sem áudio, fala o texto guardado (ou o `texto` pedido) pela voz do celular. */
+    private fun repetir(i: Intent) {
+        val pedido = i.getStringExtra("texto") ?: ""
+        val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val alarmeAntes = am.getStreamVolume(AudioManager.STREAM_ALARM)
+        FalaEstado.fase = FalaEstado.FALANDO
+        try {
+            igualarVolumeDoAlarme(am)
+            val arq = if (pedido.isBlank()) UltimaFala.arquivo(this) else null
+            if (arq != null) {
+                Config.evento(this, "fala repetida: áudio guardado")
+                tocarArquivo(arq)
+            } else {
+                val t = pedido.ifBlank { UltimaFala.texto(this) }
+                if (t.isBlank()) { Config.evento(this, "fala repetida: nada guardado"); falarComTts("Ainda não tenho uma fala para repetir.") }
+                else { Config.evento(this, "fala repetida: texto pela voz do celular"); falarComTts(t) }
+            }
+        } catch (e: Exception) {
+            Config.evento(this, "fala repetida falhou: ${e.message}")
+        } finally {
+            if (!FalaEstado.premium) FalaEstado.fase = FalaEstado.OCIOSO
+            try { am.setStreamVolume(AudioManager.STREAM_ALARM, alarmeAntes, 0) } catch (e: Exception) { }
+        }
+    }
+
     private fun tocar(i: Intent) {
         val id = i.getStringExtra("id") ?: return
+        if (i.getBooleanExtra("repetir", false)) { repetir(i); return }
         var texto = i.getStringExtra("texto") ?: ""
         val audioUrl = i.getStringExtra("audio_url") ?: ""
         // Conversa por toque: pergunta ao Jarvis e fala a resposta pelo celular. Sem ack: não há ordem do servidor a confirmar.
         val pergunta = i.getStringExtra("pergunta")
         if (pergunta != null) {
+            FalaEstado.fase = FalaEstado.PENSANDO; FalaEstado.premium = false; FalaEstado.texto = ""
             val t0 = System.currentTimeMillis()
             val rid0 = i.getStringExtra("rid") ?: id.removePrefix("c")
             val partes = try { Conversa.dividir(pergunta) } catch (e: Exception) { listOf(pergunta) }      // dividir nunca derruba a conversa
@@ -104,14 +144,17 @@ class FalaService : Service() {
             Config.evento(this, "conversa: resposta de ${texto.length} caracteres em ${(System.currentTimeMillis() - t0) / 1000} s")
             Config.estado(this).edit().putString("ultima_resposta", texto.take(600)).apply()
             Historico.add(this, false, texto)
+            FalaEstado.texto = texto
             // Voz do Jarvis: o servidor sintetiza e manda o áudio por push (toca depois que esta tarefa termina, a fila é de uma thread só).
             // Resposta curta (hora, saldo) sai na hora pela voz do celular, ajustada para soar como o Jarvis; a premium soma uns 13 s
             // de síntese e só vale a espera para respostas longas, que o dono para para ouvir (mesma regra do MacroDroid).
             if (Conversa.respostaReal && texto.length > LIMITE_CURTA && Conversa.vozPremium(this, texto)) {
                 Config.evento(this, "conversa: voz do Jarvis pedida ao servidor")
+                FalaEstado.premium = true; FalaEstado.fase = FalaEstado.FALANDO      // a tela mostra a resposta e fecha sozinha
                 return
             }
             Config.evento(this, "conversa: falando pela voz do celular")
+            FalaEstado.fase = FalaEstado.FALANDO
         }
         val local = i.getBooleanExtra("local", false) || pergunta != null
         val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -123,10 +166,12 @@ class FalaService : Service() {
                 try {
                     AckQueue.enviar(this, id, "tocando")
                     tocarArquivo(arq)
+                    if (!id.startsWith("t")) UltimaFala.registrar(this, texto, arq)        // guarda o áudio para ouvir de novo (amostras "t…" não entram)
                 } finally { arq.delete() }
             } else if (texto.isNotBlank()) {
                 if (pergunta == null) AckQueue.enviar(this, id, "tocando")
                 falarComTts(texto)
+                if (!id.startsWith("t")) UltimaFala.registrar(this, texto, null)
             } else {
                 throw IllegalStateException("ordem sem áudio e sem texto")
             }
@@ -136,6 +181,7 @@ class FalaService : Service() {
             Config.evento(this, "fala falhou ($id): ${e.message}")
             if (pergunta == null) AckQueue.enviar(this, id, "erro", (e.message ?: e.javaClass.simpleName).take(150))
         } finally {
+            if (pergunta != null && !FalaEstado.premium) FalaEstado.fase = FalaEstado.OCIOSO
             try { am.setStreamVolume(AudioManager.STREAM_ALARM, alarmeAntes, 0) } catch (e: Exception) { }
         }
     }

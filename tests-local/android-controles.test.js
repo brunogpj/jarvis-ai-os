@@ -31,3 +31,7 @@ test('mensagem FCM do controle leva tipo, acao e campos como texto', function ()
   assert.strictEqual(m.message.data.acao, 'volume');
   assert.strictEqual(m.message.data.nivel, 'baixo');
 });
+
+test('notificacao_interativa entra na lista fechada dos controles do app', function () {
+  assert.ok(sb({}).Android.CONTROLES_PERMITIDOS.indexOf('notificacao_interativa') !== -1);
+});

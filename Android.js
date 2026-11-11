@@ -103,7 +103,7 @@ var Android = (function () {
   }
 
   /** Lista fechada do que o app aceita como ordem `controle` (o app repete a checagem do lado dele). */
-  var CONTROLES_PERMITIDOS = ['volume', 'midia', 'lanterna', 'naoperturbe', 'abrirapp', 'abrirurl', 'navegar', 'notificar'];
+  var CONTROLES_PERMITIDOS = ['volume', 'midia', 'lanterna', 'naoperturbe', 'abrirapp', 'abrirurl', 'navegar', 'notificar', 'notificacao_interativa'];
 
   // ------------------------------------------------------------------- envio ----
   function _novoId() { return 'a' + _agora().toString(36) + Math.floor(Math.random() * 1296).toString(36); }

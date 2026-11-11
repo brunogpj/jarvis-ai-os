@@ -11,6 +11,8 @@ import android.service.notification.NotificationListenerService
 class JarvisApp : Application() {
     override fun onCreate() {
         super.onCreate()
+        Saude.processoIniciado(this)
+        Geocerca.registrar(this); Geocerca.reenviarPendente(this); NotificacaoInterativa.drenar(this)
         try { Config.iniciarFirebase(this) } catch (e: Exception) { Config.evento(this, "Firebase não iniciou: ${e.message}") }
         AckQueue.drenarAgora(this)
         // O MIUI mata o processo (SmartPower / lowmemorykiller) e NÃO religa o ouvinte de notificações sozinho: em 09/11 a escuta estava

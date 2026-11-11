@@ -5,53 +5,51 @@ import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Typeface
+import android.graphics.Color
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
-import android.view.Gravity
-import android.view.View
-import android.view.ViewGroup
-import android.widget.Button
-import android.widget.FrameLayout
-import android.widget.LinearLayout
-import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.core.content.ContextCompat
+import dev.jarvis.companion.ui.EstadoOuvindo
+import dev.jarvis.companion.ui.Fase
+import dev.jarvis.companion.ui.JarvisTema
+import dev.jarvis.companion.ui.OuvindoTela
 
 /**
- * Tela "Ouvindo" (0.5.1): reconhecimento de fala DENTRO do app, em pt-BR, com a frase aparecendo enquanto você fala e barras que
- * acompanham o volume. Aberta pelo orbe e pelo atalho das configurações rápidas.
+ * Tela "Ouvindo" (0.12.0, Compose): reconhecimento de fala DENTRO do app, em pt-BR, com a frase aparecendo enquanto você fala. O orbe mostra em que pé
+ * está a conversa: OUVINDO (cresce com o volume da voz), PENSANDO (arco girando enquanto o Jarvis responde) e FALANDO (pulsa e mostra a resposta). A
+ * tela fica aberta até a fala acabar, em vez de fechar ao enviar. Aberta pelo orbe, pelo widget, pelo botão de energia (assistente) e pelo atalho.
  *
  * Precisa da permissão de microfone (pedida na primeira vez). Sem permissão, sem serviço de reconhecimento no aparelho ou com erro do
  * reconhecedor, cai na tela de reconhecimento do próprio Google (a da 0.3.x), que não exige permissão: o app nunca fica sem a conversa.
  */
-class ConversaActivity : Activity() {
+class ConversaActivity : ComponentActivity() {
     private var reconhecedor: SpeechRecognizer? = null
-    private lateinit var rotulo: TextView
-    private lateinit var frase: TextView
-    private lateinit var onda: OndaView
-    private lateinit var dica: TextView
+    private val e = EstadoOuvindo()
     private var ultimaParcial = ""
     private var encerrada = false
     private val relogio = Handler(Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.statusBarColor = Cores.FUNDO
-        window.navigationBarColor = Cores.FUNDO
-        montarTela()
-        if (intent.getBooleanExtra("demo", false)) { demonstrar(); return }
+        enableEdgeToEdge(statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT), navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT))
+        setContent { JarvisTema { OuvindoTela(e, aoParar = { reconhecedor?.stopListening(); e.dica = "Processando…" }, aoFechar = { cancelarTudo() }, aoRepetir = { UltimaFala.repetir(this) }) } }
+        if (intent.getBooleanExtra("demo", false)) { demonstrar(intent.getStringExtra("fase")); return }
         Config.evento(this, "ouvindo: tela aberta (microfone ${if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) "liberado" else "sem permissão"})")
         if (!SpeechRecognizer.isRecognitionAvailable(this)) { usarTelaDoSistema("sem serviço de reconhecimento"); return }
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) comecar()
         else requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 11)
     }
 
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == 11) {
             if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) comecar()
@@ -59,76 +57,18 @@ class ConversaActivity : Activity() {
         }
     }
 
-    private fun montarTela() {
-        rotulo = TextView(this).apply {
-            text = "OUVINDO"; textSize = 12f; letterSpacing = 0.1f; setTextColor(Cores.DESTAQUE); gravity = Gravity.CENTER
-            typeface = Tipografia.inter(context, 600)
-        }
-        frase = TextView(this).apply {
-            text = ""; textSize = 30f; setTextColor(Cores.TEXTO); gravity = Gravity.CENTER; setLineSpacing(0f, 1.1f)
-            typeface = Tipografia.grotesk(context, 500)
-        }
-        onda = OndaView(this)
-        dica = TextView(this).apply {
-            text = "Fale normalmente. Toque no quadrado quando terminar."; textSize = 13f; setTextColor(Cores.SECUNDARIO); gravity = Gravity.CENTER
-            typeface = Tipografia.inter(context, 400)
-        }
-        val parar = Button(this).apply {
-            contentDescription = "Parar de ouvir"
-            background = fundoArredondado(Cores.DESTAQUE, dp(48).toFloat())
-            stateListAnimator = null
-            setOnClickListener { reconhecedor?.stopListening(); dica.text = "Processando…" }
-        }
-        val quadrado = object : View(this) {
-            override fun onDraw(c: android.graphics.Canvas) {
-                val p = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = Cores.FUNDO }
-                val m = width * 0.3f
-                c.drawRoundRect(android.graphics.RectF(m, m, width - m, height - m), dp(5).toFloat(), dp(5).toFloat(), p)
-            }
-        }
-        val botao = FrameLayout(this).apply {
-            addView(parar, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-            addView(quadrado, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-            quadrado.isClickable = false
-        }
-        val cancelar = Button(this).apply {
-            text = "Cancelar"; isAllCaps = false; textSize = 14f; setTextColor(Cores.TEXTO2); stateListAnimator = null
-            background = fundoArredondado(android.graphics.Color.TRANSPARENT, 0f)
-            typeface = Tipografia.inter(context, 500)
-            setOnClickListener { cancelarTudo() }
-        }
-
-        val centro = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; setPadding(dp(28), 0, dp(28), 0)
-            addView(rotulo)
-            addView(frase, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(24) })
-            addView(onda, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(72)).apply { topMargin = dp(28) })
-            addView(dica, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(20) })
-        }
-        val rodape = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; setPadding(0, dp(8), 0, dp(36))
-            addView(botao, LinearLayout.LayoutParams(dp(96), dp(96)))
-            addView(cancelar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)).apply { topMargin = dp(10) })
-        }
-        setContentView(LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; setBackgroundColor(Cores.FUNDO)
-            addView(centro, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-            addView(rodape, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        })
-    }
-
     private fun comecar() {
         val r = SpeechRecognizer.createSpeechRecognizer(this)
         reconhecedor = r
         r.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) { Config.evento(this@ConversaActivity, "ouvindo: reconhecedor pronto"); dica.text = "Fale agora." }
-            override fun onBeginningOfSpeech() { Config.evento(this@ConversaActivity, "ouvindo: começou a captar voz"); dica.text = "Fale normalmente. Toque no quadrado quando terminar." }
-            override fun onRmsChanged(rmsdB: Float) { onda.empurrar((rmsdB + 2f) / 12f) }       // -2..10 dB → 0..1
+            override fun onReadyForSpeech(params: Bundle?) { Config.evento(this@ConversaActivity, "ouvindo: reconhecedor pronto"); e.dica = "Fale agora." }
+            override fun onBeginningOfSpeech() { Config.evento(this@ConversaActivity, "ouvindo: começou a captar voz"); e.dica = "Fale normalmente. Toque no quadrado quando terminar." }
+            override fun onRmsChanged(rmsdB: Float) { e.empurrar((rmsdB + 2f) / 12f) }       // -2..10 dB → 0..1
             override fun onBufferReceived(buffer: ByteArray?) {}
-            override fun onEndOfSpeech() { Config.evento(this@ConversaActivity, "ouvindo: fim da fala"); dica.text = "Processando…" }
+            override fun onEndOfSpeech() { Config.evento(this@ConversaActivity, "ouvindo: fim da fala"); e.dica = "Processando…" }
             override fun onPartialResults(partialResults: Bundle?) {
                 val t = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull() ?: return
-                if (t.isNotBlank()) { ultimaParcial = t; frase.text = t }
+                if (t.isNotBlank()) { ultimaParcial = t; e.frase = t }
             }
             override fun onResults(results: Bundle?) {
                 val t = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.trim().orEmpty()
@@ -140,7 +80,7 @@ class ConversaActivity : Activity() {
                 if (encerrada) return
                 if (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
                     if (ultimaParcial.isNotBlank()) { enviar(ultimaParcial); return }
-                    rotulo.text = "NÃO OUVI NADA"; dica.text = "Toque em Cancelar e tente de novo."
+                    e.fase = Fase.NADA; e.dica = "Toque em Cancelar e tente de novo."
                     relogio.postDelayed({ if (!encerrada) cancelarTudo() }, 1500)
                     return
                 }
@@ -154,38 +94,91 @@ class ConversaActivity : Activity() {
             .putExtra(RecognizerIntent.EXTRA_LANGUAGE, "pt-BR")
             .putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             .putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-        try { r.startListening(i) } catch (e: Exception) { usarTelaDoSistema("falha ao iniciar: ${e.message}") }
+        try { r.startListening(i) } catch (ex: Exception) { usarTelaDoSistema("falha ao iniciar: ${ex.message}") }
     }
 
+    /** Manda a pergunta e fica na tela: o orbe passa a PENSANDO e, quando a resposta existe, a FALANDO; fecha quando a fala termina. */
     private fun enviar(frase: String) {
         if (encerrada) return
         encerrada = true
         if (frase.isBlank()) { Config.evento(this, "ouvindo: nada reconhecido; fechando"); finish(); return }
+        if (pedidoDeRepetir(frase)) { repetirLocal(frase); return }
         val rid = System.currentTimeMillis().toString()      // numérico e longo: é o que o servidor exige para repetir sem re-executar
         Config.evento(this, "conversa: pedido de ${frase.length} caracteres")
         Config.estado(this).edit().putString("ultima_pergunta", frase).putString("ultima_resposta", "(aguardando…)").apply()
         Historico.add(this, true, frase)
+        e.frase = frase; e.fase = Fase.PENSANDO; e.dica = "Consultando o Jarvis…"
+        Config.evento(this, "orbe: pensando")
+        FalaEstado.fase = FalaEstado.PENSANDO; FalaEstado.premium = false; FalaEstado.texto = ""     // marcado ANTES de o serviço subir, para a tela não achar que já acabou
         ContextCompat.startForegroundService(this, Intent(this, FalaService::class.java).putExtra("id", "c$rid").putExtra("pergunta", frase).putExtra("rid", rid))
-        finish()
+        vigiarResposta(System.currentTimeMillis())
+    }
+
+    private fun vigiarResposta(inicio: Long) {
+        var visto = 0L
+        relogio.post(object : Runnable {
+            override fun run() {
+                if (isFinishing) return
+                val agora = System.currentTimeMillis()
+                if (FalaEstado.texto.isNotBlank() && e.resposta != FalaEstado.texto) e.resposta = FalaEstado.texto
+                if (FalaEstado.fase == FalaEstado.FALANDO && e.fase != Fase.FALANDO) {
+                    e.fase = Fase.FALANDO; visto = agora
+                    Config.evento(this@ConversaActivity, "orbe: falando" + if (FalaEstado.premium) " (voz premium a caminho)" else "")
+                    e.dica = if (FalaEstado.premium) "A voz do Jarvis chega em instantes." else ""
+                }
+                val acabou = e.fase == Fase.FALANDO && (
+                    (!FalaEstado.premium && FalaEstado.fase == FalaEstado.OCIOSO) ||
+                    (FalaEstado.premium && agora - visto > (e.resposta.length * 70L + 3000L).coerceIn(5000L, 14000L)))
+                if (acabou) { Config.evento(this@ConversaActivity, "orbe: fala acabou; tela fecha sozinha"); relogio.postDelayed({ finish() }, 700); return }
+                if (agora - inicio > 120_000L) { finish(); return }
+                relogio.postDelayed(this, 150)
+            }
+        })
+    }
+
+    /** "Repete", "fala de novo", "o que você disse": ouve a última fala de novo, sem ir ao servidor. "Repete o briefing" continua sendo do servidor. */
+    private fun pedidoDeRepetir(frase: String): Boolean {
+        val f = frase.lowercase().trim().trimEnd('.', '!', '?')
+        if (f.contains("briefing") || f.contains("resumo") || f.contains("notícia") || f.contains("noticia")) return false
+        return Regex("^(jarvis[, ]+)?(pode )?(repete|repita|repetir|fala de novo|fale de novo|diga de novo|de novo|ouvir de novo|o que (você|voce) (disse|falou))( .*)?$").matches(f)
+    }
+
+    private fun repetirLocal(frase: String) {
+        Config.evento(this, "conversa: repetindo a última fala (sem servidor)")
+        e.frase = frase
+        e.resposta = UltimaFala.texto(this).ifBlank { "Ainda não tenho uma fala para repetir." }
+        e.fase = Fase.FALANDO; e.dica = ""
+        FalaEstado.premium = false; FalaEstado.fase = FalaEstado.FALANDO
+        UltimaFala.repetir(this)
+        vigiarResposta(System.currentTimeMillis())
     }
 
     private fun cancelarTudo() {
         Config.evento(this, "ouvindo: cancelado")
         encerrada = true
-        try { reconhecedor?.cancel() } catch (e: Exception) { }
+        try { reconhecedor?.cancel() } catch (ex: Exception) { }
         finish()
     }
 
-    /** Modo de demonstração (adb: --ez ouvir true --ez demo true): mostra a tela com uma frase e barras animadas, sem ligar o microfone. */
-    private fun demonstrar() {
-        frase.text = "Quanto eu tenho livre hoje"
-        dica.text = "Fale normalmente. Toque no quadrado quando terminar."
+    /**
+     * Modo de demonstração (adb: --ez ouvir true --ez demo true [--es fase ouvindo|pensando|falando|nada]): mostra a tela sem ligar o microfone.
+     * Sem `fase`, percorre as três: ouvindo, pensando e falando.
+     */
+    private fun demonstrar(fase: String?) {
+        e.frase = "Quanto eu tenho livre hoje"
+        e.resposta = "Você tem R$ 1.346,70 livres na conta hoje."
         val inicio = System.currentTimeMillis()
         relogio.post(object : Runnable {
             override fun run() {
                 val s = (System.currentTimeMillis() - inicio) / 1000.0
-                onda.empurrar((0.45 + 0.45 * Math.sin(s * 5.0) * Math.cos(s * 2.3)).toFloat().coerceIn(0.1f, 1f))
-                if (s < 25) relogio.postDelayed(this, 110) else finish()
+                val f = when (fase) {
+                    "ouvindo" -> Fase.OUVINDO; "pensando" -> Fase.PENSANDO; "falando" -> Fase.FALANDO; "nada" -> Fase.NADA
+                    else -> if (s < 7) Fase.OUVINDO else if (s < 11) Fase.PENSANDO else Fase.FALANDO
+                }
+                e.fase = f
+                e.dica = when (f) { Fase.OUVINDO -> "Fale normalmente. Toque no quadrado quando terminar."; Fase.PENSANDO -> "Consultando o Jarvis…"; Fase.FALANDO -> ""; Fase.NADA -> "Toque em Cancelar e tente de novo." }
+                if (f == Fase.OUVINDO) e.empurrar((0.45 + 0.45 * Math.sin(s * 5.0) * Math.cos(s * 2.3)).toFloat().coerceIn(0.1f, 1f)) else e.nivel = 0f
+                if (s < 40) relogio.postDelayed(this, 110) else finish()
             }
         })
     }
@@ -193,7 +186,7 @@ class ConversaActivity : Activity() {
     /** Plano B: a tela de reconhecimento do Google (não exige permissão de microfone). */
     private fun usarTelaDoSistema(motivo: String) {
         Config.evento(this, "conversa: tela do sistema ($motivo)")
-        try { reconhecedor?.destroy() } catch (e: Exception) { }
+        try { reconhecedor?.destroy() } catch (ex: Exception) { }
         reconhecedor = null
         val i = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
             .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
@@ -202,7 +195,7 @@ class ConversaActivity : Activity() {
             .putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
         try {
             startActivityForResult(i, 7)
-        } catch (e: ActivityNotFoundException) {
+        } catch (ex: ActivityNotFoundException) {
             Toast.makeText(this, "Este celular não tem reconhecimento de fala.", Toast.LENGTH_LONG).show()
             finish()
         }
@@ -212,12 +205,13 @@ class ConversaActivity : Activity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         val f = data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.trim()
-        if (requestCode == 7 && resultCode == RESULT_OK && !f.isNullOrBlank()) enviar(f) else finish()
+        if (requestCode == 7 && resultCode == Activity.RESULT_OK && !f.isNullOrBlank()) enviar(f) else finish()
     }
 
     override fun onDestroy() {
+        Config.evento(this, "ouvindo: tela fechada")
         relogio.removeCallbacksAndMessages(null)
-        try { reconhecedor?.destroy() } catch (e: Exception) { }
+        try { reconhecedor?.destroy() } catch (ex: Exception) { }
         super.onDestroy()
     }
 }

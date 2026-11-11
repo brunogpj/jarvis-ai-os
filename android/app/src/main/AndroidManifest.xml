@@ -17,6 +17,8 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <!-- Resolver o NOME dos apps cujas notificações o Jarvis lê. Sem isso o Android 11+ esconde o app (AppsFilter BLOCKED), o nome vira o pacote e o servidor descarta a notificação (Bíblia, 10/11). App de uso próprio, instalado por sideload. -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
+    <!-- Cerca geográfica: registrar de novo depois de reiniciar o aparelho ou atualizar o app. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
 
@@ -55,12 +57,75 @@
             </intent-filter>
         </service>
 
+        <!-- Duas opções da notificação interativa do Jarvis (e o campo de texto do modo saldo). Não exportado. -->
+        <receiver android:name=".AcaoInterativaReceiver" android:exported="false" />
+
+        <!-- Botões Sim / Não / Desfaz das notificações da caderneta. Não exportado: só as notificações do próprio app chegam aqui. -->
+        <receiver android:name=".AcaoNotificacao" android:exported="false" />
+
         <!-- Conversa por toque: janela transparente que chama o reconhecimento de fala do sistema. -->
         <activity
             android:name=".ConversaActivity"
-            android:exported="false"
+            android:exported="true"
             android:excludeFromRecents="true"
-            android:theme="@android:style/Theme.Material.NoActionBar" />
+            android:theme="@android:style/Theme.Material.NoActionBar">
+            <!-- Assistente digital padrão (Configurações → Apps padrão → Assistente digital): botão de energia / gesto do assistente / "OK Jarvis" do sistema abrem a escuta. -->
+            <intent-filter>
+                <action android:name="android.intent.action.ASSIST" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VOICE_COMMAND" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!-- Assistente digital: serviço, sessão e o reconhecedor que o cadastro exige (ver AssistenteVoz.kt). -->
+        <service android:name=".JarvisVoiceInteractionService" android:exported="true"
+            android:label="Jarvis" android:permission="android.permission.BIND_VOICE_INTERACTION">
+            <meta-data android:name="android.voice_interaction" android:resource="@xml/interacao_voz" />
+            <intent-filter>
+                <action android:name="android.service.voice.VoiceInteractionService" />
+            </intent-filter>
+        </service>
+        <service android:name=".JarvisSessionService" android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION" />
+        <service android:name=".JarvisReconhecedorVazio" android:exported="true"
+            android:label="Jarvis" android:permission="android.permission.RECORD_AUDIO">
+            <meta-data android:name="android.speech" android:resource="@xml/reconhecedor_vazio" />
+            <intent-filter>
+                <action android:name="android.speech.RecognitionService" />
+            </intent-filter>
+        </service>
+
+        <!-- Cerca geográfica da casa (ver Geocerca.kt). O Google Play Services entrega a transição ao receptor; o BootReceiver registra de novo. -->
+        <receiver android:name=".GeocercaReceiver" android:exported="false" />
+        <receiver android:name=".BootReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Widget de conversa da tela inicial. -->
+        <receiver android:name=".WidgetConversa" android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_conversa" />
+        </receiver>
+
+        <!-- Ouvir de novo a última fala: segundo atalho das configurações rápidas. -->
+        <service
+            android:name=".RepetirTile"
+            android:exported="true"
+            android:icon="@drawable/ic_launcher_foreground"
+            android:label="Ouvir de novo"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
 
         <!-- Atalho nas configurações rápidas. -->
         <service

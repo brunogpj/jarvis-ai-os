@@ -85,7 +85,28 @@ object Config {
         val linhas = (p.getString("eventos", "") ?: "").split("\n").filter { it.isNotBlank() }.toMutableList()
         linhas.add(0, "${hora.format(Date())}  $texto")
         p.edit().putString("eventos", linhas.take(8).joinToString("\n")).apply()
+        gravarNoArquivo(ctx, linhas[0])
     }
 
     fun eventos(ctx: Context): String = estado(ctx).getString("eventos", "") ?: ""
+
+    // ---- histórico longo (0.10.0): as 8 linhas acima não bastavam para diagnosticar nada depois de alguns minutos ----
+    private const val MAX_LINHAS = 400
+    private fun arquivoEventos(ctx: Context) = java.io.File(ctx.filesDir, "eventos.log")
+
+    @Synchronized
+    private fun gravarNoArquivo(ctx: Context, linha: String) {
+        try {
+            val f = arquivoEventos(ctx)
+            f.appendText(linha + "\n")
+            if (f.length() > 90_000) f.writeText(f.readLines().takeLast(MAX_LINHAS).joinToString("\n") + "\n")   // poda: guarda as últimas 400
+        } catch (_: Exception) {}
+    }
+
+    /** Eventos do mais novo para o mais antigo, no máximo `max`. */
+    @Synchronized
+    fun eventosTodos(ctx: Context, max: Int): List<String> = try {
+        val f = arquivoEventos(ctx)
+        if (!f.exists()) emptyList() else f.readLines().filter { it.isNotBlank() }.takeLast(max).reversed()
+    } catch (_: Exception) { emptyList() }
 }

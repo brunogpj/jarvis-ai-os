@@ -67,6 +67,7 @@ object Telemetria {
         val c = coletar(ctx)
         val r = Api.post(ctx, c) ?: return false to "sem rede"
         val resumo = "bateria ${c.optString("bateria_nivel")}% · ${c.optString("carregando")} · wifi ${c.optString("wifi_nome").ifBlank { "—" }}"
+        if (r.optBoolean("ok")) Saude.telemetriaEnviada(ctx)
         return if (r.optBoolean("ok")) true to resumo else false to ("servidor recusou: " + r.optString("erro").take(60))
     }
 }

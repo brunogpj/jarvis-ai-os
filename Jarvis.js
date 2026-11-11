@@ -2879,13 +2879,17 @@ var Jarvis = (function () {
         // Sem ela, os botões apontariam para "?action=..." relativo — link quebrado no celular.
         // Melhor degradar para notificação simples e dizer o porquê do que entregar botão morto.
         var webappUrl = String(PropertiesService.getScriptProperties().getProperty('WEBHOOK_EXEC_URL') || '');
-        if (!/^https?:\/\//.test(webappUrl)) {
+        var _semUrl = !/^https?:\/\//.test(webappUrl);
+        // Pelo APP o retorno vai direto em android_callback (sem URL de callback); a URL só serve ao link do painel (toque no corpo da notificação) e à macro antiga.
+        if (_semUrl && !(typeof Android !== 'undefined' && Android.controlesAtivo())) {
           return { status: 'error', erro: 'WEBHOOK_EXEC_URL não configurada — rode configurarExecUrl({url:"https://.../exec"}) no editor. Sem ela os botões da notificação interativa não funcionam.' };
         }
 
-        a.callback1 = webappUrl + '?action=callback_interativa&id=' + cbId + '&botao=1';
-        a.callback2 = webappUrl + '?action=callback_interativa&id=' + cbId + '&botao=2';
-        a.callback_texto = webappUrl + '?action=painel_interativa&id=' + cbId;
+        if (!_semUrl) {
+          a.callback1 = webappUrl + '?action=callback_interativa&id=' + cbId + '&botao=1';
+          a.callback2 = webappUrl + '?action=callback_interativa&id=' + cbId + '&botao=2';
+          a.callback_texto = webappUrl + '?action=painel_interativa&id=' + cbId;
+        }
         
         try {
           var cbData = {
@@ -2906,7 +2910,7 @@ var Jarvis = (function () {
       }
       
       var args = {};
-      ['hora', 'minutos', 'nivel', 'comando', 'modo', 'estado', 'titulo', 'texto', 'nome', 'destino', 'origem', 'url', 'opcao1', 'opcao2', 'callback1', 'callback2', 'callback_texto',
+      ['hora', 'minutos', 'nivel', 'comando', 'modo', 'estado', 'titulo', 'texto', 'acoes', 'nome', 'destino', 'origem', 'url', 'opcao1', 'opcao2', 'callback1', 'callback2', 'callback_texto',
        'intent_action', 'intent_package', 'intent_class', 'intent_data', 'intent_mime', 'intent_extra_key_1', 'intent_extra_val_1', 'intent_extra_key_2', 'intent_extra_val_2', 'intent_extra_key_3', 'intent_extra_val_3'
       ].forEach(function (campo) {
         if (a[campo] !== undefined && a[campo] !== null && a[campo] !== '') args[campo] = a[campo];
@@ -3165,7 +3169,14 @@ var Jarvis = (function () {
             else if (acao === 'abrirapp') { _cc.pacote = args.intent_package; _cc.classe = args.intent_class; }
             else if (acao === 'abrirurl') _cc.url = _urlOrig || args.url;
             else if (acao === 'navegar') _cc.destino = args.destino;
-            else if (acao === 'notificar') { _cc.titulo = args.titulo || 'Jarvis'; _cc.texto = args.texto; }
+            else if (acao === 'notificar') { _cc.titulo = args.titulo || 'Jarvis'; _cc.texto = args.texto; if (args.acoes) _cc.acoes = args.acoes; }
+            // NOTIFICAÇÃO INTERATIVA PELO APP (11/11): o app mostra as duas opções e devolve o toque em android_callback (a macro Notificação Interativa sai).
+            // `painel` é o link do painel (toque no corpo da notificação). `modo` 'saldo' ganha um campo de texto para os valores.
+            else if (acao === 'notificacao_interativa') {
+              _cc.id = cbId; _cc.titulo = args.titulo || 'Jarvis'; _cc.texto = args.texto; _cc.opcao1 = args.opcao1 || 'Sim'; _cc.opcao2 = args.opcao2 || 'Não';
+              if (args.callback_texto) _cc.painel = args.callback_texto;
+              if (args.modo) _cc.modo = args.modo;
+            }
             var _ordC = Android.enviarControle(acao, _cc);
             var _ackC = _ordC.ok ? Android.aguardarAck(_ordC.id, 8000) : null;
             if (_ackC && _ackC.estado !== 'erro') return { status: 'success', via: 'android', acao: acao, ordem: _ordC.id, confirmacao: _ackC.estado, detalhe: _ackC.detalhe || '' };

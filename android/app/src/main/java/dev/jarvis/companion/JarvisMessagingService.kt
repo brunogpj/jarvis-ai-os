@@ -25,6 +25,7 @@ class JarvisMessagingService : FirebaseMessagingService() {
         if (jaVista(id)) { AckQueue.enviar(this, id, "recebido", "repetida"); return }
         marcarVista(id)
 
+        Saude.ordemRecebida(this, tipo)
         Config.evento(this, "ordem $tipo ($id)")
         AckQueue.enviar(this, id, "recebido")
 

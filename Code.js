@@ -18,10 +18,10 @@
  *  script.googleusercontent.com e chamava script.google.com), e o GAS nao manda cabecalho CORS —
  *  a requisicao nao chegava. Com google.script.run a chamada e same-origin e devolve o resultado
  *  REAL, para o painel parar de anunciar sucesso que nao houve. */
-function responderCallbackInterativo(id, botao, resposta) {
+function responderCallbackInterativo(id, botao, resposta, semAviso) {
   try {
     var out = doGet({ parameter: { action: 'callback_interativa', id: String(id || ''),
-                                   botao: String(botao || ''), resposta: String(resposta || '') } });
+                                   botao: String(botao || ''), resposta: String(resposta || ''), semAviso: semAviso ? '1' : '' } });
     var txt = (out && out.getContent) ? out.getContent() : String(out);
     return { ok: !/^Erro|^N[aã]o entendi|^Digite os saldos/.test(txt), mensagem: txt };
   } catch (e) { return { ok: false, mensagem: 'Falha: ' + e.message }; }
@@ -141,7 +141,8 @@ function doGet(e) {
         
         // Confirmação no celular (era WhatsApp, fora do ar desde 10/07).
         var escolhaStr = (botao === '1' ? cbDoc.opcao1 : (botao === '2' ? cbDoc.opcao2 : resposta));
-        try { _avisarDono({ origem: 'interativa', titulo: '✅ Ação executada', texto: cbDoc.texto + '\nEscolha: ' + escolhaStr }); } catch (eAv) {}
+        // Retorno vindo do APP (semAviso): a resposta já aparece na própria notificação; este aviso era uma 2ª notificação e 8 s a mais de espera pelo ack.
+        if (e.parameter.semAviso !== '1') { try { _avisarDono({ origem: 'interativa', titulo: '✅ Ação executada', texto: cbDoc.texto + '\nEscolha: ' + escolhaStr }); } catch (eAv) {} }
         
         return ContentService.createTextOutput("Ação executada com sucesso.").setMimeType(ContentService.MimeType.TEXT);
       }
@@ -3177,6 +3178,26 @@ function doPost(e) {
       try { return json(_telemetriaRegistrar(body)); } catch (eTel) { return json({ ok: false, erro: eTel.message }); }
     }
 
+    // RETORNO DA NOTIFICAÇÃO INTERATIVA PELO APP: o toque numa das opções (ou o texto digitado no modo saldo) chega aqui com o token do app e passa pelo MESMO
+    // tratamento do callback antigo da macro (responderCallbackInterativo → callback_interativa). Devolve { ok, mensagem } para o app mostrar na notificação.
+    if (body && body.action === "android_callback") {
+      var _tkCb = PropertiesService.getScriptProperties().getProperty('ANDROID_API_TOKEN');
+      if (!body.token || !_tkCb || body.token !== _tkCb) return json({ ok: false, mensagem: 'não autorizado' });
+      var _bt = String(body.botao || '');
+      if (_bt !== '1' && _bt !== '2' && _bt !== 'texto') return json({ ok: false, mensagem: 'botão inválido' });
+      try { return json(responderCallbackInterativo(String(body.id || '').substring(0, 40), _bt, String(body.resposta || '').substring(0, 200), true)); }
+      catch (eCb) { return json({ ok: false, mensagem: eCb.message }); }
+    }
+
+    // PRESENÇA PELA CERCA GEOGRÁFICA DO APP (0.14.0): o app manda `entrou` / `permaneceu` / `saiu` de um lugar (casa|trabalho) e o servidor roda as MESMAS regras
+    // de chegada e saída da telemetria (saudação, lembretes por lugar, bateria), na hora. O Wi-Fi confirma: `entrou` com o Wi-Fi do lugar vale já; sem ele espera
+    // o `permaneceu` (2 min dentro da cerca), que evita contar quem só passou na rua. `saiu` com o Wi-Fi de casa ainda conectado é ruído de GPS e é ignorado.
+    if (body && body.action === "android_presenca") {
+      var _tkPr = PropertiesService.getScriptProperties().getProperty('ANDROID_API_TOKEN');
+      if (!body.token || !_tkPr || body.token !== _tkPr) return json({ ok: false, erro: 'não autorizado' });
+      try { return json(_presencaPorCerca(body, false)); } catch (ePr) { return json({ ok: false, erro: ePr.message }); }
+    }
+
     // TELEMETRIA PELO APP ANDROID (substitui a macro Jarvis Telemetria): mesmos campos, token PRÓPRIO do app.
     if (body && body.action === "android_telemetria") {
       var _tkTl = PropertiesService.getScriptProperties().getProperty('ANDROID_API_TOKEN');
@@ -3287,7 +3308,7 @@ function doPost(e) {
       var _PERMITIDAS_CF = {
         FALA_PROATIVA_LOCAL: /^(sim|nao)$/, FALA_RESPOSTAS_LOCAL: /^(sim|nao)$/,
         MODO_FALA_VOZ: /^(nuvem|auto|local)$/, FALA_VOLUME_DB: /^(1[0-6]|[0-9])$/,
-        FALA_FORMATO: /^(ogg|wav)$/, FALA_ARQUIVO_UNICO: /^(sim|nao)$/, ANDROID_FALAR: /^(sim|nao)$/, ANDROID_CONTROLES: /^(sim|nao)$/, ANDROID_CONTROLES_FALLBACK: /^(sim|nao)$/, ANDROID_TELEMETRIA: /^(sim|nao)$/, ANDROID_NOTIFICAR: /^(sim|nao)$/, PROATIVO_MAX_DIA: /^([1-9]|1[0-9]|20)$/, ANDROID_API_TOKEN: /^[a-f0-9]{48}$/, ANDROID_API_ESTRITO: /^(sim|nao)$/, ANDROID_NOTIF: /^(sim|nao|sombra)$/, NOTIF_APPS: /^[a-z0-9áéíóúâêôãõç.=,_ -]{1,400}$/, ANDROID_NOTIF_APPS: /^[a-z0-9áéíóúâêôãõç.=,_ -]{1,400}$/, ROTA_JEV_NOVAS: /^(sim|nao)$/, FERRAMENTAS_JEV: /^(nao|adiciona|sim)$/, INJECAO_JEV: /^(sim|nao)$/, ACAO_JEV: /^(sim|nao)$/, CATEGORIA_JEV: /^(sim|nao)$/, TTS_STYLE: /^[A-Za-zÀ-ÿ ,.\-]{0,120}$/, FERRAMENTAS_JEV_ADD: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE_CONH: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE: /^0?\.\d{1,2}$/, CONFIRMA_JEV: /^(sim|nao)$/, MONITOR_GMAIL_JEV: /^(sim|nao)$/, BUSCA_DRIVE_ATIVA: /^(sim|nao)$/, FILE_SEARCH_ATIVA: /^(sim|nao)$/, FS_LOTE: /^\d{1,2}$/, FS_MAX_MB: /^\d{1,2}$/, FS_MAX: /^\d{2,4}$/, FS_EXCLUIR: /^[^\r\n]{0,200}$/, BUSCA_DRIVE_MAX: /^\d{2,4}$/, WEB_MONITOR_JEV: /^(sim|nao)$/, WEB_MONITOR_JEV_CORTE: /^0?\.\d{1,2}$/, MONITOR_GMAIL_JEV_CORTE: /^0?\.\d{1,2}$/, FIN_AVISOS_ATIVO: /^(sim|nao)$/, FIN_NOME_DONO: /^[a-zà-ÿ ]{3,80}$/, FIN_CPF_DONO: /^\d{3}\.\d{3}$/, FIN_REMETENTES_AUTO: /^[a-zà-ÿ ;=]{0,300}$/,
+        FALA_FORMATO: /^(ogg|wav)$/, FALA_ARQUIVO_UNICO: /^(sim|nao)$/, ANDROID_FALAR: /^(sim|nao)$/, ANDROID_CONTROLES: /^(sim|nao)$/, ANDROID_CONTROLES_FALLBACK: /^(sim|nao)$/, ANDROID_TELEMETRIA: /^(sim|nao)$/, ANDROID_NOTIFICAR: /^(sim|nao)$/, GEOCERCA_BRIEFING: /^(sim|nao)$/, PROATIVO_MAX_DIA: /^([1-9]|1[0-9]|20)$/, ANDROID_API_TOKEN: /^[a-f0-9]{48}$/, ANDROID_API_ESTRITO: /^(sim|nao)$/, ANDROID_NOTIF: /^(sim|nao|sombra)$/, NOTIF_APPS: /^[a-z0-9áéíóúâêôãõç.=,_ -]{1,400}$/, ANDROID_NOTIF_APPS: /^[a-z0-9áéíóúâêôãõç.=,_ -]{1,400}$/, ROTA_JEV_NOVAS: /^(sim|nao)$/, FERRAMENTAS_JEV: /^(nao|adiciona|sim)$/, INJECAO_JEV: /^(sim|nao)$/, ACAO_JEV: /^(sim|nao)$/, CATEGORIA_JEV: /^(sim|nao)$/, TTS_STYLE: /^[A-Za-zÀ-ÿ ,.\-]{0,120}$/, FERRAMENTAS_JEV_ADD: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE_CONH: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE: /^0?\.\d{1,2}$/, CONFIRMA_JEV: /^(sim|nao)$/, MONITOR_GMAIL_JEV: /^(sim|nao)$/, BUSCA_DRIVE_ATIVA: /^(sim|nao)$/, FILE_SEARCH_ATIVA: /^(sim|nao)$/, FS_LOTE: /^\d{1,2}$/, FS_MAX_MB: /^\d{1,2}$/, FS_MAX: /^\d{2,4}$/, FS_EXCLUIR: /^[^\r\n]{0,200}$/, BUSCA_DRIVE_MAX: /^\d{2,4}$/, WEB_MONITOR_JEV: /^(sim|nao)$/, WEB_MONITOR_JEV_CORTE: /^0?\.\d{1,2}$/, MONITOR_GMAIL_JEV_CORTE: /^0?\.\d{1,2}$/, FIN_AVISOS_ATIVO: /^(sim|nao)$/, FIN_NOME_DONO: /^[a-zà-ÿ ]{3,80}$/, FIN_CPF_DONO: /^\d{3}\.\d{3}$/, FIN_REMETENTES_AUTO: /^[a-zà-ÿ ;=]{0,300}$/,
         // consultor (fase 4): margem na conta (R$), taxa ao mês (decimal), reserva-alvo (meses) e pausa do rebalanceamento (data)
         CONSULTOR_MARGEM: /^\d{1,6}$/, CONSULTOR_TAXA_MES: /^0?\.\d{1,4}$/, CONSULTOR_RESERVA_ALVO: /^\d{1,2}$/, CONSULTOR_PAUSA_ATE: /^\d{4}-\d{2}-\d{2}$/, CONSULTOR_AVISO_ATIVO: /^(sim|nao)$/, CONSULTOR_AVISO_MIN: /^\d{1,6}$/
       };
@@ -3438,6 +3459,14 @@ function doPost(e) {
     if (body && body.action === "android_conversa") {
       var _spCv = PropertiesService.getScriptProperties(), _tkCv = _spCv.getProperty('ANDROID_API_TOKEN');
       if (!body.token || !_tkCv || body.token !== _tkCv) return ContentService.createTextOutput("Erro: Não autorizado").setMimeType(ContentService.MimeType.TEXT);
+      // BOTÃO DA NOTIFICAÇÃO (Sim / Não / Desfaz da caderneta): só a cadeia de confirmação. Sem proposta aberta NÃO vai ao modelo
+      // (11/11: um "sim" solto virou o saldo do Swile); responde que não há nada aguardando.
+      if (body.botao === true && /^(sim|n[ãa]o|desfaz)$/i.test(String(body.message || '').trim())) {
+        var _fcB = null;
+        try { _fcB = (typeof Financas !== 'undefined' && Financas.conversar) ? Financas.conversar(String(body.message).trim()) : null; } catch (eFcB) { _fcB = null; }
+        var _txB = (_fcB && _fcB.resp) ? _fcB.resp : 'Não há nada aguardando a sua confirmação. A proposta vale poucos minutos.';
+        return ContentService.createTextOutput(_txB).setMimeType(ContentService.MimeType.TEXT);
+      }
       body.action = "voice_command";
       body.token = _spCv.getProperty('VOICE_API_TOKEN');
       body.falar = 'local';
@@ -4512,13 +4541,26 @@ function doPost(e) {
         if (body.androidControle) {
           try {
             var _ac = body.androidControle, _acao = String(_ac.acao || ''), _cmp = {};
-            ['nivel', 'comando', 'estado', 'pacote', 'classe', 'url', 'destino', 'titulo', 'texto'].forEach(function (k) { if (_ac[k] !== undefined) _cmp[k] = _ac[k]; });
+            ['nivel', 'comando', 'estado', 'pacote', 'classe', 'url', 'destino', 'titulo', 'texto', 'acoes'].forEach(function (k) { if (_ac[k] !== undefined) _cmp[k] = _ac[k]; });
             var _eo = Android.enviarControle(_acao, _cmp);
             saida.androidControle = { enviado: _eo.ok, id: _eo.id, erro: _eo.erro || null, ack: _eo.ok ? Android.aguardarAck(_eo.id, 10000) : null };
           } catch (eAc) { saida.androidControle = { erro: eAc.message }; }
         }
         // Orçamento diário de interrupções proativas (só leitura): limite, consumo de hoje, silêncio e snapshot de presença. O ajuste do limite é config_fala PROATIVO_MAX_DIA.
         if (body.proativoEstado) { try { saida.proativoEstado = diagProativoEstado().estado; } catch (ePe) { saida.proativoEstado = { erro: ePe.message }; } }
+        // Notificação interativa pelo app, UMA de teste (modo 'acao': o toque só registra, não conversa com o modelo): interativaTeste:{titulo,texto,opcao1,opcao2,modo}.
+        if (body.interativaTeste) {
+          try {
+            var _it = body.interativaTeste;
+            saida.interativaTeste = Jarvis.controlarDispositivo({ acao: 'notificacao_interativa', titulo: String(_it.titulo || 'Teste da notificação interativa'),
+              texto: String(_it.texto || 'Toque em uma das opções.'), opcao1: String(_it.opcao1 || 'Sim'), opcao2: String(_it.opcao2 || 'Não'), modo: String(_it.modo || 'acao') });
+          } catch (eIt) { saida.interativaTeste = { erro: eIt.message }; }
+        }
+        // Cerca geográfica, só SIMULAÇÃO (não fala, não grava o estado): presencaTeste:{evento:'entrou'|'permaneceu'|'saiu', lugar?, wifi_nome?} mostra o que o servidor faria.
+        if (body.presencaTeste) {
+          try { var _pt = body.presencaTeste; saida.presencaTeste = _presencaPorCerca({ evento: _pt.evento, lugar: _pt.lugar || 'casa', wifi_nome: _pt.wifi_nome || '', bateria_nivel: _pt.bateria_nivel || '50', carregando: 'Desligar' }, true); }
+          catch (ePt) { saida.presencaTeste = { erro: ePt.message }; }
+        }
         // Telemetria pelo app: androidTelemetria:true pede AGORA (não depende de ANDROID_TELEMETRIA); o app responde em android_telemetria e a leitura mais recente vem em `telemetriaUltima`.
         if (body.androidTelemetria) {
           try {
@@ -6424,10 +6466,18 @@ function _fmtBRL(v) { return 'R$ ' + Number(v).toFixed(2).replace('.', ','); }
 /** Aviso financeiro: notificação do MacroDroid E o MESMO texto falado pela voz do celular (14/10: ele recebeu o aviso e o Jarvis não falou).
  *  Fora da janela de silêncio (22:30–07:00) fica só a notificação. A fala sai pelo TTS do aparelho, nunca vira arquivo no Drive.
  *  O log guarda a contagem, nunca o valor. SWILE_AVISO_REGISTRO=nao cala só os avisos de registro. */
+/** Botões da notificação do aviso financeiro, pelo que o próprio texto pede: "Diga sim ou não" → Sim/Não; "Diga desfaz" → Desfaz. Vazio = sem botões. */
+function _finAcoesDoTexto(texto) {
+  var t = String(texto || '');
+  if (/sim ou n[ãa]o/i.test(t)) return 'sim,nao';
+  if (/(^|[^a-zà-ú])desfaz([^a-zà-ú]|$)/i.test(t)) return 'desfaz';
+  return '';
+}
+
 function _finAvisarCaderneta(titulo, texto, origem) {
   try {
     if (origem === 'registro' && String(PropertiesService.getScriptProperties().getProperty('SWILE_AVISO_REGISTRO') || 'sim').toLowerCase() === 'nao') return;
-    if (typeof _avisarDono === 'function') _avisarDono({ origem: 'swile_' + origem, titulo: titulo, texto: texto, falar: texto, falarLocal: true, logResumo: 'swile→caderneta: ' + origem + ' [valor não registrado]' });
+    if (typeof _avisarDono === 'function') _avisarDono({ origem: 'swile_' + origem, titulo: titulo, texto: texto, falar: texto, falarLocal: true, acoes: _finAcoesDoTexto(texto), logResumo: 'swile→caderneta: ' + origem + ' [valor não registrado]' });
   } catch (e) {}
 }
 
@@ -8306,7 +8356,7 @@ function _avisarDono(o) {
   if (texto.length > 400) texto = texto.substring(0, 399).replace(/\s+\S*$/, '') + '…';
   var r = { ok: false, notificacao: null, fala: null };
   if (typeof Jarvis === 'undefined' || !Jarvis.controlarDispositivo) return r;
-  try { r.notificacao = Jarvis.controlarDispositivo({ acao: 'notificar', titulo: titulo, texto: texto }); } catch (eN) { r.notificacao = { status: 'error', erro: eN.message }; }
+  try { r.notificacao = Jarvis.controlarDispositivo({ acao: 'notificar', titulo: titulo, texto: texto, acoes: o.acoes ? String(o.acoes) : undefined }); } catch (eN) { r.notificacao = { status: 'error', erro: eN.message }; }
   if (o.falar && !_dentroDoSilencio()) {
     try { r.fala = Jarvis.controlarDispositivo({ acao: 'falar', texto: String(o.falar), local: o.falarLocal === true }); } catch (eF) { r.fala = { status: 'error', erro: eF.message }; }
   }
@@ -8685,7 +8735,9 @@ function _avaliarEventosProativos(tel, opts) {
   // Mesma leitura que o contexto do voice_command usa — ver _telCarregando (fonte única).
   var carregando = _telCarregando(bruto.carregando || '');
   var ssid = _limparValorTelemetria(bruto.wifi_nome || bruto.wifi || '');
-  var local = _localPorSsid(ssid);
+  // opts.forcarLocal: a CERCA GEOGRÁFICA do app (0.14.0) disse onde o dono está ('casa' | 'trabalho' | 'outro'). Vale no lugar do Wi-Fi e sem o
+  // debounce de saída (a cerca já espera o tempo de permanência): chegada e saída saem na hora, não no próximo ping de 15 min.
+  var local = opts.forcarLocal ? String(opts.forcarLocal) : _localPorSsid(ssid);
 
   // ── snapshot anterior ──
   var snap = {};
@@ -8699,7 +8751,7 @@ function _avaliarEventosProativos(tel, opts) {
   if (localAnt === null) {
     localNovo = local;                                  // primeira leitura: só memoriza
   } else if (local !== localAnt) {
-    if (local === 'casa' || local === 'trabalho') {
+    if (local === 'casa' || local === 'trabalho' || opts.forcarLocal) {
       localNovo = local; transicao = { de: localAnt, para: local };
     } else {
       var candN = (snap.candidato === local ? Number(snap.candN || 0) : 0) + 1;
@@ -8735,9 +8787,24 @@ function _avaliarEventosProativos(tel, opts) {
       var txtCasa = 'Bem-vindo, Bruno.' + (naoLidos !== null
         ? (naoLidos > 0 ? ' Você tem ' + naoLidos + (naoLidos === 1 ? ' e-mail não lido.' : ' e-mails não lidos.') : ' Sua caixa de entrada está limpa.')
         : '');
-      var gCasa = _governanca('chegou_casa', { cooldownMin: 180, simular: simular });
-      if (gCasa.permitido) _falas.push(txtCasa);
-      disparos.push({ evento: 'chegou_casa', texto: txtCasa, permitido: gCasa.permitido, motivo: gCasa.motivo || null });
+      // RESUMO DO DIA NA CHEGADA (cerca geográfica, 11/11): no lugar da macro Chegada em Casa. Mesma montagem determinística (sem modelo) e o mesmo
+      // dedupe 'chegada' de 4 h; entra na MESMA fala dos lembretes por lugar (um aviso só) e substitui a saudação curta. Dentro do dedupe, fica a saudação.
+      var _resumoChegada = null, _ckChegada = null;
+      if (opts.briefingChegada) {
+        try {
+          _ckChegada = 'briefing_chegada_' + Utilities.formatDate(new Date(), 'America/Sao_Paulo', 'yyyy-MM-dd');
+          if (!CacheService.getScriptCache().get(_ckChegada)) {
+            _resumoChegada = _montarBriefingChegada();
+            try { if (typeof _prepararTextoFala === 'function') _resumoChegada = _prepararTextoFala(_resumoChegada); } catch (ePrep) {}
+          }
+        } catch (eBc) { _resumoChegada = null; }
+      }
+      var gCasa = _governanca('chegou_casa', { cooldownMin: 180, simular: simular, pedido: !!_resumoChegada });
+      if (gCasa.permitido) {
+        _falas.push(_resumoChegada || txtCasa);
+        if (_resumoChegada && !simular) { try { CacheService.getScriptCache().put(_ckChegada, '1', 14400); } catch (ePut) {} }
+      }
+      disparos.push({ evento: 'chegou_casa', texto: _resumoChegada || txtCasa, resumoDoDia: !!_resumoChegada, permitido: gCasa.permitido, motivo: gCasa.motivo || null });
     } else if (transicao.para === 'trabalho') {
       /* A PRESENÇA NÃO FALA DE PONTO quando o ponto já tem dono. O ponto é coberto por DOIS
        * mecanismos dedicados — o alerta agendado (tag ponto) e a checagem ponto_ausente — e a
@@ -8967,6 +9034,32 @@ function configurarProativo(args) {
 
 /** TELEMETRIA PERIÓDICA · pinga o webhook jarvis_telemetria do MacroDroid; a macro responde POSTando
  *  o status atual do aparelho na rota action:'telemetria'. Instalado a cada 15 min por configurarPingTelemetria(). */
+/** Decide o que a cerca geográfica diz sobre a presença e, se for transição, roda as regras proativas. `simular`: não fala nem grava. */
+function _presencaPorCerca(b, simular) {
+  var lugar = String(b.lugar || 'casa').toLowerCase();
+  if (lugar !== 'casa' && lugar !== 'trabalho') return { ok: false, erro: 'lugar inválido' };
+  var ev = String(b.evento || '').toLowerCase();
+  var wifi = _limparValorTelemetria(b.wifi_nome || '');
+  var noWifiDoLugar = _localPorSsid(wifi) === lugar;
+  var forcar = null, motivo = '';
+  if (ev === 'permaneceu') { forcar = lugar; motivo = 'ficou 2 min dentro da cerca'; }
+  else if (ev === 'entrou') {
+    if (noWifiDoLugar) { forcar = lugar; motivo = 'entrou na cerca e o Wi-Fi confirma'; }
+    else motivo = 'entrou na cerca; espera permanecer (ou o Wi-Fi) para confirmar';
+  } else if (ev === 'saiu') {
+    if (noWifiDoLugar) motivo = 'saiu da cerca mas segue no Wi-Fi do lugar: ruído de GPS, ignorado';
+    else { forcar = 'outro'; motivo = 'saiu da cerca'; }
+  } else return { ok: false, erro: 'evento inválido' };
+  if (!forcar) return { ok: true, acao: 'nenhuma', motivo: motivo };
+  var tel = { bateria_nivel: b.bateria_nivel, carregando: b.carregando, wifi_nome: b.wifi_nome, volume_toque: b.volume_toque, origem: 'cerca' };
+  var briefingOn = lugar === 'casa' && String(PropertiesService.getScriptProperties().getProperty('GEOCERCA_BRIEFING') || 'sim').toLowerCase() !== 'nao';
+  var r = _avaliarEventosProativos(tel, { forcarLocal: forcar, simular: simular === true, briefingChegada: briefingOn });
+  try {
+    if (!simular && typeof Jarvis !== 'undefined' && Jarvis.registrarEvento) Jarvis.registrarEvento({ tool: 'presenca:cerca', ms: 0, ok: true, resumo: lugar + ' · ' + ev + ' → ' + forcar + ' · ' + motivo });
+  } catch (eEv) {}
+  return { ok: true, acao: 'transicao', local: forcar, motivo: motivo, resultado: r };
+}
+
 /** Guarda a telemetria e avalia os eventos proativos. Fonte única das duas portas (macro e app). */
 function _telemetriaRegistrar(body) {
   var bodyTel = {};

@@ -37,12 +37,15 @@ class NotificacaoService : NotificationListenerService() {
     }
 
     override fun onListenerConnected() {
+        ligada = true; Saude.escutaLigada(this)
         Config.evento(this, "notificações: escuta ligada")
         exec.execute { atualizarConfig(this) }
         if (!sondando) { sondando = true; relogio.post(sonda) }
     }
 
     override fun onListenerDisconnected() {
+        ligada = false; Saude.escutaCaiu(this)
+        Config.evento(this, "notificações: escuta DESLIGADA pelo sistema")
         sondando = false; relogio.removeCallbacks(sonda)
         super.onListenerDisconnected()
     }
@@ -72,6 +75,9 @@ class NotificacaoService : NotificationListenerService() {
     } catch (e: PackageManager.NameNotFoundException) { pacote }
 
     companion object {
+        /** true enquanto o sistema mantém o serviço ligado (some junto com o processo; o sistema religa e volta a true). */
+        @Volatile var ligada = false
+
         /** Nome do app como o servidor o conhece; volta o próprio pacote quando o Android esconde o app (ver rotuloDe). */
         fun rotuloPublico(ctx: android.content.Context, pacote: String): String = try {
             ctx.packageManager.getApplicationLabel(ctx.packageManager.getApplicationInfo(pacote, 0)).toString()
@@ -136,7 +142,7 @@ object NotifFila {
                     val corpo = JSONObject(item.toString()).put("action", "android_notificacao")
                     corpo.remove("em")
                     val r = Api.post(app, corpo)
-                    if (r?.optBoolean("ok") == true) { feito = true; break }
+                    if (r?.optBoolean("ok") == true) { feito = true; Saude.notifEnviada(app, item.optString("app")); break }
                 }
             }
             if (!feito) return                                   // sem rede: fica na fila para a próxima chance

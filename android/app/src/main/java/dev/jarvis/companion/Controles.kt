@@ -28,7 +28,8 @@ object Controles {
             "abrirapp" -> abrirApp(ctx, d["pacote"] ?: "", d["classe"] ?: "")
             "abrirurl" -> abrirUrl(ctx, d["url"] ?: "")
             "navegar" -> navegar(ctx, d["destino"] ?: "")
-            "notificar" -> notificar(ctx, d["titulo"] ?: "Jarvis", d["texto"] ?: "")
+            "notificar" -> notificar(ctx, d["titulo"] ?: "Jarvis", d["texto"] ?: "", d["acoes"] ?: "")
+            "notificacao_interativa" -> NotificacaoInterativa.mostrar(ctx, d)
             else -> Resultado(false, "ação não permitida: ${d["acao"]}")
         }
     } catch (e: SecurityException) {
@@ -120,7 +121,7 @@ object Controles {
 
     // ---- notificar: aviso proativo do Jarvis (substitui a macro Jarvis Notificar). Canal próprio, importância alta (aparece e toca como aviso).
     private var proximoIdAviso = 5000
-    private fun notificar(ctx: Context, titulo: String, texto: String): Resultado {
+    private fun notificar(ctx: Context, titulo: String, texto: String, acoes: String): Resultado {
         if (texto.isBlank() && titulo.isBlank()) return Resultado(false, "aviso vazio")
         val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.createNotificationChannel(android.app.NotificationChannel("avisos", "Avisos do Jarvis", NotificationManager.IMPORTANCE_HIGH))
@@ -129,8 +130,18 @@ object Controles {
         val n = android.app.Notification.Builder(ctx, "avisos")
             .setSmallIcon(android.R.drawable.ic_dialog_info).setContentTitle(titulo.take(120)).setContentText(texto.take(300))
             .setStyle(android.app.Notification.BigTextStyle().bigText(texto.take(1000)))
-            .setContentIntent(abrir).setAutoCancel(true).build()
-        nm.notify(proximoIdAviso++, n)
+            .setContentIntent(abrir).setAutoCancel(true)
+        val nid = proximoIdAviso++
+        // Botões do aviso da caderneta ("sim,nao" ou "desfaz"): só as três frases fechadas de AcaoNotificacao; qualquer outra é ignorada.
+        val rotulos = mapOf("sim" to ("Sim" to "sim"), "nao" to ("Não" to "não"), "desfaz" to ("Desfaz" to "desfaz"))
+        acoes.split(",").map { it.trim() }.filter { rotulos.containsKey(it) }.take(3).forEachIndexed { k, a ->
+            val (rotulo, frase) = rotulos.getValue(a)
+            val pi = android.app.PendingIntent.getBroadcast(ctx, nid * 4 + k,
+                Intent(ctx, AcaoNotificacao::class.java).putExtra("frase", frase).putExtra("nid", nid).putExtra("titulo", titulo.take(120)),
+                android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT)
+            n.addAction(android.app.Notification.Action.Builder(null, rotulo, pi).build())
+        }
+        nm.notify(nid, n.build())
         if (proximoIdAviso > 5999) proximoIdAviso = 5000
         return Resultado(true, "aviso mostrado")
     }

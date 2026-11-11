@@ -25,7 +25,7 @@ Projeto Google Apps Script gerenciado localmente via clasp.
 
 | Deployment ID | Versão | Descrição |
 |---|---|---|
-| `<DEPLOYMENT_ID>` | **@590** | **ATIVA** — "Notificacao lida uma vez so, cobranca do ponto fora do orcamento diario, PROATIVO_MAX_DIA no config_fala e proativoEstado no ler_debug". Anteriores: **@589** (gancho androidControle do ler_debug repassa titulo e texto), **@588** (telemetria e avisos pelo app Android: rota `android_telemetria`, ordens `telemetria` e `notificar`, interruptores `ANDROID_TELEMETRIA` e `ANDROID_NOTIFICAR`), **@587** (lanterna por voz manda estado ligar/desligar quando a frase diz; controles do app Android ligados), **@586** (controles do celular pelo app Android: ordem `controle`, canal desligado ao subir), @585 (Pix enviado e pagamento de conta do Mercado Pago), @584 (remetente de confiança no Pix recebido), **@583** (parser do Swile ignora propaganda: o cupom de R$ 100 virava compra), @582/@581 (rota `android_dashboard`), @580 (autodiagnóstico, idioma da voz e limpeza do versículo; o @579 subiu código velho por um `clasp pull` antes do push e foi substituído) |
+| `<DEPLOYMENT_ID>` | **@597** | **ATIVA** — "Retorno da notificacao interativa pelo app nao manda mais o aviso redundante de acao executada". Anteriores: **@596** (notificacao interativa pelo app nao exige a WEBHOOK_EXEC_URL; o @595 subiu sem essa correcao), **@594** (notificacao interativa pelo app: ordem de controle e rota `android_callback`), **@593** (cerca geografica: rota `android_presenca` e resumo do dia ao chegar em casa), **@592** (botao Sim/Nao/Desfaz so consulta a confirmacao pendente, nunca cai no modelo), **@591** (botoes Sim/Nao/Desfaz nas notificacoes da caderneta), **@590** (notificacao lida uma vez so, cobranca do ponto fora do orcamento diario, `PROATIVO_MAX_DIA` no `config_fala`, `proativoEstado` no `ler_debug`), Anteriores: **@589** (gancho androidControle do ler_debug repassa titulo e texto), **@588** (telemetria e avisos pelo app Android: rota `android_telemetria`, ordens `telemetria` e `notificar`, interruptores `ANDROID_TELEMETRIA` e `ANDROID_NOTIFICAR`), **@587** (lanterna por voz manda estado ligar/desligar quando a frase diz; controles do app Android ligados), **@586** (controles do celular pelo app Android: ordem `controle`, canal desligado ao subir), @585 (Pix enviado e pagamento de conta do Mercado Pago), @584 (remetente de confiança no Pix recebido), **@583** (parser do Swile ignora propaganda: o cupom de R$ 100 virava compra), @582/@581 (rota `android_dashboard`), @580 (autodiagnóstico, idioma da voz e limpeza do versículo; o @579 subiu código velho por um `clasp pull` antes do push e foi substituído) |
 | `<DEPLOYMENT_ID>` | @578 | Antiga ATIVA (até @580) — "Notificacoes do app Android em modo sombra (guarda sem processar)". Anterior: @577 |  **ATIVA-ANTERIOR** — "Lista de apps propria do app Android (ANDROID_NOTIF_APPS)". Anterior: @575 |  **ATIVA-ANTERIOR** — "Notificacoes pelo app Android: rotas android_notif_config e android_notificacao (canal desligado)". Anterior: @574 |  **ATIVA-ANTERIOR** — "Voz premium na conversa do app Android: rota android_voz". Anterior: @573 |  **ATIVA-ANTERIOR** — "Conversa por toque do app Android: rota android_conversa com token proprio". Anterior: @572 |  **ATIVA-ANTERIOR** — "Fala pelo app: ordem aceita pelo FCM sem ack nao e falha; token proprio do app Android (ANDROID_API_TOKEN)". Anterior: @571 |  **ATIVA-ANTERIOR** — "Ponto nao acumula marcas antigas; app Android registra o projeto do Firebase sozinho". Anteriores: @570 (canal Android, desligado), @569 (nova cara fases 2 a 4). Anteriores: @568 (fase 1, sem Laboratorio e Automacoes), @566 (File Search desligado, aviso do teto do Google) |
 | `<DEPLOYMENT_ID>` | @25 | Antiga — "TesteJobs" |
 | `<DEPLOYMENT_ID>` | @HEAD | Cabeça (muda a cada push, não é a de produção) |
@@ -127,7 +127,7 @@ tráfego interno; inclui `NOTIF` da fila de notificações) → rate limit globa
 `janela_notificacoes` / `fala_direta` / `config_fala` / `config_financas` / `config_gemini` / `ler_debug` (todas com
 `VOICE_API_TOKEN`) → diag (`DIAG_TOKEN`). `config_fala` troca, por HTTP, só uma
 lista fechada de chaves da entrega da fala (`FALA_PROATIVA_LOCAL`,
-`FALA_RESPOSTAS_LOCAL`, `MODO_FALA_VOZ`, `FALA_VOLUME_DB` 0–16, `FALA_FORMATO`, `FALA_ARQUIVO_UNICO`, `ROTA_JEV_NOVAS` sim|nao, `FIN_AVISOS_ATIVO` sim|nao, `FIN_NOME_DONO`, `FIN_CPF_DONO`, `ANDROID_FALAR`, `ANDROID_NOTIF`, `ANDROID_CONTROLES`, `ANDROID_CONTROLES_FALLBACK`, `ANDROID_TELEMETRIA` e `ANDROID_NOTIFICAR` sim|nao, `PROATIVO_MAX_DIA` 1–20).
+`FALA_RESPOSTAS_LOCAL`, `MODO_FALA_VOZ`, `FALA_VOLUME_DB` 0–16, `FALA_FORMATO`, `FALA_ARQUIVO_UNICO`, `ROTA_JEV_NOVAS` sim|nao, `FIN_AVISOS_ATIVO` sim|nao, `FIN_NOME_DONO`, `FIN_CPF_DONO`, `ANDROID_FALAR`, `ANDROID_NOTIF`, `ANDROID_CONTROLES`, `ANDROID_CONTROLES_FALLBACK`, `ANDROID_TELEMETRIA` e `ANDROID_NOTIFICAR` sim|nao, `PROATIVO_MAX_DIA` 1–20 e `GEOCERCA_BRIEFING` sim|nao).
 
 ## Voz no Android (estado em 28/09/2026)
 
@@ -567,7 +567,7 @@ Peculiaridades medidas via ADB:
 
 ### App Android próprio (substitui o MacroDroid; código em `android/`, plano em `docs/android-app/PLANO.md`)
 
-App Kotlin (`dev.jarvis.companion`) que recebe ordens do Jarvis por **FCM** e as confirma (ack). Versão atual **0.7.5-wifi** (versionCode 31; 0.7.0 controles, 0.7.1 abertura do Sisponto, 0.7.2/0.7.3 telemetria e avisos, 0.7.4 nome dos apps com `QUERY_ALL_PACKAGES`, 0.7.5 último Wi-Fi guardado), instalada por
+App Kotlin (`dev.jarvis.companion`) que recebe ordens do Jarvis por **FCM** e as confirma (ack). Versão atual **0.15.2-interativa** (versionCode 48; 0.7 controles, Sisponto, telemetria e Wi-Fi · 0.8 botões Sim/Não/Desfaz · 0.9 assistente e widget · 0.10 saúde · 0.11 Compose · 0.12 orbe com estados · 0.13 ouvir de novo · 0.14 cerca geográfica · 0.15 notificação interativa), instalada por
 `adb install -r` ou pelo Arquivos (`node android/entregar.mjs` compila e copia o APK para `Download/jarvis-fase1.apk`; depois do build, `git checkout
 android/gradle/wrapper/gradle-wrapper.properties`, que o Gradle sobe para uma versão incompatível). Abas **Chat | Dashboard | Dispositivo** (Dashboard lê a rota
 `android_dashboard`, só leitura). Rotas do Web App com `ANDROID_API_TOKEN` próprio: `android_registrar`, `android_ack`, `android_conversa`, `android_voz`,
@@ -623,6 +623,54 @@ dá para desativá-las no MacroDroid. Voltar: `config_fala` com `ANDROID_CONTROL
 - **Notificação lida duas vezes (Agenda Edu).** O app em `NOTIF_FALAR_APPS` fazia o job falar "Notificação do <app>. …" e depois a regra `avisar` (modo falar), a escalada por urgência ("Atenção. …") ou a triagem do JEV falavam DE NOVO, com texto diferente (a trava de fala idêntica de 20 s não pega).
   Sinal nos logs: duas partidas do `FalaService` por notificação (07:27:31 e 07:27:42; 08:43:15 e 08:43:38) e um só `notif:processada`. Agora `_notifProcessar` marca `_NOTIF_JOB_FALOU` enquanto as regras rodam e as três etapas pulam a fala quando o job já leu a notificação.
   Sem a fala do job a regra continua falando uma vez. Testes: `tests-local/notif-fala-unica.test.js`.
+
+**Botões Sim / Não / Desfaz nas notificações da caderneta (0.8, @591/@592).** O aviso que pede "Diga sim ou não" ganha os botões Sim e Não; o que diz "Diga desfaz", o botão Desfaz
+(`_finAcoesDoTexto` em Code.js escolhe pelo texto; o campo `acoes` vai na ordem `notificar`). O toque manda ao Jarvis a MESMA frase por `android_conversa` com `botao:true`, e o servidor
+consulta SÓ a confirmação pendente da caderneta (`Financas.conversar`): sem proposta aberta responde "Não há nada aguardando a sua confirmação" e NUNCA cai no modelo (11/11: um "sim" solto
+virou o saldo do Swile). O "Desfaz" tem duas etapas: a primeira resposta é "A última ação foi há N dias: … Desfaço? Diga sim ou não." e a notificação volta com Sim e Não. Prova: toque em
+Desfaz, depois em Não ("Certo, não registrei nada."), e o gasto continuou na caderneta.
+
+**Assistente, widget e tela Ouvindo (0.9–0.12).** O seletor "App assistente digital" do MIUI só lista apps com `VoiceInteractionService`: ter a tela de `ASSIST` não bastava (`AssistenteVoz.kt`:
+serviço, sessão e um `RecognitionService` vazio que o cadastro exige; a sessão abre a `ConversaActivity`, que é exportada por isso). O botão de energia, o widget (`WidgetConversa`) e o atalho abrem a escuta.
+**Widget (RemoteViews) só aceita um conjunto fechado de classes**: um `<View>` no layout dava "Não é possível carregar o widget" (`Class not allowed to be inflated`); `ImageView` resolveu.
+A tela Ouvindo é Compose (`ui/OuvindoTela.kt`) e o orbe tem estados — OUVINDO (ciano, cresce com o volume), PENSANDO (violeta, arco girando), FALANDO (verde, pulsa e mostra a resposta), NÃO OUVI NADA (âmbar). A tela
+fica aberta até a fala acabar: o `FalaEstado` (object em FalaService.kt: fase, texto, premium) diz em que pé está a conversa; resposta longa por voz premium mostra o texto por 5–14 s e fecha. Os eventos
+`orbe: pensando`, `orbe: falando`, `orbe: fala acabou; tela fecha sozinha` e `ouvindo: tela fechada` ficam no histórico do app. Ganchos de ADB: `--ez ouvir true --ez demo true [--es fase ouvindo|pensando|falando|nada]`.
+
+**Ouvir de novo a última fala (0.13).** `UltimaFala` guarda a última fala de QUALQUER origem (conversa, briefing, aviso): o ARQUIVO de áudio quando veio por voz premium (o do Drive é sobrescrito a cada fala),
+senão o texto (voz do celular); só a última, só no aparelho, amostras de voz (`id` começando com "t") não entram. Repetir: pílula "🔊 Última fala" e "🔊 ouvir" em cada resposta no Chat, botão na tela Ouvindo, a frase "repete /
+fala de novo / o que você disse" (resolvida no app, sem servidor; "repete o briefing" continua sendo do servidor), o tile "Ouvir de novo" nas configurações rápidas e `--ez repetir true` por ADB.
+
+**Saúde do app e histórico (0.10).** Cartão "Saúde do app" na aba Dispositivo (escuta viva há quanto tempo, religações do dia, última notificação enviada por app, fila, última ordem, telemetria, início do processo) e cartão
+"Permissões" (as que faltam abrem a tela certa do Android). O histórico de eventos do app é um arquivo (`files/eventos.log`, últimas 400 linhas; antes eram 8): `adb shell run-as dev.jarvis.companion tail -30 files/eventos.log`.
+`NotificacaoService.ligada` + `Saude.escutaLigada/escutaCaiu` registram "escuta DESLIGADA pelo sistema" / "escuta ligada".
+
+**Compose (0.11).** O app todo é Jetpack Compose + Material 3 (BOM 2025.02.00, a última que compila com compileSdk 35): `ui/Tema.kt` (paleta e fontes), `Componentes.kt`, `ChatTela.kt`, `DashboardTela.kt`,
+`DispositivoTela.kt`, `OuvindoTela.kt`, `Raiz.kt`; a `MainActivity` ficou com ciclo de vida, pareamento e ganchos de ADB (`--ei aba`, `--ei rolar`, `--ez ouvir`, `--ez repetir`, `--ez rotulos`). Capturar tela: `adb exec-out screencap -p`.
+
+**Cerca geográfica da casa (0.14, @593).** `Geocerca.kt` (Google Play Services, `play-services-location`): o dono toca "Definir casa aqui" EM CASA (Dispositivo → Cerca geográfica; recusa precisão pior que 80 m) e o ponto (lat/lng) fica SÓ no
+aparelho (nada no repositório nem no servidor). Raio 100/150/250 m. Três transições: `entrou`, `permaneceu` (2 min dentro) e `saiu`. O app manda ao servidor `android_presenca` {evento, lugar, wifi_nome, bateria…}; `_presencaPorCerca` decide: `entrou` com o
+Wi-Fi do lugar vale na hora, sem ele espera o `permaneceu` (quem só passou na rua não conta); `saiu` com o Wi-Fi de casa ainda ligado é ruído de GPS e é ignorado. Chegada e saída rodam as MESMAS regras da telemetria
+(`_avaliarEventosProativos` com `opts.forcarLocal`, sem o debounce de saída): saudação, lembretes por lugar, bateria — na hora, não no ping de 15 min. **Na chegada a cerca fala o RESUMO DO DIA** (`_montarBriefingChegada`, determinístico) na MESMA fala dos
+lembretes, no lugar da saudação curta, uma vez a cada 4 h (cache `briefing_chegada_<data>`, 14400 s; interruptor `GEOCERCA_BRIEFING=nao` volta só à saudação). Evento `presenca:cerca` no servidor; `ler_debug` com `presencaTeste:{evento,lugar?,wifi_nome?}`
+SIMULA (não fala nem grava). O Android apaga as cercas ao reiniciar/atualizar: `BootReceiver` e `JarvisApp.onCreate` registram de novo, e o registro dispara `entrou`/`permaneceu` iniciais (idempotentes no servidor). Evento que não chega ao servidor
+fica como pendente e é reenviado ao abrir o app. Macro **Chegada em Casa** (ela chamava `briefing` com `dedupe:'chegada'`): pode sair depois do primeiro teste real de chegada.
+
+**Notificação interativa pelo app (0.15, @594–@597), no lugar da macro.** A ação `notificacao_interativa` do `controlarDispositivo` (lista fechada de controles) vai como ordem `controle`: o app (`NotificacaoInterativa.kt`) mostra a pergunta com DUAS opções (rótulos
+`opcao1`/`opcao2`) e, no modo `saldo`, com um campo de texto (RemoteInput) para digitar os valores. O toque volta por `android_callback` (token do app), que roda o MESMO tratamento do callback antigo (`responderCallbackInterativo`); a notificação vira a
+resposta do servidor, sem botões. Retorno vindo do app não manda mais o aviso redundante "✅ Ação executada" (`semAviso`). A `WEBHOOK_EXEC_URL` deixou de ser obrigatória (só o link do painel, toque no corpo da notificação, depende dela).
+`ler_debug` com `interativaTeste:{titulo,texto,opcao1,opcao2,modo:'acao'|'saldo'}` manda UMA de teste (modo `acao` não conversa com o modelo). **O modo `saldo` GRAVA o saldo do Swile no Firestore** (`definirSaldoFinanceiro`, origem "recarga"):
+digitar um valor só deixa a mobilidade "não informada". **ANR achado ao testar (11/11): o receptor do toque não pode esperar o servidor** — o retorno leva mais de 10 s e o Android matou o app (`am_anr`, `bg anr`). Agora o receptor só enfileira (fila no aparelho,
+`NotificacaoInterativa.drenar`, reenvio, descarte após 15 min) e responde na hora; os botões Sim/Não/Desfaz também deixaram de segurar o broadcast.
+
+**Macros do MacroDroid que já saíram de uso (11/11):** Volume, Lanterna, Mídia, Não Perturbe, Notificações Premium, Ponto, Conversa Premium, Falar, Dispositivo, Telemetria, Notificar, Notificação Interativa e Jarvis Volume da Fala.
+Ainda no MacroDroid: **Viagem** (GPS + placa de limite lida do Google Maps; por último) e **Chegada em Casa** (até o teste real da cerca). Falta no app: `intent` com extras (raro) e a ponte do painel (`WEBHOOK_EXEC_URL`).
+
+**Divergência de saldo do Swile (11/11, para acompanhar).** O saldo que o Jarvis fala (caderneta: "recarga informada − gastos do mês") pode divergir do que a tela do app do Swile mostra (em 11/11 divergiu nas duas carteiras, e a mobilidade do Jarvis estava negativa). A caderneta é a fonte da fala; o saldo do Firestore é só a reserva, e o teste do modo saldo o deixou incompleto. Ler a tela pelo ADB: abrir o app do Swile (`monkey -p <pacote> -c android.intent.category.LAUNCHER 1`) e `uiautomator dump`. Valores reais NÃO entram neste arquivo (repositório público).
+
+**Armadilhas de ferramenta (11/11):** (1) `\b` em código gerado por Python/heredoc vira caractere de retorno (backspace) e a regex nunca casa; depois de editar, `grep -c $'\x08' arquivo` deve dar 0. (2) `grep -c` sem ocorrência sai com código 1 e QUEBRA uma
+cadeia `&&` — as edições seguintes não rodam em silêncio (o app 0.15.0 foi instalado sem a ação nova por isso); use `;` ou confira o resultado. (3) Um comando bloqueado pelo classificador de deploy não aplica NADA do que vinha antes dele.
+(4) O `pm grant` de localização é recusado pelo MIUI: o dono concede pelas configurações do app.
 
 ## Gatilhos de tempo
 

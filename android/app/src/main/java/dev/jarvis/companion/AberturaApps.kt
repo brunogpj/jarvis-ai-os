@@ -22,8 +22,13 @@ import org.json.JSONObject
  * Exige a permissão especial "Acesso a dados de uso" (adb: appops set dev.jarvis.companion GET_USAGE_STATS allow).
  */
 object AberturaApps {
-    const val SISPONTO = "br.com.sisponto.sispontomobile"
     private const val INTERVALO_MIN_MS = 2 * 60 * 1000L
+
+    /**
+     * Pacote do app de ponto: vem do SERVIDOR, na lista de apps vigiados (entrada "=<pacote>" do Sisponto). O repositório é público e a lista
+     * de apps do celular não mora nele. Sem a entrada, não há o que vigiar.
+     */
+    fun pacote(ctx: Context): String? = NotificacaoService.apps(ctx).firstOrNull { it.startsWith("=") && it.contains("sisponto") }?.substring(1)
 
     fun temAcesso(ctx: Context): Boolean = try {
         val ops = ctx.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
@@ -33,8 +38,9 @@ object AberturaApps {
     @Synchronized
     fun verificar(ctx: Context) {
         if (!temAcesso(ctx)) return
-        // sem canal ligado ou sem o Sisponto na lista, nada sai do celular (mesma regra das notificações)
-        if (!NotificacaoService.ativo(ctx) || !NotificacaoService.naLista(NotificacaoService.apps(ctx), "sisponto", SISPONTO)) return
+        // sem canal ligado ou sem o Sisponto na lista do servidor, nada sai do celular (mesma regra das notificações)
+        if (!NotificacaoService.ativo(ctx)) return
+        val alvo = pacote(ctx) ?: return
         val p = Config.estado(ctx)
         val agora = System.currentTimeMillis()
         // primeira leitura (ou serviço parado há muito): olha só os últimos 15 s, para não reenviar abertura antiga
@@ -47,7 +53,7 @@ object AberturaApps {
         val aberturas = ArrayList<Long>()
         while (ev.hasNextEvent()) {
             ev.getNextEvent(e)
-            if (e.packageName != SISPONTO) continue
+            if (!e.packageName.equals(alvo, ignoreCase = true)) continue
             when (e.eventType) {
                 UsageEvents.Event.ACTIVITY_RESUMED -> if (!emFrente) {
                     emFrente = true
@@ -59,7 +65,7 @@ object AberturaApps {
         p.edit().putLong("ponto_uso_ate", agora).putBoolean("ponto_em_frente", emFrente).putLong("ponto_ultimo_envio", ultimo).apply()
         for (t in aberturas) {
             Config.evento(ctx, "ponto: abertura do Sisponto detectada")
-            NotifFila.enviar(ctx, JSONObject().put("app", "Sisponto").put("pacote", SISPONTO).put("titulo", "Ponto registrado").put("texto", "Abertura do app Sisponto"))
+            NotifFila.enviar(ctx, JSONObject().put("app", "Sisponto").put("pacote", alvo).put("titulo", "Ponto registrado").put("texto", "Abertura do app Sisponto"))
         }
     }
 }

@@ -21,11 +21,11 @@ Projeto Google Apps Script gerenciado localmente via clasp.
 | Web App | `executeAs: USER_DEPLOYING`, `access: ANYONE_ANONYMOUS` |
 | Repositório | https://github.com/brunogpj/jarvis-ai-os — **público** (ver "Repositório público" em Segurança) |
 
-## Implantações (`clasp deployments`, 10/11/2026)
+## Implantações (`clasp deployments`, 11/11/2026)
 
 | Deployment ID | Versão | Descrição |
 |---|---|---|
-| `<DEPLOYMENT_ID>` | **@589** | **ATIVA** — "Gancho androidControle do ler_debug repassa titulo e texto (teste direto de notificar)". Anteriores: **@588** (telemetria e avisos pelo app Android: rota `android_telemetria`, ordens `telemetria` e `notificar`, interruptores `ANDROID_TELEMETRIA` e `ANDROID_NOTIFICAR`), **@587** (lanterna por voz manda estado ligar/desligar quando a frase diz; controles do app Android ligados), **@586** (controles do celular pelo app Android: ordem `controle`, canal desligado ao subir), @585 (Pix enviado e pagamento de conta do Mercado Pago), @584 (remetente de confiança no Pix recebido), **@583** (parser do Swile ignora propaganda: o cupom de R$ 100 virava compra), @582/@581 (rota `android_dashboard`), @580 (autodiagnóstico, idioma da voz e limpeza do versículo; o @579 subiu código velho por um `clasp pull` antes do push e foi substituído) |
+| `<DEPLOYMENT_ID>` | **@590** | **ATIVA** — "Notificacao lida uma vez so, cobranca do ponto fora do orcamento diario, PROATIVO_MAX_DIA no config_fala e proativoEstado no ler_debug". Anteriores: **@589** (gancho androidControle do ler_debug repassa titulo e texto), **@588** (telemetria e avisos pelo app Android: rota `android_telemetria`, ordens `telemetria` e `notificar`, interruptores `ANDROID_TELEMETRIA` e `ANDROID_NOTIFICAR`), **@587** (lanterna por voz manda estado ligar/desligar quando a frase diz; controles do app Android ligados), **@586** (controles do celular pelo app Android: ordem `controle`, canal desligado ao subir), @585 (Pix enviado e pagamento de conta do Mercado Pago), @584 (remetente de confiança no Pix recebido), **@583** (parser do Swile ignora propaganda: o cupom de R$ 100 virava compra), @582/@581 (rota `android_dashboard`), @580 (autodiagnóstico, idioma da voz e limpeza do versículo; o @579 subiu código velho por um `clasp pull` antes do push e foi substituído) |
 | `<DEPLOYMENT_ID>` | @578 | Antiga ATIVA (até @580) — "Notificacoes do app Android em modo sombra (guarda sem processar)". Anterior: @577 |  **ATIVA-ANTERIOR** — "Lista de apps propria do app Android (ANDROID_NOTIF_APPS)". Anterior: @575 |  **ATIVA-ANTERIOR** — "Notificacoes pelo app Android: rotas android_notif_config e android_notificacao (canal desligado)". Anterior: @574 |  **ATIVA-ANTERIOR** — "Voz premium na conversa do app Android: rota android_voz". Anterior: @573 |  **ATIVA-ANTERIOR** — "Conversa por toque do app Android: rota android_conversa com token proprio". Anterior: @572 |  **ATIVA-ANTERIOR** — "Fala pelo app: ordem aceita pelo FCM sem ack nao e falha; token proprio do app Android (ANDROID_API_TOKEN)". Anterior: @571 |  **ATIVA-ANTERIOR** — "Ponto nao acumula marcas antigas; app Android registra o projeto do Firebase sozinho". Anteriores: @570 (canal Android, desligado), @569 (nova cara fases 2 a 4). Anteriores: @568 (fase 1, sem Laboratorio e Automacoes), @566 (File Search desligado, aviso do teto do Google) |
 | `<DEPLOYMENT_ID>` | @25 | Antiga — "TesteJobs" |
 | `<DEPLOYMENT_ID>` | @HEAD | Cabeça (muda a cada push, não é a de produção) |
@@ -127,7 +127,7 @@ tráfego interno; inclui `NOTIF` da fila de notificações) → rate limit globa
 `janela_notificacoes` / `fala_direta` / `config_fala` / `config_financas` / `config_gemini` / `ler_debug` (todas com
 `VOICE_API_TOKEN`) → diag (`DIAG_TOKEN`). `config_fala` troca, por HTTP, só uma
 lista fechada de chaves da entrega da fala (`FALA_PROATIVA_LOCAL`,
-`FALA_RESPOSTAS_LOCAL`, `MODO_FALA_VOZ`, `FALA_VOLUME_DB` 0–16, `FALA_FORMATO`, `FALA_ARQUIVO_UNICO`, `ROTA_JEV_NOVAS` sim|nao, `FIN_AVISOS_ATIVO` sim|nao, `FIN_NOME_DONO`, `FIN_CPF_DONO`, `ANDROID_FALAR`, `ANDROID_NOTIF`, `ANDROID_CONTROLES`, `ANDROID_CONTROLES_FALLBACK`, `ANDROID_TELEMETRIA` e `ANDROID_NOTIFICAR` sim|nao).
+`FALA_RESPOSTAS_LOCAL`, `MODO_FALA_VOZ`, `FALA_VOLUME_DB` 0–16, `FALA_FORMATO`, `FALA_ARQUIVO_UNICO`, `ROTA_JEV_NOVAS` sim|nao, `FIN_AVISOS_ATIVO` sim|nao, `FIN_NOME_DONO`, `FIN_CPF_DONO`, `ANDROID_FALAR`, `ANDROID_NOTIF`, `ANDROID_CONTROLES`, `ANDROID_CONTROLES_FALLBACK`, `ANDROID_TELEMETRIA` e `ANDROID_NOTIFICAR` sim|nao, `PROATIVO_MAX_DIA` 1–20).
 
 ## Voz no Android (estado em 28/09/2026)
 
@@ -613,6 +613,16 @@ Perturbe (`cmd notification allow_dnd dev.jarvis.companion`). **Teste uma ação
 estado 3 → 2 → 3), abrir app, abrir link e navegar, e por `voice_command` real "volume baixo", "liga/desliga a lanterna", "ativa/desativa o não perturbe", "abre o WhatsApp",
 "abre o Spotify" e "rota para a Praça da Liberdade". As macros Volume, Lanterna, Mídia e Não Perturbe deixaram de ser acionadas (o servidor não chama mais os webhooks delas);
 dá para desativá-las no MacroDroid. Voltar: `config_fala` com `ANDROID_CONTROLES=nao`. "Liga/desliga a lanterna" por voz agora manda o estado (antes alternava).
+
+**Cobrança do ponto não disputa o orçamento diário + fala única das notificações (11/11, @590).**
+- **Cobrança de ausência do ponto (`verificarPontoBatido`).** Em 10/11 o dono deixou o ponto das 19:00 sem marcar de propósito e o Jarvis não cobrou. Os pings de telemetria do app chegaram (19:17, 19:32…) e a cobrança foi avaliada, mas `_governanca` barrou em silêncio:
+  o orçamento diário de interrupções proativas (`PROATIVO_MAX_DIA`, padrão 5) tinha acabado às 18:19 (presença ×3, bateria, insight). Agora a cobrança passa `pedido:true` (não disputa nem consome o orçamento; o silêncio noturno e o cooldown de 60 min continuam) e,
+  se for barrada por qualquer motivo, deixa o evento `proativo:bloqueado` (bloqueio silencioso foi o que escondeu o defeito). A cobrança só roda dentro de `_avaliarEventosProativos`, ou seja, a cada telemetria (15 min); janela: de 15 a 90 min depois do horário do alerta `tag:'ponto'`
+  e fora do silêncio (22:30–07:00; a do ponto das 23:00 cairia às 23:15, já no silêncio). `PROATIVO_MAX_DIA` agora também troca pelo `config_fala` (1–20) e `ler_debug` com `proativoEstado:true` mostra limite, consumo de hoje, silêncio e snapshot de presença (`diagProativoEstado`).
+  Testes: `tests-local/ponto-orcamento.test.js`.
+- **Notificação lida duas vezes (Agenda Edu).** O app em `NOTIF_FALAR_APPS` fazia o job falar "Notificação do <app>. …" e depois a regra `avisar` (modo falar), a escalada por urgência ("Atenção. …") ou a triagem do JEV falavam DE NOVO, com texto diferente (a trava de fala idêntica de 20 s não pega).
+  Sinal nos logs: duas partidas do `FalaService` por notificação (07:27:31 e 07:27:42; 08:43:15 e 08:43:38) e um só `notif:processada`. Agora `_notifProcessar` marca `_NOTIF_JOB_FALOU` enquanto as regras rodam e as três etapas pulam a fala quando o job já leu a notificação.
+  Sem a fala do job a regra continua falando uma vez. Testes: `tests-local/notif-fala-unica.test.js`.
 
 ## Gatilhos de tempo
 

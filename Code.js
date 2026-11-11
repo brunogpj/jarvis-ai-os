@@ -3287,7 +3287,7 @@ function doPost(e) {
       var _PERMITIDAS_CF = {
         FALA_PROATIVA_LOCAL: /^(sim|nao)$/, FALA_RESPOSTAS_LOCAL: /^(sim|nao)$/,
         MODO_FALA_VOZ: /^(nuvem|auto|local)$/, FALA_VOLUME_DB: /^(1[0-6]|[0-9])$/,
-        FALA_FORMATO: /^(ogg|wav)$/, FALA_ARQUIVO_UNICO: /^(sim|nao)$/, ANDROID_FALAR: /^(sim|nao)$/, ANDROID_CONTROLES: /^(sim|nao)$/, ANDROID_CONTROLES_FALLBACK: /^(sim|nao)$/, ANDROID_TELEMETRIA: /^(sim|nao)$/, ANDROID_NOTIFICAR: /^(sim|nao)$/, ANDROID_API_TOKEN: /^[a-f0-9]{48}$/, ANDROID_API_ESTRITO: /^(sim|nao)$/, ANDROID_NOTIF: /^(sim|nao|sombra)$/, NOTIF_APPS: /^[a-z0-9áéíóúâêôãõç.=,_ -]{1,400}$/, ANDROID_NOTIF_APPS: /^[a-z0-9áéíóúâêôãõç.=,_ -]{1,400}$/, ROTA_JEV_NOVAS: /^(sim|nao)$/, FERRAMENTAS_JEV: /^(nao|adiciona|sim)$/, INJECAO_JEV: /^(sim|nao)$/, ACAO_JEV: /^(sim|nao)$/, CATEGORIA_JEV: /^(sim|nao)$/, TTS_STYLE: /^[A-Za-zÀ-ÿ ,.\-]{0,120}$/, FERRAMENTAS_JEV_ADD: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE_CONH: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE: /^0?\.\d{1,2}$/, CONFIRMA_JEV: /^(sim|nao)$/, MONITOR_GMAIL_JEV: /^(sim|nao)$/, BUSCA_DRIVE_ATIVA: /^(sim|nao)$/, FILE_SEARCH_ATIVA: /^(sim|nao)$/, FS_LOTE: /^\d{1,2}$/, FS_MAX_MB: /^\d{1,2}$/, FS_MAX: /^\d{2,4}$/, FS_EXCLUIR: /^[^\r\n]{0,200}$/, BUSCA_DRIVE_MAX: /^\d{2,4}$/, WEB_MONITOR_JEV: /^(sim|nao)$/, WEB_MONITOR_JEV_CORTE: /^0?\.\d{1,2}$/, MONITOR_GMAIL_JEV_CORTE: /^0?\.\d{1,2}$/, FIN_AVISOS_ATIVO: /^(sim|nao)$/, FIN_NOME_DONO: /^[a-zà-ÿ ]{3,80}$/, FIN_CPF_DONO: /^\d{3}\.\d{3}$/, FIN_REMETENTES_AUTO: /^[a-zà-ÿ ;=]{0,300}$/,
+        FALA_FORMATO: /^(ogg|wav)$/, FALA_ARQUIVO_UNICO: /^(sim|nao)$/, ANDROID_FALAR: /^(sim|nao)$/, ANDROID_CONTROLES: /^(sim|nao)$/, ANDROID_CONTROLES_FALLBACK: /^(sim|nao)$/, ANDROID_TELEMETRIA: /^(sim|nao)$/, ANDROID_NOTIFICAR: /^(sim|nao)$/, PROATIVO_MAX_DIA: /^([1-9]|1[0-9]|20)$/, ANDROID_API_TOKEN: /^[a-f0-9]{48}$/, ANDROID_API_ESTRITO: /^(sim|nao)$/, ANDROID_NOTIF: /^(sim|nao|sombra)$/, NOTIF_APPS: /^[a-z0-9áéíóúâêôãõç.=,_ -]{1,400}$/, ANDROID_NOTIF_APPS: /^[a-z0-9áéíóúâêôãõç.=,_ -]{1,400}$/, ROTA_JEV_NOVAS: /^(sim|nao)$/, FERRAMENTAS_JEV: /^(nao|adiciona|sim)$/, INJECAO_JEV: /^(sim|nao)$/, ACAO_JEV: /^(sim|nao)$/, CATEGORIA_JEV: /^(sim|nao)$/, TTS_STYLE: /^[A-Za-zÀ-ÿ ,.\-]{0,120}$/, FERRAMENTAS_JEV_ADD: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE_CONH: /^0?\.\d{1,2}$/, FERRAMENTAS_JEV_REMOVE: /^0?\.\d{1,2}$/, CONFIRMA_JEV: /^(sim|nao)$/, MONITOR_GMAIL_JEV: /^(sim|nao)$/, BUSCA_DRIVE_ATIVA: /^(sim|nao)$/, FILE_SEARCH_ATIVA: /^(sim|nao)$/, FS_LOTE: /^\d{1,2}$/, FS_MAX_MB: /^\d{1,2}$/, FS_MAX: /^\d{2,4}$/, FS_EXCLUIR: /^[^\r\n]{0,200}$/, BUSCA_DRIVE_MAX: /^\d{2,4}$/, WEB_MONITOR_JEV: /^(sim|nao)$/, WEB_MONITOR_JEV_CORTE: /^0?\.\d{1,2}$/, MONITOR_GMAIL_JEV_CORTE: /^0?\.\d{1,2}$/, FIN_AVISOS_ATIVO: /^(sim|nao)$/, FIN_NOME_DONO: /^[a-zà-ÿ ]{3,80}$/, FIN_CPF_DONO: /^\d{3}\.\d{3}$/, FIN_REMETENTES_AUTO: /^[a-zà-ÿ ;=]{0,300}$/,
         // consultor (fase 4): margem na conta (R$), taxa ao mês (decimal), reserva-alvo (meses) e pausa do rebalanceamento (data)
         CONSULTOR_MARGEM: /^\d{1,6}$/, CONSULTOR_TAXA_MES: /^0?\.\d{1,4}$/, CONSULTOR_RESERVA_ALVO: /^\d{1,2}$/, CONSULTOR_PAUSA_ATE: /^\d{4}-\d{2}-\d{2}$/, CONSULTOR_AVISO_ATIVO: /^(sim|nao)$/, CONSULTOR_AVISO_MIN: /^\d{1,6}$/
       };
@@ -4517,6 +4517,8 @@ function doPost(e) {
             saida.androidControle = { enviado: _eo.ok, id: _eo.id, erro: _eo.erro || null, ack: _eo.ok ? Android.aguardarAck(_eo.id, 10000) : null };
           } catch (eAc) { saida.androidControle = { erro: eAc.message }; }
         }
+        // Orçamento diário de interrupções proativas (só leitura): limite, consumo de hoje, silêncio e snapshot de presença. O ajuste do limite é config_fala PROATIVO_MAX_DIA.
+        if (body.proativoEstado) { try { saida.proativoEstado = diagProativoEstado().estado; } catch (ePe) { saida.proativoEstado = { erro: ePe.message }; } }
         // Telemetria pelo app: androidTelemetria:true pede AGORA (não depende de ANDROID_TELEMETRIA); o app responde em android_telemetria e a leitura mais recente vem em `telemetriaUltima`.
         if (body.androidTelemetria) {
           try {
@@ -5855,6 +5857,9 @@ function _notifDisparar(id) {
 }
 
 /** A parte lenta: fala opt-in + regras. Devolve {falou, regra}. */
+/** true enquanto as REGRAS de um job rodam e o job já leu a notificação em voz alta (ver _notifProcessar). */
+var _NOTIF_JOB_FALOU = false;
+
 function _notifProcessar(job) {
   var d = job.doc || {}, t0 = Date.now(), falou = null, regra = null;
   if (job.querFalar && _notifPodeFalar()) {
@@ -5866,7 +5871,11 @@ function _notifProcessar(job) {
     } catch (eV) { falou = false; }
   }
   // REGRAS: guardar não é agir. A primeira regra que casar decide o que fazer com isto.
+  // 11/11: app em NOTIF_FALAR_APPS (Agenda Edu) falava aqui e a regra 'avisar' (modo falar), a escalada por urgência ou a triagem do JEV falavam DE NOVO
+  // (duas ordens de fala ~20 s uma da outra, texto diferente, a trava de fala idêntica não pega). Quem já falou neste job avisa as etapas seguintes.
+  _NOTIF_JOB_FALOU = (falou === true);
   try { regra = _notifAplicarRegras(d); } catch (eR) { regra = { erro: eR.message }; }
+  finally { _NOTIF_JOB_FALOU = false; }
   try {
     if (typeof Jarvis !== 'undefined' && Jarvis.registrarEvento) Jarvis.registrarEvento({
       tool: 'notif:processada', ok: !(regra && regra.erro), ms: Date.now() - t0,
@@ -7221,6 +7230,7 @@ function _notifAplicarRegras(d) {
     var modo = (acao === 'falar') ? 'falar' : (acao === 'briefing' ? 'briefing' : _notifRoteia());
     if (modo === 'falar') {
       var falou = false;
+      if (_NOTIF_JOB_FALOU) return { regra: r.id, acao: acao, modo: 'falar', falou: true, jaFalado: true };   // o job já leu esta notificação
       try {
         var res = (typeof Jarvis !== 'undefined' && Jarvis.controlarDispositivo)
           ? Jarvis.controlarDispositivo({ acao: 'falar', texto: (d.app || 'Celular') + '. ' + frase }) : null;
@@ -7310,6 +7320,7 @@ function _notifEscalaSePreciso(d) {
   var lim = Number(PropertiesService.getScriptProperties().getProperty('NOTIF_ESCALA_LIMIAR') || _NOTIF_ESCALA_LIMIAR);
   if (!isFinite(lim) || lim <= 0 || lim > 3) lim = _NOTIF_ESCALA_LIMIAR;
   if (r.score < lim) return out;
+  if (_NOTIF_JOB_FALOU) return out;            // já foi lida em voz alta neste job: não repetir com "Atenção."
 
   try {
     var res = (typeof Jarvis !== 'undefined' && Jarvis.controlarDispositivo)
@@ -7342,6 +7353,7 @@ function _notifTriagemJev(d) {
                confianca: (r.confidence === null) ? null : Number(r.confidence.toFixed(2)),
                limiar: lim, ms: r.ms };
   if (r.score < lim) { base.acao = 'guardar'; base.modo = 'briefing'; return base; }
+  if (_NOTIF_JOB_FALOU) { base.acao = 'falar'; base.modo = 'falar'; base.falou = true; base.jaFalado = true; return base; }   // o job já leu esta notificação
 
   var falou = false;
   try {
@@ -8218,7 +8230,7 @@ function verificarPontoBatido(opts) {
     return { ok: true, ponto: hh, confirmado: true };
   }
   var txt = 'Bruno, o ponto das ' + hh + ' já passou e eu não vi o registro. Você bateu?';
-  var r = _falarProativo('ponto_ausente', txt, { cooldownMin: 60, simular: opts.simular });
+  var r = _falarProativo('ponto_ausente', txt, { cooldownMin: 60, pedido: true, simular: opts.simular });
   if (!opts.simular && r.falou === true) p.setProperty(chave, 'cobrado');
   return { ok: true, ponto: hh, confirmado: false, cobrou: r.falou, bloqueado: r.bloqueado || null, texto: txt };
 }
@@ -8619,10 +8631,14 @@ function _governanca(chave, opts) {
     }
     // Orçamento diário de interrupções.
     var hoje = Utilities.formatDate(agora, 'America/Sao_Paulo', 'yyyy-MM-dd');
-    var maxDia = Number(p.getProperty('PROATIVO_MAX_DIA') || 5);
-    var cont = (p.getProperty('PROATIVO_DIA') === hoje) ? Number(p.getProperty('PROATIVO_CONT') || 0) : 0;
-    if (cont >= maxDia) return { permitido: false, motivo: 'orçamento diário esgotado (' + maxDia + ')' };
-    if (!opts.simular) { p.setProperty('PROATIVO_DIA', hoje); p.setProperty('PROATIVO_CONT', String(cont + 1)); }
+    // opts.pedido: o que o dono PEDIU (cobrança do ponto) não disputa o orçamento nem o consome. 10/11: o orçamento de 5 acabou às 18:19
+    // (presença x3, bateria, insight) e a cobrança do ponto das 19:00 foi barrada em silêncio; o Jarvis não avisou da falta de marcação.
+    if (!opts.pedido) {
+      var maxDia = Number(p.getProperty('PROATIVO_MAX_DIA') || 5);
+      var cont = (p.getProperty('PROATIVO_DIA') === hoje) ? Number(p.getProperty('PROATIVO_CONT') || 0) : 0;
+      if (cont >= maxDia) return { permitido: false, motivo: 'orçamento diário esgotado (' + maxDia + ')' };
+      if (!opts.simular) { p.setProperty('PROATIVO_DIA', hoje); p.setProperty('PROATIVO_CONT', String(cont + 1)); }
+    }
   }
   if (!opts.simular) p.setProperty('PROATIVO_CD_' + chave, String(agora.getTime()));
   return { permitido: true };
@@ -8633,7 +8649,15 @@ function _governanca(chave, opts) {
 function _falarProativo(chave, texto, opts) {
   opts = opts || {};
   var g = _governanca(chave, opts);
-  if (!g.permitido) return { falou: false, bloqueado: g.motivo };
+  if (!g.permitido) {
+    // Bloqueio da cobrança do ponto NÃO pode ser silencioso: foi assim que a falta de marcação passou em branco em 10/11.
+    try {
+      if (!opts.simular && chave === 'ponto_ausente' && typeof Jarvis !== 'undefined' && Jarvis.registrarEvento) {
+        Jarvis.registrarEvento({ tool: 'proativo:bloqueado', ms: 0, ok: false, resumo: chave + ' · ' + g.motivo });
+      }
+    } catch (eBl) {}
+    return { falou: false, bloqueado: g.motivo };
+  }
   if (opts.simular) return { falou: 'simulado' };
   var res = (typeof Jarvis !== 'undefined' && Jarvis.controlarDispositivo)
     ? Jarvis.controlarDispositivo({ acao: 'falar', texto: texto }) : null;

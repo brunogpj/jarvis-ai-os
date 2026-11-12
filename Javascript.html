@@ -515,6 +515,10 @@
       function mdSeguro(texto) {
         function inl(s) {
           s = escapeHtml(s);
+          // Imagem (11/11, Midia.js): SÓ de i.ytimg.com (capa de vídeo) e upload.wikimedia.org; qualquer outro endereço continua texto. Imagem dentro de link vira capa clicável.
+          function tagImg(a, u) { return '<img class="md-img" loading="lazy" referrerpolicy="no-referrer" alt="' + a + '" title="' + a + '" src="' + u.replace(/"/g, "%22") + '">'; }
+          s = s.replace(/\[!\[([^\]]*)\]\((https:\/\/(?:i\.ytimg\.com|upload\.wikimedia\.org)\/[^\s)]+)\)\]\((https?:\/\/[^\s)]+)\)/g, function (m, a, u, l) { return '<a class="md-capa" href="' + l.replace(/"/g, "%22") + '" target="_blank" rel="noopener noreferrer">' + tagImg(a, u) + '</a>'; });
+          s = s.replace(/!\[([^\]]*)\]\((https:\/\/(?:i\.ytimg\.com|upload\.wikimedia\.org)\/[^\s)]+)\)/g, function (m, a, u) { return tagImg(a, u); });
           s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, function (m, a, u) { return '<a href="' + u.replace(/"/g, "%22") + '" target="_blank" rel="noopener noreferrer">' + a + '</a>'; });
           s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
           s = s.replace(/(^|[\s(])_([^_\n]+)_(?=[\s).,;:]|$)/g, "$1<em>$2</em>");

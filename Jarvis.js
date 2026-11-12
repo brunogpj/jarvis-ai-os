@@ -1779,6 +1779,8 @@ var Jarvis = (function () {
     try {
       if (!a || !a.consulta) return { status: 'error', erro: 'Informe a consulta.' };
       var r = Gemini.pesquisarWeb(a.consulta);
+      // o assunto pesquisado vale por 10 min para um "me mostra fotos do novo jogo" logo em seguida (Midia.js)
+      try { if (typeof Midia !== 'undefined') Midia.lembrarTema(a.consulta); } catch (eMt) {}
       return { status: 'success', resultado: r.texto || '(sem resultado)', fontes: r.fontes || [] };
     } catch (e) { return { status: 'error', erro: 'Pesquisa web indisponível: ' + e.message }; }
   }

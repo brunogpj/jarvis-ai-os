@@ -72,13 +72,13 @@ object Conversa {
         return r.texto
     }
 
-    fun perguntarR(ctx: Context, pergunta: String, rid: String, botao: Boolean = false): Resposta {
+    fun perguntarR(ctx: Context, pergunta: String, rid: String, botao: Boolean = false, cartoes: Boolean = false): Resposta {
         val url = Config.url(ctx)
         val token = Config.token(ctx)
         if (url == null || token == null) return Resposta("O aplicativo ainda não está pareado com o Jarvis.", false)
         var motivo = "sem resposta do servidor"
         for (t in 1..TENTATIVAS) {
-            val r = tentar(url, token, pergunta, rid, botao)
+            val r = tentar(url, token, pergunta, rid, botao, cartoes)
             when {
                 r.startsWith(FALHA) -> motivo = r.substring(1)
                 r.isBlank() -> motivo = "resposta vazia"
@@ -117,7 +117,7 @@ object Conversa {
     }
 
     /** Uma tentativa. Falha de rede ou página HTML (o 404 do segundo salto) volta com o prefixo de falha. */
-    private fun tentar(url: String, token: String, pergunta: String, rid: String, botao: Boolean = false): String {
+    private fun tentar(url: String, token: String, pergunta: String, rid: String, botao: Boolean = false, cartoes: Boolean = false): String {
         return try {
             val c = URL(url).openConnection() as HttpURLConnection
             c.requestMethod = "POST"
@@ -128,6 +128,7 @@ object Conversa {
             c.setRequestProperty("Content-Type", "application/json")
             val corpo = JSONObject().put("action", "android_conversa").put("token", token)
                 .put("message", pergunta).put("rid", rid).put("falar", "local")
+            if (cartoes) corpo.put("cartoes", true)   // chat escrito: fotos/vídeos voltam como cartões (Midia.kt)
             if (botao) corpo.put("botao", true)   // toque num botão Sim/Não/Desfaz: o servidor só consulta a confirmação pendente, nunca cai no modelo
             c.outputStream.use { it.write(corpo.toString().toByteArray(Charsets.UTF_8)) }
             val codigo = c.responseCode

@@ -51,6 +51,7 @@ import dev.jarvis.companion.NotificacaoService
 import dev.jarvis.companion.Painel
 import dev.jarvis.companion.Saude
 import dev.jarvis.companion.UltimaFala
+import dev.jarvis.companion.Viagem
 import dev.jarvis.companion.WidgetConversa
 import kotlinx.coroutines.delay
 import java.net.URI
@@ -197,6 +198,7 @@ fun DispositivoTela(estado: EstadoApp, modifier: Modifier = Modifier) {
         }
 
         CercaGeografica()
+        CartaoViagem(tick)
 
         VozDoCelular()
 
@@ -286,6 +288,34 @@ private fun Controle(nome: String, valor: Float, aoMudar: (Float) -> Unit) {
             value = valor.coerceIn(0.5f, 1.5f), onValueChange = { aoMudar((Math.round(it * 100f) / 100f)) }, valueRange = 0.5f..1.5f,
             colors = SliderDefaults.colors(thumbColor = Paleta.Destaque, activeTrackColor = Paleta.Destaque, inactiveTrackColor = Paleta.Borda)
         )
+    }
+}
+
+/** Modo viagem: GPS, velocidade e limite da via. O servidor avisa excesso, cansaço e chegada; enquanto dura, cala os avisos não urgentes. */
+@Composable
+private fun CartaoViagem(tick: Int) {
+    val ctx = LocalContext.current
+    @Suppress("UNUSED_EXPRESSION") tick
+    var osm by remember { mutableStateOf(Viagem.lerOsm(ctx)) }
+    val ativa = Viagem.ativa
+    val permitido = ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    Cartao("Viagem", selo = if (ativa) "Em viagem" else "Parada", seloBom = ativa) {
+        Text("Lê o GPS, mede a velocidade e avisa se passar do limite da via. Substitui a macro Viagem.", style = MaterialTheme.typography.bodySmall, color = Paleta.Secundario)
+        Spacer(Modifier.height(8.dp))
+        if (ativa) {
+            LinhaInfo("Velocidade", "${Viagem.velocidade} km/h · máxima ${Viagem.maxima}")
+            LinhaInfo("Limite da via", if (Viagem.limite > 0) "${Viagem.limite} km/h (${Viagem.fonteLimite})" else "ainda sem leitura")
+            LinhaInfo("Em andamento", "${(System.currentTimeMillis() - Viagem.inicio) / 60000} min")
+            LinhaInfo("Servidor", if (Viagem.ultimoEnvioOk > 0) "ouvido " + Saude.ha(Viagem.ultimoEnvioOk) else "sem resposta ainda")
+        } else LinhaInfo("Localização", if (permitido) "permitida" else "falta permissão (Permissões, acima)")
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Pilula(if (osm) "Limite pelo mapa: ligado" else "Limite pelo mapa: desligado", destaque = osm, modifier = Modifier.weight(1f), onClick = { osm = !osm; Viagem.gravarOsm(ctx, osm) })
+        }
+        Text("O limite vem do OpenStreetMap: a posição vai a um servidor público só para essa consulta. Desligado, vale o limite configurado no Jarvis.",
+            style = MaterialTheme.typography.bodySmall, color = Paleta.Secundario, modifier = Modifier.padding(top = 6.dp))
+        Spacer(Modifier.height(10.dp))
+        Pilula(if (ativa) "Encerrar viagem" else "Iniciar viagem", destaque = !ativa, onClick = { if (ativa) Viagem.encerrar(ctx) else if (permitido) Viagem.iniciar(ctx) })
     }
 }
 

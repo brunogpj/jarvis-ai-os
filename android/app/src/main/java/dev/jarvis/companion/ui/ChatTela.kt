@@ -121,7 +121,7 @@ fun ChatTela(modifier: Modifier = Modifier) {
         Config.evento(ctx, "chat: pedido de ${frase.length} caracteres")
         val app = ctx.applicationContext
         escopo.launch(Dispatchers.IO) {
-            val r = Conversa.perguntarR(app, frase, System.currentTimeMillis().toString())
+            val r = Conversa.perguntarR(app, frase, System.currentTimeMillis().toString(), cartoes = true)
             Historico.add(app, false, r.texto)
             withContext(Dispatchers.Main) { aguardando = false; msgs = lerMsgs(app) }
         }
@@ -196,6 +196,8 @@ private fun Balao(m: Msg, aoOuvir: (String) -> Unit) {
             ) { Text(m.texto, style = MaterialTheme.typography.bodyLarge, color = Paleta.Texto) }
             if (m.em > 0) Text(hora.format(Date(m.em)), style = MaterialTheme.typography.bodySmall, color = Paleta.Secundario, modifier = Modifier.padding(top = 2.dp, end = 4.dp))
         }
+    } else if (m.texto.startsWith(dev.jarvis.companion.Midia.PREFIXO)) {
+        CartaoMidia(m)
     } else {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
             Orbe(28.dp, Modifier.padding(top = 4.dp))

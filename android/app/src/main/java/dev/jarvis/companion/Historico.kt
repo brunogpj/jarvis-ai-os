@@ -18,7 +18,7 @@ object Historico {
         if (t.isEmpty()) return
         synchronized(trava) {
             val l = ler(ctx)
-            l.put(JSONObject().put("v", voce).put("t", t.take(1500)).put("em", System.currentTimeMillis()))
+            l.put(JSONObject().put("v", voce).put("t", t.take(if (t.startsWith(Midia.PREFIXO)) 8000 else 1500)).put("em", System.currentTimeMillis()))
             val corte = JSONArray()
             for (i in maxOf(0, l.length() - MAX) until l.length()) corte.put(l.get(i))
             Config.estado(ctx).edit().putString(CHAVE, corte.toString()).apply()

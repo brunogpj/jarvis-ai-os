@@ -1394,6 +1394,10 @@ function _rotaDireta(mensagem, email, isOwner) {
     if (/\brelatorio de atividades?\b|\batividades? (de hoje|das ultimas|recentes)\b|\bo que o jarvis fez\b/.test(_mn)) return _relatorioAtividade();
     if (typeof Financas !== 'undefined' && Financas.interpretarRelatorio) { var _rq = Financas.interpretarRelatorio(_mn); if (_rq) return Financas.relatorio(_rq, 'chat'); }
   } catch (eRel) { _ultimoErroRel = String(eRel && eRel.message); }
+  // FOTOS / VÍDEOS / LINKS DE UM ASSUNTO (11/11): YouTube, Wikimedia e links do Google, sem o Gemini (ver Midia.js). Sem assunto claro, segue ao agente.
+  try {
+    if (typeof Midia !== 'undefined') { var _mq = Midia.interpretar(mensagem); if (_mq) { var _mr = Midia.relatorio(_mq); if (_mr) return _mr; } }
+  } catch (eMid) { _ultimoErroRel = String(eMid && eMid.message); }
   // Se o pedido envolve raciocínio/redação ou ação de escrita, NÃO é leitura direta.
   if (/resum|analis|detalh|escrev|redi[jg]|compar|explic|por que|porqu/.test(m)) return null;
   // Perguntas META/conceituais (sobre cards, telas, wiki, melhorias, "o que é…") NÃO são leitura de
@@ -1924,7 +1928,7 @@ function configurarEntregaVoz(args) {
     p.setProperty('FALA_LOCAL_ROTAS', String(args.rotasLocais));
   }
   var atual = String(p.getProperty('MODO_FALA_VOZ') || 'nuvem').toLowerCase();
-  var _padrao = 'financeiro,turno,rotina,controle_nativo,abrir_app,spotify,youtube,google,navegar,compras,ligar,biblia,insight_gravar,voto_insight';
+  var _padrao = 'financeiro,turno,rotina,controle_nativo,abrir_app,spotify,youtube,google,midia_web,navegar,compras,ligar,biblia,insight_gravar,voto_insight';
   return { ok: true, modo: atual,
     rotasLocais: String(p.getProperty('FALA_LOCAL_ROTAS') || _padrao).split(',').map(function (x) { return x.trim(); }),
     naNuvem: ['llm', 'insight_pedir', 'notificacoes', 'lembrete_condicional', 'podcast'],
@@ -3198,6 +3202,15 @@ function doPost(e) {
       try { return json(_presencaPorCerca(body, false)); } catch (ePr) { return json({ ok: false, erro: ePr.message }); }
     }
 
+    // VIAGEM PELO APP ANDROID (0.16, substitui a macro Viagem): o app manda velocidade (e o limite da via, lido do OpenStreetMap, como `limiteTela`)
+    // e recebe `falar` (excesso persistente, fadiga, chegada) para dizer no aparelho. Mesma lógica da rota `viagem`, token PRÓPRIO do app.
+    if (body && body.action === "android_viagem") {
+      var _tkVg = PropertiesService.getScriptProperties().getProperty('ANDROID_API_TOKEN');
+      if (!body.token || !_tkVg || body.token !== _tkVg) return json({ ok: false, erro: 'não autorizado' });
+      try { return json(registrarViagem({ velocidade: body.velocidade, limiteTela: body.limiteTela, encerrar: body.encerrar })); }
+      catch (eVg2) { return json({ ok: false, erro: eVg2.message }); }
+    }
+
     // TELEMETRIA PELO APP ANDROID (substitui a macro Jarvis Telemetria): mesmos campos, token PRÓPRIO do app.
     if (body && body.action === "android_telemetria") {
       var _tkTl = PropertiesService.getScriptProperties().getProperty('ANDROID_API_TOKEN');
@@ -3467,6 +3480,14 @@ function doPost(e) {
         var _txB = (_fcB && _fcB.resp) ? _fcB.resp : 'Não há nada aguardando a sua confirmação. A proposta vale poucos minutos.';
         return ContentService.createTextOutput(_txB).setMimeType(ContentService.MimeType.TEXT);
       }
+      // CHAT ESCRITO DO APP (0.16.1): "me mostra fotos/vídeos de X" volta como cartões nativos (§MIDIA§ + JSON), sem o Gemini. Pela VOZ do app
+      // (sem `cartoes`) segue a cadeia de sempre, que abre a busca do Google no celular.
+      if (body.cartoes === true && typeof Midia !== 'undefined') {
+        try {
+          var _mqA = Midia.interpretar(String(body.message || ''));
+          if (_mqA) return ContentService.createTextOutput('§MIDIA§' + JSON.stringify(Midia.dados(_mqA))).setMimeType(ContentService.MimeType.TEXT);
+        } catch (eMqA) {}
+      }
       body.action = "voice_command";
       body.token = _spCv.getProperty('VOICE_API_TOKEN');
       body.falar = 'local';
@@ -3729,6 +3750,9 @@ function doPost(e) {
         // (iii) YOUTUBE e (iv) GOOGLE — busca determinística (via abrirUrl).
         var _yt = (msgVoz.match(/(?:pesquis\w*|procur\w*|busq\w*|abr\w*)\s+(?:por\s+|sobre\s+|o v[íi]deo\s+)?(.+?)\s+n[oa]\s+youtube/i) || msgVoz.match(/(?:no\s+)?youtube\s*,?\s*(?:e\s+)?(?:pesquis\w*|procur\w*|busq\w*)\s+(?:por\s+|sobre\s+)?(.+?)[\.\!\?]*$/i));
         var _gg = (msgVoz.match(/(?:pesquis\w*|procur\w*|busq\w*)\s+(?:por\s+|sobre\s+)?(.+?)\s+n[oa]\s+google/i) || msgVoz.match(/(?:pesquis\w*|procur\w*)\s+(?:por\s+|sobre\s+)?(.+?)\s+na\s+web/i));
+        // (iv-b) FOTOS / VÍDEOS DE UM ASSUNTO (11/11): abre a busca do Google no celular, sem modelo (Midia.js). Sem assunto claro fica null e segue a cadeia.
+        var _mid = null;
+        try { if (!_yt && !_gg && typeof Midia !== 'undefined') _mid = Midia.interpretar(msgVoz); } catch (eMi) { _mid = null; }
         // (v) ROTA/NAVEGAÇÃO → ação "navegar" (determinístico; bypassa o LLM p/ não contaminar/errar).
         var _rota = (function () {
           // "me direcione para X" é a frase que o Bruno MAIS usa (dezenas no log da macro) e não estava
@@ -4019,6 +4043,12 @@ function doPost(e) {
             Jarvis.controlarDispositivo({ acao: 'abrirUrl', url: 'https://www.youtube.com/results?search_query=' + encodeURIComponent(_yt[1].trim()) });
             respVoz = 'Pesquisando ' + _yt[1].trim() + ' no YouTube.';
           } catch (eYt) { respVoz = Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false, canal: 'voz' }); }
+        } else if (_mid && typeof Jarvis !== 'undefined' && Jarvis.controlarDispositivo) {
+          try {
+            var _mv = Midia.paraVoz(_mid);
+            var _mAb = Jarvis.controlarDispositivo({ acao: 'abrirUrl', url: _mv.url });
+            respVoz = (_mAb && _mAb.status === 'success') ? _mv.fala : 'Não consegui abrir no celular agora.';
+          } catch (eMv) { respVoz = Jarvis.ask(emailUser, instrucaoVoz, historico, null, { interativo: false, canal: 'voz' }); }
         } else if (_gg && typeof Jarvis !== 'undefined' && Jarvis.controlarDispositivo) {
           try {
             Jarvis.controlarDispositivo({ acao: 'abrirUrl', url: 'https://www.google.com/search?q=' + encodeURIComponent(_gg[1].trim()) });
@@ -4104,6 +4134,7 @@ function doPost(e) {
           : _bib               ? 'biblia'
           : _spot              ? 'spotify'
           : _yt                ? 'youtube'
+          : _mid               ? 'midia_web'
           : _gg                ? 'google'
           : _rota              ? 'navegar'
           : _pod               ? 'podcast'
@@ -4177,7 +4208,7 @@ function doPost(e) {
          * Ajustável sem deploy pela property FALA_LOCAL_ROTAS (lista separada por vírgula).
          * O teto de caracteres continua como rede de segurança: resposta de ação que venha longa
          * (um extrato inteiro, por exemplo) volta para a nuvem. */
-        var _ROTAS_LOCAIS_PADRAO = 'relogio,agenda,emails,jev,lembrete_relativo,financeiro,caderneta,caderneta_acao,turno,rotina,controle_nativo,abrir_app,spotify,youtube,google,navegar,compras,ligar,biblia,insight_gravar,voto_insight';
+        var _ROTAS_LOCAIS_PADRAO = 'relogio,agenda,emails,jev,lembrete_relativo,financeiro,caderneta,caderneta_acao,turno,rotina,controle_nativo,abrir_app,spotify,youtube,google,midia_web,navegar,compras,ligar,biblia,insight_gravar,voto_insight';
         var _rotasLocais = String(PropertiesService.getScriptProperties().getProperty('FALA_LOCAL_ROTAS') || _ROTAS_LOCAIS_PADRAO)
           .split(',').map(function (x) { return x.trim(); }).filter(function (x) { return x; });
         var _viaBase = String((typeof _viaVoz !== 'undefined') ? _viaVoz : '').split(':')[0];

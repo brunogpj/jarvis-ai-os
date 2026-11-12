@@ -21,6 +21,8 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
     <!-- Android 11+: enxergar o serviço de reconhecimento de fala instalado (o do Google). -->
     <queries>
@@ -153,5 +155,11 @@
             android:name=".FalaService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+
+        <!-- Modo viagem: GPS, velocidade e limite da via, em primeiro plano (tipo location). -->
+        <service
+            android:name=".ViagemService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
     </application>
 </manifest>

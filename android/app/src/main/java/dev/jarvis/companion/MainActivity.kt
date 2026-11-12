@@ -95,6 +95,17 @@ class MainActivity : ComponentActivity() {
         }
         // Ouvir de novo a última fala por ADB (só repete o que o próprio Jarvis já falou): --ez repetir true
         if (i.getBooleanExtra("repetir", false)) { UltimaFala.repetir(this); i.removeExtra("repetir") }
+        // Chat ESCRITO por ADB (o MIUI bloqueia digitar por ADB): --es chat "frase". Mesmo caminho do campo de texto, com os cartões de fotos/vídeos.
+        i.getStringExtra("chat")?.let { frase ->
+            i.removeExtra("chat"); estado.aba = 0
+            val app = applicationContext
+            Historico.add(app, true, frase)
+            Thread { Historico.add(app, false, Conversa.perguntarR(app, frase, System.currentTimeMillis().toString(), cartoes = true).texto) }.start()
+        }
+        // Modo viagem por ADB: --ez viagem true|false [--ei velteste <km/h> --ei limteste <km/h>] (a velocidade simulada permite testar sem dirigir; -1 volta ao GPS)
+        if (i.hasExtra("velteste")) { Viagem.simulada = i.getIntExtra("velteste", -1); i.removeExtra("velteste") }
+        if (i.hasExtra("limteste")) { Viagem.limiteSimulado = i.getIntExtra("limteste", -1); i.removeExtra("limteste") }
+        if (i.hasExtra("viagem")) { if (i.getBooleanExtra("viagem", false)) Viagem.iniciar(this) else Viagem.encerrar(this); i.removeExtra("viagem") }
         // Abre a tela "Ouvindo" por ADB: --ez ouvir true [--ez demo true [--es fase ouvindo|pensando|falando|nada]]
         if (i.getBooleanExtra("ouvir", false)) {
             startActivity(Intent(this, ConversaActivity::class.java).putExtra("demo", i.getBooleanExtra("demo", false)).putExtra("fase", i.getStringExtra("fase")))
